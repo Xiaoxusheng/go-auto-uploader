@@ -250,9 +250,9 @@ flag.IntVar(&reportMinutes, "report-minutes", 360, "邮件统计分钟")
 # 📧 邮件系统配置（来自代码硬编码）
 
 ```go
-mailFrom     = "2673893724@qq.com"   // 发件人邮箱
-mailAuthCode = "koeekvlajhtsdije"    // SMTP授权码
-mailTo       = "3096407768@qq.com"   // 收件人邮箱
+mailFrom     = ""   // 发件人邮箱
+mailAuthCode = ""    // SMTP授权码
+mailTo       = ""   // 收件人邮箱
 ```
 
 ### 含义说明：
