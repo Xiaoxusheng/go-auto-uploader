@@ -21,13 +21,14 @@ import (
 /* ================= 全局配置 ================= */
 
 var (
-	dirs          string
-	server        string
-	workers       int
-	rateMB        int
-	dayRateMB     int
-	nightRateMB   int
-	reportMinutes int
+	dirs             string
+	server           string
+	workers          int
+	rateMB           int
+	dayRateMB        int
+	nightRateMB      int
+	reportMinutes    int
+	scanningInterval int
 
 	username = "admin"
 	password = "LilKmxNF"
@@ -62,6 +63,7 @@ func main() {
 	flag.IntVar(&rateMB, "rate", 0, "手动限速 MB/s")
 	flag.IntVar(&dayRateMB, "day-rate", 20, "白天限速 MB/s")
 	flag.IntVar(&nightRateMB, "night-rate", 80, "夜晚限速 MB/s")
+	flag.IntVar(&scanningInterval, "night-rate", 30, "默认30min扫描一次")
 	flag.IntVar(&reportMinutes, "report-minutes", 360, "邮件统计分钟")
 	flag.Parse()
 
@@ -81,7 +83,7 @@ func main() {
 			continue
 		}
 		runOnce()
-		time.Sleep(time.Hour)
+		time.Sleep(time.Minute * time.Duration(scanningInterval))
 	}
 }
 
@@ -105,7 +107,6 @@ func queueStatusLoop() {
 func runOnce() {
 	taskCh := make(chan string, workers*2)
 	var wg sync.WaitGroup
-
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func(id int) {
@@ -123,7 +124,6 @@ func runOnce() {
 			}
 		}(i + 1)
 	}
-
 	for _, root := range strings.Split(dirs, ",") {
 		root = strings.TrimSpace(root)
 		filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -363,37 +363,43 @@ func sendReport() {
 
 	var html strings.Builder
 
-	html.WriteString(`<html><body style="font-family:Arial;background:#f4f6f8;padding:24px;">`)
-	html.WriteString(`<div style="max-width:800px;margin:auto;background:#fff;border-radius:12px;padding:20px;">`)
+	html.WriteString(`
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:24px;">
+<tr><td align="center"><table width="760" cellpadding="0" cellspacing="0"
+style="background:#ffffff;border-radius:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial;">
+`)
 
 	html.WriteString(fmt.Sprintf(`
+<tr><td style="padding:24px;border-bottom:1px solid #e5e7eb;">
 <h2>📦 上传成功报告</h2>
-<p>最近 %d 分钟 ｜ 生成时间 %s</p>
-<p><b>文件数：</b>%d ｜ <b>流量：</b>%.2f MB ｜ <b>主播数：</b>%d</p>
-<hr>
-`, reportMinutes, now, len(list), totalMB, len(group)))
+<p>最近 %d 分钟 ｜ %s</p>
+</td></tr>
+`, reportMinutes, now))
+
+	html.WriteString(fmt.Sprintf(`
+<tr><td style="padding:20px;">
+<b>文件数：</b>%d　
+<b>流量：</b>%.2f MB　
+<b>主播：</b>%d
+</td></tr>
+`, len(list), totalMB, len(group)))
 
 	for streamer, files := range group {
-		html.WriteString(fmt.Sprintf(`<h3>🎬 %s</h3><table width="100%%" border="1" cellspacing="0" cellpadding="6">`, streamer))
-		html.WriteString(`<tr><th>时间</th><th>文件</th><th>大小(MB)</th><th>路径</th></tr>`)
-
+		html.WriteString("<tr><td><h3>🎬 " + streamer + "</h3></td></tr>")
 		for _, f := range files {
 			html.WriteString(fmt.Sprintf(
-				`<tr><td>%s</td><td>%s</td><td>%.2f</td><td>%s</td></tr>`,
+				"<tr><td>%s %s %.2fMB<br/>%s</td></tr>",
 				f.Time.Format("01-02 15:04"),
 				f.Name,
 				float64(f.Size)/1024/1024,
 				f.Remote,
 			))
 		}
-		html.WriteString(`</table><br>`)
 	}
 
-	html.WriteString(`<p style="color:#999;font-size:12px;">自动上传系统生成，请勿回复</p>`)
-	html.WriteString(`</div></body></html>`)
+	html.WriteString("</table></td></tr></table>")
 
 	sendQQMail("📦 上传成功报告", html.String())
-
 	os.WriteFile(successLogFile, []byte("[]"), 0644)
 }
 
