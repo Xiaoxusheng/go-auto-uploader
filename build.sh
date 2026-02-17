@@ -1,0 +1,16 @@
+#!/bin/bash
+set -e
+
+APP_NAME="uploader"
+MAIN_FILE="main.go"
+
+echo "🚀 Building binary..."
+
+# 当前系统编译
+CGO_ENABLED=0 go build -o "$APP_NAME" "$MAIN_FILE"
+
+echo "✅ Build success!"
+echo "📦 Binary: ./$APP_NAME"
+echo "📏 Size:"
+ls -lh "./$APP_NAME"
+
