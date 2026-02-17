@@ -350,6 +350,8 @@ func sendReport() {
 		return
 	}
 
+	/* ===== 分组 + 流量统计 ===== */
+
 	group := map[string][]UploadRecord{}
 	var totalBytes int64
 
@@ -361,46 +363,131 @@ func sendReport() {
 	totalMB := float64(totalBytes) / 1024 / 1024
 	now := time.Now().Format("2006-01-02 15:04")
 
+	/* ===== 邮件 HTML（table 版，邮件客户端安全） ===== */
+
 	var html strings.Builder
 
 	html.WriteString(`
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:24px;">
-<tr><td align="center"><table width="760" cellpadding="0" cellspacing="0"
-style="background:#ffffff;border-radius:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial;">
+<tr>
+<td align="center">
+
+<table width="760" cellpadding="0" cellspacing="0"
+       style="background:#ffffff;border-radius:12px;
+              font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial;">
 `)
 
+	/* ===== 标题 ===== */
+
 	html.WriteString(fmt.Sprintf(`
-<tr><td style="padding:24px;border-bottom:1px solid #e5e7eb;">
-<h2>📦 上传成功报告</h2>
-<p>最近 %d 分钟 ｜ %s</p>
-</td></tr>
+<tr>
+<td style="padding:24px;border-bottom:1px solid #e5e7eb;">
+<h2 style="margin:0;font-size:20px;color:#111827;">
+📦 上传成功报告
+</h2>
+<p style="margin:6px 0 0;font-size:13px;color:#6b7280;">
+最近 %d 分钟 ｜ 生成时间 %s
+</p>
+</td>
+</tr>
 `, reportMinutes, now))
 
+	/* ===== 统计卡片 ===== */
+
 	html.WriteString(fmt.Sprintf(`
-<tr><td style="padding:20px;">
-<b>文件数：</b>%d　
-<b>流量：</b>%.2f MB　
-<b>主播：</b>%d
-</td></tr>
+<tr>
+<td style="padding:20px;">
+<table width="100%%" cellpadding="12" cellspacing="0"
+       style="background:#f8fafc;border-radius:10px;">
+<tr>
+<td>
+<div style="font-size:12px;color:#6b7280;">文件数量</div>
+<div style="font-size:22px;color:#111827;"><b>%d</b></div>
+</td>
+<td>
+<div style="font-size:12px;color:#6b7280;">消耗流量</div>
+<div style="font-size:22px;color:#111827;"><b>%.2f MB</b></div>
+</td>
+<td>
+<div style="font-size:12px;color:#6b7280;">主播数量</div>
+<div style="font-size:22px;color:#111827;"><b>%d</b></div>
+</td>
+</tr>
+</table>
+</td>
+</tr>
 `, len(list), totalMB, len(group)))
 
+	/* ===== 明细 ===== */
+
 	for streamer, files := range group {
-		html.WriteString("<tr><td><h3>🎬 " + streamer + "</h3></td></tr>")
+		html.WriteString(fmt.Sprintf(`
+<tr>
+<td style="padding:20px 20px 8px 20px;">
+<h3 style="margin:0;font-size:15px;color:#2563eb;">
+🎬 %s
+</h3>
+</td>
+</tr>
+
+<tr>
+<td style="padding:0 20px 20px 20px;">
+<table width="100%%" cellpadding="8" cellspacing="0"
+       style="border-collapse:collapse;font-size:13px;">
+<tr style="background:#f1f5f9;color:#374151;">
+<th align="left">时间</th>
+<th align="left">文件名</th>
+<th align="right">大小</th>
+<th align="left">存储路径</th>
+</tr>
+`, streamer))
+
 		for _, f := range files {
-			html.WriteString(fmt.Sprintf(
-				"<tr><td>%s %s %.2fMB<br/>%s</td></tr>",
+			html.WriteString(fmt.Sprintf(`
+<tr style="border-bottom:1px solid #e5e7eb;">
+<td style="color:#6b7280;">%s</td>
+<td style="color:#111827;font-weight:500;">%s</td>
+<td align="right">%.2f MB</td>
+<td style="font-family:ui-monospace,Menlo,monospace;
+           word-break:break-all;color:#374151;">
+%s
+</td>
+</tr>
+`,
 				f.Time.Format("01-02 15:04"),
 				f.Name,
 				float64(f.Size)/1024/1024,
 				f.Remote,
 			))
 		}
+
+		html.WriteString(`
+</table>
+</td>
+</tr>
+`)
 	}
 
-	html.WriteString("</table></td></tr></table>")
+	/* ===== 页脚 ===== */
+
+	html.WriteString(`
+<tr>
+<td style="padding:16px 24px;border-top:1px dashed #e5e7eb;
+           font-size:12px;color:#9ca3af;">
+本邮件由自动上传系统生成，请勿回复
+</td>
+</tr>
+
+</table>
+</td>
+</tr>
+</table>
+`)
 
 	sendQQMail("📦 上传成功报告", html.String())
-	os.WriteFile(successLogFile, []byte("[]"), 0644)
+
+	// 清空记录，防止重复统计
+	_ = os.WriteFile(successLogFile, []byte("[]"), 0644)
 }
 
 /* ================= 工具 ================= */
