@@ -27,7 +27,7 @@ var (
 	}
 
 	wsClients   = make(map[*websocket.Conn]bool)
-	wsMutex     sync.RWMutex
+	wsMutex     sync.Mutex // ⭐ 使用 Mutex 确保高频发包与广播时的并发写入安全
 	wsBroadcast = make(chan WSMessage, 100)
 
 	running      = false
@@ -155,14 +155,14 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 func wsBroadcastLoop() {
 	for {
 		msg := <-wsBroadcast
-		wsMutex.RLock()
+		wsMutex.Lock()
 		for client := range wsClients {
 			if err := client.WriteJSON(msg); err != nil {
 				client.Close()
 				delete(wsClients, client)
 			}
 		}
-		wsMutex.RUnlock()
+		wsMutex.Unlock()
 	}
 }
 
@@ -170,10 +170,11 @@ func broadcastWS(msgType string, payload interface{}) {
 	select {
 	case wsBroadcast <- WSMessage{Type: msgType, Payload: payload}:
 	default:
-		log.Printf("[WS] Warning: Broadcast channel full")
+		// log.Printf("[WS] Warning: Broadcast channel full")
 	}
 }
 
+// ⭐ 核心升级：增加 Ping-Pong 反射探测器
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -186,8 +187,17 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	wsMutex.Unlock()
 
 	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
+		var msg WSMessage
+		err := conn.ReadJSON(&msg)
+		if err != nil {
 			break
+		}
+
+		// ⭐ 如果是测速探针，直接把携带的时间戳原封不动反射回去
+		if msg.Type == "ping" {
+			wsMutex.Lock()
+			_ = conn.WriteJSON(WSMessage{Type: "pong", Payload: msg.Payload})
+			wsMutex.Unlock()
 		}
 	}
 
@@ -541,8 +551,6 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	total := len(filtered)
 
-	// ⭐ 核心修复：按页码从后往前切片截取，但保留原始的正序排序
-	// 这样第 1 页展示的就是“最新产生的那批日志”，并且在页面上也是旧在上新在下（符合终端直觉）
 	end := total - (page-1)*limit
 	if end <= 0 {
 		sendJSONSuccess(w, map[string]interface{}{"items": []*LogEntry{}, "total": total})
@@ -580,7 +588,6 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	logsMu.RUnlock()
 
-	// 导出时依然保持旧在上新在下的正常人类阅读顺序
 	if exportLimit > 0 && len(filtered) > exportLimit {
 		filtered = filtered[len(filtered)-exportLimit:]
 	}

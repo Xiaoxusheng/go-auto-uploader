@@ -155,3 +155,6 @@ go build -o uploader .
 **© 2026 2.21 Lei. All Rights Reserved.**
 
 感谢你的关注与支持，欢迎在 GitHub 上为本项目点亮 🌟 Star！
+
+## 📝 迭代更新日志 
+**[点击查看最新版本的迭代更新日志 (Changelog)](CHANGELOG.md)**

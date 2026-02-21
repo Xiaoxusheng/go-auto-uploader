@@ -73,7 +73,7 @@
             width: 10px;
             height: 10px;
             border-radius: 50%;
-            margin-right: 10px;
+            margin-right: 8px;
         }
 
         @keyframes breathe {
@@ -104,6 +104,13 @@
         .ws-icon-connected { color: #00B42A !important; animation: wifi-wave 3s infinite ease-in-out; }
         .ws-icon-connecting { color: #165DFF !important; animation: pulse 1s infinite; }
         .ws-icon-disconnected { color: #F53F3F !important; opacity: 0.8 !important; }
+
+        .ws-data-flash {
+            color: #165DFF !important;
+            filter: drop-shadow(0 0 12px rgba(22, 93, 255, 0.9));
+            transform: scale(1.15) !important;
+            transition: all 0.05s ease-out !important;
+        }
 
         #app { min-height: 100vh; display: flex; flex-direction: column; }
         .main-container { padding: 24px; max-width: 1400px; margin: 0 auto; width: 100%; box-sizing: border-box; flex: 1; }
@@ -262,7 +269,7 @@
                                     </a-card>
                                 </a-col>
 
-                                <a-col :xs="24" :lg="13">
+                                <a-col :xs="24" :lg="11">
                                     <a-card class="apple-glass" hoverable bordered style="height: 100%;">
                                         <div style="display: flex; gap:12px; align-items:center; flex-wrap: wrap; height: 100%;">
                                             <div class="stat-label" style="margin-right: 4px; width: 100%;"><icon-tool></icon-tool> 队列快捷清理</div>
@@ -273,19 +280,36 @@
                                     </a-card>
                                 </a-col>
 
-                                <a-col :xs="24" :lg="11">
-                                    <a-card class="apple-glass" hoverable bordered style="height: 100%;">
-                                        <div style="display: flex; justify-content: space-between; align-items: center; height: 100%;">
+                                <a-col :xs="24" :lg="13">
+                                    <a-card class="apple-glass" hoverable bordered style="height: 100%; display: flex; flex-direction: column;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center;">
                                             <div>
-                                                <div class="stat-label"><icon-swap></icon-swap> WebSocket 通信网络</div>
-                                                <div style="margin-top: 10px; display: flex; align-items: center; font-size: 15px; font-weight: 500;">
+                                                <div class="stat-label"><icon-swap></icon-swap> WebSocket 实时信道</div>
+                                                <div style="margin-top: 8px; display: flex; align-items: center; font-size: 15px; font-weight: 500;">
                                                     <span class="status-indicator" :class="'status-dot-' + wsStatus"></span>
                                                     <span v-if="wsStatus === 'connected'" style="color: #00B42A; letter-spacing: 0.5px;">双向通道已连接</span>
                                                     <span v-else-if="wsStatus === 'connecting'" style="color: #165DFF; letter-spacing: 0.5px;">正在握手连接...</span>
                                                     <span v-else style="color: #F53F3F; letter-spacing: 0.5px;">信道断开,自动重连</span>
                                                 </div>
                                             </div>
-                                            <icon-wifi style="font-size: 38px; color: var(--color-text-3); transition: all 0.4s;" :class="'ws-icon-' + wsStatus" />
+                                            <div style="position: relative; width: 40px; text-align: center;">
+                                                <icon-wifi style="font-size: 32px; color: var(--color-text-3); transition: all 0.4s ease;"
+                                                           :class="['ws-icon-' + wsStatus, { 'ws-data-flash': wsStats.pulse }]" />
+                                            </div>
+                                        </div>
+
+                                        <div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--glass-border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                                            <span style="font-size: 12px; color: var(--color-text-3);">
+                                                <icon-dashboard /> 收发包: <b style="color: var(--color-text-1)">{{ wsStats.msgCount }}</b>
+                                            </span>
+
+                                            <span v-if="wsStatus === 'connected'"
+                                                  :style="{ color: getLatencyColor(wsLatency), fontWeight: 'bold', fontSize: '14px', fontFamily: 'SF Mono, Consolas, monospace', display: 'flex', alignItems: 'center', gap: '4px' }">
+                                                Ping: {{ wsLatency }} ms
+                                            </span>
+                                            <span v-else style="color: var(--color-text-4); font-size: 14px; fontFamily: 'SF Mono, Consolas, monospace', display: 'flex', alignItems: 'center', gap: '4px'">
+                                                Ping: --
+                                            </span>
                                         </div>
                                     </a-card>
                                 </a-col>
@@ -344,7 +368,13 @@
                                     </span>
                             </template>
                             <div style="overflow-x: auto;">
-                                <a-table :data="uploadingTasks" size="small" :pagination="false" style="min-width: 800px;" :bordered="false">
+                                <a-table :data="uploadingTasks" size="small" :pagination="false" style="min-width: 800px; min-height: 400px;" :bordered="false">
+                                    <template #empty>
+                                        <div style="padding: 80px 0; color: var(--color-text-3); text-align: center;">
+                                            <icon-inbox style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-inbox>
+                                            <div>暂时没有正在处理的任务</div>
+                                        </div>
+                                    </template>
                                     <template #columns>
                                         <a-table-column title="文件名" data-index="filename" :width="240" ellipsis tooltip></a-table-column>
                                         <a-table-column title="大小" data-index="size" :width="100"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
@@ -354,9 +384,6 @@
                                         <a-table-column title="状态" data-index="status" :width="100"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ record.status }}</a-tag></template></a-table-column>
                                     </template>
                                 </a-table>
-                                <div v-if="uploadingTasks.length === 0" style="text-align: center; color: var(--color-text-3); padding: 20px 0;">
-                                    目前没有正在处理的任务
-                                </div>
                             </div>
                         </a-card>
 
@@ -367,7 +394,13 @@
                                     </span>
                             </template>
                             <div style="overflow-x: auto;">
-                                <a-table :data="completedTasks" size="small" :pagination="false" style="min-width: 800px;" :bordered="false">
+                                <a-table :data="completedTasks" size="small" :pagination="false" style="min-width: 800px; min-height: 400px;" :bordered="false">
+                                    <template #empty>
+                                        <div style="padding: 80px 0; color: var(--color-text-3); text-align: center;">
+                                            <icon-check-circle style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-check-circle>
+                                            <div>近期没有已完成的任务</div>
+                                        </div>
+                                    </template>
                                     <template #columns>
                                         <a-table-column title="文件名" data-index="filename" :width="300" ellipsis tooltip></a-table-column>
                                         <a-table-column title="大小" data-index="size" :width="120"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
@@ -393,7 +426,13 @@
                     </div>
                     <a-card class="apple-glass hover-effect" bordered>
                         <div style="overflow-x: auto;">
-                            <a-table :data="historyData.items" size="small" :pagination="pagination" @page-change="onPageChange" style="min-width: 800px;" :bordered="false">
+                            <a-table :data="historyData.items" size="small" :pagination="pagination" @page-change="onPageChange" style="min-width: 800px; min-height: 450px;" :bordered="false">
+                                <template #empty>
+                                    <div style="padding: 100px 0; color: var(--color-text-3); text-align: center;">
+                                        <icon-history style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-history>
+                                        <div>没有找到相关的历史记录</div>
+                                    </div>
+                                </template>
                                 <template #columns>
                                     <a-table-column title="完成时间" data-index="id" :width="160"></a-table-column>
                                     <a-table-column title="文件名" data-index="filename" :width="200" ellipsis tooltip></a-table-column>
@@ -504,7 +543,7 @@
 
 <script>
     const { createApp, ref, reactive, onMounted, onUnmounted, computed, watch, nextTick } = Vue;
-    const { Message } = ArcoVue;
+    const { Message, Modal, Notification } = ArcoVue;
 
     const api = axios.create({ baseURL: '/api/v1', timeout: 10000 });
     api.interceptors.response.use(
@@ -541,7 +580,26 @@
             const loginLoading = ref(false);
             const activeTab = ref('overview');
 
+            // ⭐ WebSocket 状态管理与数据心跳统计
             const wsStatus = ref('connecting');
+            const wsStats = reactive({
+                msgCount: 0,
+                lastEvent: '-',
+                pulse: false
+            });
+            let wsPulseTimeout = null;
+
+            // ⭐ Ping 延迟相关变量与颜色计算
+            const wsLatency = ref(0);
+            let pingTimer = null;
+
+            const getLatencyColor = (ms) => {
+                if (ms === 0) return 'var(--color-text-3)';
+                if (ms <= 50) return '#00B42A'; // 绿色 (极佳)
+                if (ms <= 150) return '#FF7D00'; // 橙色 (一般)
+                return '#F53F3F'; // 红色 (较差)
+            };
+
             const liveTaskFilter = ref('uploading');
 
             let pollingTimer = null; let logPollingTimer = null; let ws = null;
@@ -568,6 +626,8 @@
 
             const configForm = ref({});
             const configDirsString = ref('');
+
+            let originalConfigSnapshot = {};
 
             let chartInstance = null;
             const renderChart = () => {
@@ -628,6 +688,14 @@
             const fetchQueue = async () => { try { Object.assign(queueStatus, (await api.get('/tasks/queue')).data); } catch (e) {} };
             const fetchLiveTasks = async () => { try { liveTasks.value = (await api.get('/tasks/live')).data || []; } catch (e) {} };
 
+            const triggerWsPulse = (eventType) => {
+                wsStats.msgCount++;
+                wsStats.lastEvent = eventType;
+                wsStats.pulse = true;
+                if (wsPulseTimeout) clearTimeout(wsPulseTimeout);
+                wsPulseTimeout = setTimeout(() => { wsStats.pulse = false; }, 150);
+            };
+
             const connectWS = () => {
                 if (ws) {
                     ws.onclose = null;
@@ -640,11 +708,28 @@
 
                 ws.onopen = () => {
                     wsStatus.value = 'connected';
+
+                    // ⭐ WebSocket 连接成功后，启动定时 Ping (每5秒测速一次)
+                    if (pingTimer) clearInterval(pingTimer);
+                    pingTimer = setInterval(() => {
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: 'ping', payload: Date.now() }));
+                        }
+                    }, 5000);
                 };
 
                 ws.onmessage = (event) => {
                     try {
                         const msg = JSON.parse(event.data);
+
+                        // ⭐ 拦截 Pong 响应 (不触发视觉闪烁和事件累加，以免晃眼)
+                        if (msg.type === 'pong') {
+                            wsLatency.value = Date.now() - msg.payload;
+                            return;
+                        }
+
+                        triggerWsPulse(msg.type);
+
                         if (msg.type === 'uploadProgress') {
                             const idx = liveTasks.value.findIndex(t => t.id === msg.payload.id);
                             if (idx > -1) {
@@ -654,11 +739,31 @@
                         } else if (msg.type === 'taskDone') {
                             fetchLiveTasks(); fetchQueue();
                         }
+                        else if (msg.type === 'scanStarted') {
+                            Notification.info({
+                                title: '📡 系统扫描周期已启动',
+                                content: `定时周期：${msg.payload.interval} 分钟/次\n当前并发：${msg.payload.workers} 个线程\n扫描目标：共 ${msg.payload.dirs.length} 个目录`,
+                                position: 'bottomRight',
+                                duration: 4000,
+                                style: { whiteSpace: 'pre-wrap', lineHeight: '1.6' }
+                            });
+                        }
+                        else if (msg.type === 'scanFinished') {
+                            Notification.success({
+                                title: '✅ 扫描侦测完毕',
+                                content: `本轮深度比对完成，共发现并压入 ${msg.payload.added} 个新文件至队列中。`,
+                                position: 'bottomRight',
+                                duration: 4000
+                            });
+                            fetchStatus();
+                        }
                     } catch (e) {}
                 };
 
                 ws.onclose = () => {
                     wsStatus.value = 'disconnected';
+                    wsLatency.value = 0; // 断开时清空延迟
+                    if (pingTimer) clearInterval(pingTimer);
                     if (isLoggedIn.value) setTimeout(connectWS, 5000);
                 };
 
@@ -667,8 +772,32 @@
                 };
             };
 
-            const control = async (action) => {
-                try { await api.post(`/control/${action}`); Message.success('指令下发成功'); fetchStatus(); fetchQueue(); } catch (e) {}
+            const control = (action) => {
+                const actionText = {
+                    'start': '确定要启动系统，开始扫描并上传文件吗？',
+                    'pause': '确定要暂停系统吗？\n(注意：正在上传的文件会继续，但不会处理新任务)',
+                    'stop': '危险操作：确定要强行停止系统吗？\n(这可能会打断当前的上传任务)',
+                    'rescan': '确定要立刻手动触发一轮完整的深度扫描吗？',
+                    'relogin': '确定要强制刷新远端服务器的授权 Token 吗？',
+                    'clear-fail-queue': '确定要清空所有【失败记录】吗？此操作不可恢复。',
+                    'retry-fail-queue': '确定要将所有失败任务重新放入队列执行吗？',
+                    'clear-success-queue': '确定要清空所有【成功记录】吗？此操作不可恢复。'
+                };
+
+                Modal.confirm({
+                    title: '系统操作确认',
+                    content: actionText[action] || '确定要执行此操作吗？',
+                    okText: '确认执行',
+                    cancelText: '取消',
+                    onOk: async () => {
+                        try {
+                            await api.post(`/control/${action}`);
+                            Message.success('指令已成功下发');
+                            fetchStatus();
+                            fetchQueue();
+                        } catch (e) {}
+                    }
+                });
             };
 
             const fetchHistory = async () => {
@@ -696,14 +825,38 @@
                 try {
                     const res = await api.get('/config');
                     configForm.value = res.data || {};
+                    originalConfigSnapshot = JSON.parse(JSON.stringify(res.data || {}));
                     configDirsString.value = (res.data.dirs || []).join(', ');
                 } catch (e) {}
             };
+
             const saveConfig = async () => {
                 try {
                     configForm.value.dirs = configDirsString.value.split(',').map(s => s.trim()).filter(s => s);
                     await api.put('/config', configForm.value);
-                    Message.success('系统参数已成功保存并下发生效，后台已开始执行重新扫描');
+
+                    let changes = [];
+                    if (configForm.value.workers !== originalConfigSnapshot.workers) changes.push(`🚀 并发数: ${originalConfigSnapshot.workers} ➜ ${configForm.value.workers}`);
+                    if (configForm.value.scanInterval !== originalConfigSnapshot.scanInterval) changes.push(`⏱️ 扫描间隔: ${originalConfigSnapshot.scanInterval} ➜ ${configForm.value.scanInterval} 分钟`);
+                    if (configForm.value.dayRate !== originalConfigSnapshot.dayRate) changes.push(`☀️ 白天限速: ${originalConfigSnapshot.dayRate} ➜ ${configForm.value.dayRate} MB/s`);
+                    if (configForm.value.nightRate !== originalConfigSnapshot.nightRate) changes.push(`🌙 夜晚限速: ${originalConfigSnapshot.nightRate} ➜ ${configForm.value.nightRate} MB/s`);
+                    if (configForm.value.emailInterval !== originalConfigSnapshot.emailInterval) changes.push(`📧 邮件间隔: ${originalConfigSnapshot.emailInterval} ➜ ${configForm.value.emailInterval} 分钟`);
+
+                    const oldDirs = (originalConfigSnapshot.dirs || []).join(',');
+                    const newDirs = (configForm.value.dirs || []).join(',');
+                    if (oldDirs !== newDirs) changes.push(`📁 监控目录已变更为 ${configForm.value.dirs.length} 个`);
+
+                    let changeText = changes.length > 0 ? changes.join('\n') : '本次保存无数值变动，已触发重载。';
+
+                    Notification.success({
+                        title: '⚙️ 系统参数已生效并下发',
+                        content: changeText,
+                        position: 'bottomRight',
+                        duration: 5000,
+                        style: { whiteSpace: 'pre-wrap', lineHeight: '1.6' }
+                    });
+
+                    originalConfigSnapshot = JSON.parse(JSON.stringify(configForm.value));
                     fetchStatus();
                 } catch (e) {}
             };
@@ -757,6 +910,7 @@
             const cleanUp = () => {
                 if (pollingTimer) clearInterval(pollingTimer);
                 if (logPollingTimer) clearInterval(logPollingTimer);
+                if (pingTimer) clearInterval(pingTimer);
                 if (ws) { ws.onclose = null; ws.close(); }
                 if (chartInstance) { chartInstance.dispose(); chartInstance = null; }
             };
@@ -773,7 +927,6 @@
                 }
             });
 
-            // ⭐ 核心修复：滚动到 scrollHeight（即最底部），符合终端直觉
             watch(() => logData.items, () => {
                 nextTick(() => {
                     if (logContainerRef.value) {
@@ -785,7 +938,7 @@
             return {
                 isDarkMode, toggleTheme, openGitHub,
                 isLoggedIn, loginLoading, loginForm, activeTab, handleLogin, handleLogout,
-                wsStatus, liveTaskFilter,
+                wsStatus, wsStats, wsLatency, getLatencyColor, liveTaskFilter,
                 systemStatus, queueStatus, liveTasks, uploadingTasks, completedTasks, control,
                 historyQuery, historyData, pagination, fetchHistory, onPageChange,
                 logQuery, logData, logExportLimit, logContainerRef, fetchLogs, downloadLogs,

@@ -69,7 +69,6 @@ var (
 	historyMu sync.RWMutex
 )
 
-// ⭐ 核心信号触发器：用于打断休眠，使配置立即生效
 var (
 	triggerScanCh   = make(chan struct{}, 1)
 	triggerReportCh = make(chan struct{}, 1)
@@ -183,13 +182,12 @@ func main() {
 	appConfig.EnableLogs = true
 	appConfigMu.Unlock()
 
-	addLog("info", "系统启动", "")
+	addLog("info", "系统初始化完成，启动中...", "")
 
 	go StartWebServer(webPort)
 	go queueStatusLoop()
 	go reportLoop()
 
-	// ⭐ 重构主循环：利用 select 打断机制，使得配置修改能瞬间应用
 	for {
 		runningMu.RLock()
 		isRunning := running
@@ -198,15 +196,12 @@ func main() {
 		if isRunning {
 			if err := login(); err != nil {
 				log.Println("[LOGIN][ERR]", err)
-				// 登录失败也是可打断的等待
 				select {
 				case <-time.After(30 * time.Second):
 				case <-triggerScanCh:
 				}
 				continue
 			}
-
-			// 唯一串行执行扫描的入口，彻底杜绝并发数据紊乱
 			runOnce()
 		}
 
@@ -216,15 +211,15 @@ func main() {
 
 		if isRunning {
 			select {
-			case <-time.After(time.Minute * time.Duration(interval)):
+			case <-time.After(time.Duration(interval) * time.Minute):
 			case <-triggerScanCh:
-				log.Println("[SYSTEM] ⚡ 收到配置更新或强制下发指令，跳过休眠立即执行重载！")
+				log.Println("[SYSTEM] ⚡ 扫描周期指令重载")
 			}
 		} else {
 			select {
 			case <-time.After(5 * time.Second):
 			case <-triggerScanCh:
-				log.Println("[SYSTEM] ⚡ 系统状态已热更新")
+				log.Println("[SYSTEM] ⚡ 系统热重载完成")
 			}
 		}
 	}
@@ -234,13 +229,17 @@ func main() {
 
 func queueStatusLoop() {
 	start := time.Now()
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	for range ticker.C {
-		log.Printf("[QUEUE][STATUS] 运行:%s 等待:%d 工作中:%d 并发读取:%d",
+		appConfigMu.RLock()
+		currentWorkers := appConfig.Workers
+		appConfigMu.RUnlock()
+
+		log.Printf("[QUEUE][STATUS] 运行时长:%s | 等待任务:%d | 活动Worker:%d | 并发设定:%d",
 			time.Since(start).Truncate(time.Second),
 			atomic.LoadInt64(&queueCount),
 			atomic.LoadInt64(&activeWorker),
-			workers, // 这里的workers指代初始记录，真实并发以 activeWorker 准
+			currentWorkers,
 		)
 	}
 }
@@ -252,6 +251,7 @@ func runOnce() {
 	currentWorkers := appConfig.Workers
 	currentDirs := make([]string, len(appConfig.Dirs))
 	copy(currentDirs, appConfig.Dirs)
+	currentInterval := appConfig.ScanInterval // 获取当前设置的间隔
 	appConfigMu.RUnlock()
 
 	taskCh := make(chan string, currentWorkers*2)
@@ -262,11 +262,19 @@ func runOnce() {
 	runningMu.RUnlock()
 
 	if !isRunning {
-		log.Println("[UPLOAD][PAUSED] 系统已暂停，当前扫描周期取消")
+		log.Println("[UPLOAD][PAUSED] 系统处于暂停状态，跳过本轮扫描")
 		return
 	}
 
-	log.Printf("[SCAN][START] 🔍 启动目录探测，应用并发数:[%d] 目标目录:[%s]", currentWorkers, strings.Join(currentDirs, " | "))
+	log.Printf("[SCAN][START] 🔍 启动目录探测，并发Workers:[%d] 目标路径:[%s]", currentWorkers, strings.Join(currentDirs, " | "))
+
+	// ⭐ 推送更丰富的扫描启动信息给前端
+	broadcastWS("scanStarted", map[string]interface{}{
+		"time":     time.Now().UnixMilli(),
+		"dirs":     currentDirs,
+		"interval": currentInterval,
+		"workers":  currentWorkers,
+	})
 
 	for i := 0; i < currentWorkers; i++ {
 		wg.Add(1)
@@ -278,7 +286,7 @@ func runOnce() {
 				runningMu.RUnlock()
 
 				if !isRunning {
-					log.Printf("[UPLOAD][PAUSED] W%d 收到暂停指令，优雅退出", id)
+					log.Printf("[UPLOAD][W%d] 接收到暂停指令，终止任务处理", id)
 					return
 				}
 
@@ -287,8 +295,8 @@ func runOnce() {
 
 				start := time.Now()
 				handleFile(path)
-				log.Printf("[UPLOAD][DONE][W%d] %s 耗时:%s",
-					id, path, time.Since(start).Truncate(time.Millisecond))
+				log.Printf("[UPLOAD][DONE][W%d] 文件:%s 耗时:%s",
+					id, filepath.Base(path), time.Since(start).Truncate(time.Millisecond))
 
 				atomic.AddInt64(&activeWorker, -1)
 			}
@@ -297,32 +305,45 @@ func runOnce() {
 
 	dirStatusesMu.Lock()
 	for _, root := range currentDirs {
-		root = strings.TrimSpace(root)
-		if root == "" {
+		root = filepath.Clean(strings.TrimSpace(root))
+		if root == "." || root == "" {
 			continue
 		}
-		dirStatuses[root] = &DirStatus{
-			Path:         root,
-			LastScanTime: time.Now().UnixMilli(),
+		if ds, exists := dirStatuses[root]; exists {
+			ds.PendingFiles = 0
+			ds.TotalFiles = 0
+			ds.TotalSize = 0
+			ds.LastScanTime = time.Now().UnixMilli()
+		} else {
+			dirStatuses[root] = &DirStatus{
+				Path:         root,
+				LastScanTime: time.Now().UnixMilli(),
+			}
 		}
 	}
 	dirStatusesMu.Unlock()
 
+	// ⭐ 用于统计本轮新压入队列的文件数
+	var newlyAddedFiles int32 = 0
+
 	for _, root := range currentDirs {
-		root = strings.TrimSpace(root)
-		if root == "" {
+		root = filepath.Clean(strings.TrimSpace(root))
+		if root == "." || root == "" {
 			continue
 		}
-		filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 			runningMu.RLock()
 			isRunning := running
 			runningMu.RUnlock()
 
 			if !isRunning {
-				return fmt.Errorf("扫描被强制中断")
+				return fmt.Errorf("scan canceled by user")
 			}
-
-			if err != nil || info.IsDir() {
+			if err != nil {
+				log.Printf("[SCAN][ERR] 访问路径出错 %s: %v", path, err)
+				return nil
+			}
+			if info.IsDir() {
 				return nil
 			}
 
@@ -335,13 +356,24 @@ func runOnce() {
 			dirStatusesMu.Unlock()
 
 			atomic.AddInt64(&queueCount, 1)
+			atomic.AddInt32(&newlyAddedFiles, 1) // 累加计数
 			taskCh <- path
 			return nil
 		})
+		if err != nil && err.Error() != "scan canceled by user" {
+			addLog("error", "文件遍历失败", err.Error())
+		}
 	}
 
 	close(taskCh)
 	wg.Wait()
+	log.Println("[SCAN][END] 🏁 本轮目录扫描已全部处理完成")
+
+	// ⭐ 把新增文件数通过 WS 发给前端弹窗展示
+	broadcastWS("scanFinished", map[string]interface{}{
+		"time":  time.Now().UnixMilli(),
+		"added": newlyAddedFiles,
+	})
 }
 
 /* ================= 文件处理 ================= */
@@ -349,12 +381,13 @@ func runOnce() {
 func handleFile(path string) {
 	info, err := os.Stat(path)
 	if err != nil {
+		log.Printf("[FILE][ERR] 无法获取文件状态 %s: %v", path, err)
 		return
 	}
 
 	root := detectRoot(path)
 	if root == "" {
-		log.Println("[SKIP][NO_ROOT_MATCH]", path)
+		log.Println("[SKIP][NO_ROOT_MATCH] 找不到匹配的根目录:", path)
 		return
 	}
 
@@ -370,7 +403,7 @@ func handleFile(path string) {
 
 	hash := fileHash(path)
 	if hashExists(hash) {
-		log.Println("[SKIP][HASH]", path)
+		log.Println("[SKIP][HASH] 文件已存在于记录中:", path)
 
 		taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
 
@@ -408,13 +441,14 @@ func handleFile(path string) {
 			"id":     taskID,
 			"status": "success",
 		})
-
 		return
 	}
 
 	if upload(path, remote, info.Size()) {
 		saveHash(hash)
-		os.Remove(path)
+		if err := os.Remove(path); err != nil {
+			log.Printf("[FILE][CLEAN][ERR] 移除本地文件失败 %s: %v", path, err)
+		}
 		recordSuccess(remote, name, info.Size())
 
 		dirStatusesMu.Lock()
@@ -434,13 +468,13 @@ func handleFile(path string) {
 func upload(local, remote string, size int64) bool {
 	f, err := os.Open(local)
 	if err != nil {
+		log.Printf("[UPLOAD][ERR] 无法打开文件 %s: %v", local, err)
 		return false
 	}
 	defer f.Close()
 
 	taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
 	startTime := time.Now()
-	// ⭐ 移除了原来写死在内部的 rateMB，改为对象内部动态获取
 	pr := NewProgressReaderWithID(filepath.Base(remote), f, size, taskID)
 
 	liveTasksMu.Lock()
@@ -478,7 +512,7 @@ func upload(local, remote string, size int64) bool {
 
 	resp, err := httpCli.Do(req)
 	if err != nil {
-		log.Println("[HTTP][ERR]", err)
+		log.Printf("[UPLOAD][HTTP][ERR] %s -> %v", filepath.Base(local), err)
 
 		liveTasksMu.Lock()
 		if task, exists := liveTasks[taskID]; exists {
@@ -493,8 +527,7 @@ func upload(local, remote string, size int64) bool {
 		queueFail = append(queueFail, taskID)
 		queueMu.Unlock()
 
-		duration := time.Since(startTime).Seconds()
-		addHistoryRecord(local, remote, size, "failed", duration, err.Error())
+		addHistoryRecord(local, remote, size, "failed", time.Since(startTime).Seconds(), err.Error())
 
 		broadcastWS("taskDone", map[string]interface{}{
 			"id":     taskID,
@@ -522,17 +555,19 @@ func upload(local, remote string, size int64) bool {
 		queueSuccess = append(queueSuccess, taskID)
 		queueMu.Unlock()
 
-		duration := time.Since(startTime).Seconds()
-		addHistoryRecord(local, remote, size, "success", duration, "")
+		addHistoryRecord(local, remote, size, "success", time.Since(startTime).Seconds(), "")
 
 		broadcastWS("taskDone", map[string]interface{}{
 			"id":       taskID,
 			"status":   "success",
 			"progress": 100,
 		})
+		return true
+	} else {
+		log.Printf("[UPLOAD][REMOTE][ERR] 服务器返回错误码: %d 文件: %s", r.Code, filepath.Base(local))
 	}
 
-	return r.Code == 200
+	return false
 }
 
 /* ================= 历史记录 ================= */
@@ -593,7 +628,6 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 	n, err := p.r.Read(b)
 	p.read += int64(n)
 
-	// ⭐ 核心修复：限速在传输每个字节块时动态读取配置，修改前端即刻生效
 	rateMB := currentRate()
 	if rateMB > 0 {
 		rate := int64(rateMB) * 1024 * 1024
@@ -605,12 +639,6 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 
 	if time.Since(p.last) > 500*time.Millisecond {
 		p.last = time.Now()
-		log.Printf("[UPLOAD][PROGRESS] %s %.1f%% 用时:%s",
-			p.name,
-			float64(p.read)*100/float64(p.total),
-			time.Since(p.start).Truncate(time.Second),
-		)
-
 		progress := int(float64(p.read) * 100 / float64(p.total))
 		speed := int64(float64(p.read) / float64(time.Since(p.start).Seconds()))
 
@@ -635,10 +663,6 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 }
 
 func currentRate() int {
-	if rateMB > 0 {
-		return rateMB
-	}
-
 	appConfigMu.RLock()
 	defer appConfigMu.RUnlock()
 
@@ -654,20 +678,14 @@ func currentRate() int {
 func cleanFileName(name string) string {
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
-
 	var b strings.Builder
-	lastDash := false
-
 	for _, r := range base {
-		if isChinese(r) || isAlphaNum(r) {
+		if (r >= 0x4E00 && r <= 0x9FFF) || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
 			b.WriteRune(r)
-			lastDash = false
-		} else if !lastDash {
+		} else {
 			b.WriteRune('-')
-			lastDash = true
 		}
 	}
-
 	res := strings.Trim(b.String(), "-")
 	if res == "" {
 		res = "file"
@@ -707,21 +725,22 @@ func recordSuccess(remote, name string, size int64) {
 	})
 
 	b, _ := json.MarshalIndent(list, "", "  ")
-	os.WriteFile(successLogFile, b, 0644)
+	if err := os.WriteFile(successLogFile, b, 0644); err != nil {
+		log.Printf("[CLEAN][SUCCESS_LOG][ERR] 写入日志失败: %v", err)
+	}
 }
 
 func reportLoop() {
-	// ⭐ 也是利用 select 使得邮件定时器修改能秒生效
 	for {
 		appConfigMu.RLock()
 		interval := appConfig.EmailInterval
 		appConfigMu.RUnlock()
 
 		select {
-		case <-time.After(time.Minute * time.Duration(interval)):
+		case <-time.After(time.Duration(interval) * time.Minute):
 			sendReport()
 		case <-triggerReportCh:
-			log.Println("[SYSTEM] 收到邮件配置重载指令，邮件统计周期已重置。")
+			log.Println("[SYSTEM] 📧 邮件报送定时器已重置")
 		}
 	}
 }
@@ -758,7 +777,7 @@ func sendReport() {
 	html.WriteString(fmt.Sprintf(`
 <tr><td style="padding:24px;border-bottom:1px solid #e5e7eb;">
 <h2 style="margin:0;font-size:20px;color:#111827;">📦 上传成功报告</h2>
-<p style="margin:6px 0 0;font-size:13px;color:#6b7280;">最近 %d 分钟 ｜ 生成时间 %s</p>
+<p style="margin:6px 0 0;font-size:13px;color:#6b7280;">统计周期 %d 分钟 ｜ 生成时间 %s</p>
 </td></tr>
 `, repMinutes, now))
 
@@ -789,6 +808,7 @@ func sendReport() {
 
 	html.WriteString(`<tr><td style="padding:16px 24px;border-top:1px dashed #e5e7eb;font-size:12px;color:#9ca3af;">本邮件由自动上传系统生成，请勿回复</td></tr></table></td></tr></table>`)
 
+	log.Printf("[REPORT] 📤 正在发送本周期统计邮件，包含 %d 个文件记录", len(list))
 	sendQQMail("📦 上传成功报告", html.String())
 
 	_ = os.WriteFile(successLogFile, []byte("[]"), 0644)
@@ -811,7 +831,7 @@ func login() error {
 	}
 	json.NewDecoder(resp.Body).Decode(&r)
 	if r.Code != 200 {
-		return fmt.Errorf("login failed")
+		return fmt.Errorf("login failed with code %d", r.Code)
 	}
 
 	tokenMu.Lock()
@@ -821,10 +841,15 @@ func login() error {
 }
 
 func fileHash(p string) string {
-	f, _ := os.Open(p)
+	f, err := os.Open(p)
+	if err != nil {
+		return ""
+	}
 	defer f.Close()
 	h := sha256.New()
-	io.Copy(h, f)
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -849,7 +874,6 @@ func detectRoot(path string) string {
 
 	for _, d := range currentDirs {
 		root := filepath.Clean(strings.TrimSpace(d))
-
 		rel, err := filepath.Rel(root, path)
 		if err == nil && !strings.HasPrefix(rel, "..") {
 			return root
@@ -876,7 +900,10 @@ func sendQQMail(subject, body string) {
 			body,
 	)
 	auth := smtp.PlainAuth("", mailFrom, mailAuthCode, "smtp.qq.com")
-	smtp.SendMail("smtp.qq.com:587", auth, mailFrom, []string{mailTo}, msg)
+	err := smtp.SendMail("smtp.qq.com:587", auth, mailFrom, []string{mailTo}, msg)
+	if err != nil {
+		log.Printf("[REPORT][MAIL][ERR] 发送失败: %v", err)
+	}
 }
 
 func addLog(level, message, errorMsg string) {
