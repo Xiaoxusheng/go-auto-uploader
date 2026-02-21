@@ -31,11 +31,13 @@ var (
 	scanningInterval int
 	webPort          int
 
-	dashboardUsername    = "admin"
-	dashboardPassword    = "admin"
-	uploadServerUsername = "admin"
-	uploadServerPassword = "LilKmxNF"
-	otpCode              = "123456"
+	dashboardUsername = "admin"
+	dashboardPassword = "admin"
+
+	UserName = "admin"
+	Password = "LilKmxNF"
+	// 移除全局写死的 server, uploadServerUsername, uploadServerPassword
+	// 改由动态的 appConfig 接管
 
 	token   string
 	tokenMu sync.Mutex
@@ -70,13 +72,13 @@ var (
 )
 
 var (
-	triggerScanCh   = make(chan struct{}, 1)
+	triggerScanCh   = make(chan string, 1)
 	triggerReportCh = make(chan struct{}, 1)
 )
 
-func triggerScan() {
+func triggerScan(reason string) {
 	select {
-	case triggerScanCh <- struct{}{}:
+	case triggerScanCh <- reason:
 	default:
 	}
 }
@@ -172,6 +174,7 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	log.SetOutput(&logInterceptor{original: os.Stdout})
 
+	// ⭐ 赋予 appConfig 初始值，并将命令行传来的 server 作为默认远端地址
 	appConfigMu.Lock()
 	appConfig.ScanInterval = scanningInterval
 	appConfig.Workers = workers
@@ -180,6 +183,9 @@ func main() {
 	appConfig.EmailInterval = reportMinutes
 	appConfig.Dirs = strings.Split(dirs, ",")
 	appConfig.EnableLogs = true
+	appConfig.RemoteServer = server
+	appConfig.RemoteUser = UserName
+	appConfig.RemotePass = Password
 	appConfigMu.Unlock()
 
 	addLog("info", "系统初始化完成，启动中...", "")
@@ -202,7 +208,7 @@ func main() {
 				}
 				continue
 			}
-			runOnce()
+			runOnce("auto")
 		}
 
 		appConfigMu.RLock()
@@ -212,8 +218,11 @@ func main() {
 		if isRunning {
 			select {
 			case <-time.After(time.Duration(interval) * time.Minute):
-			case <-triggerScanCh:
-				log.Println("[SYSTEM] ⚡ 扫描周期指令重载")
+				log.Println("[SYSTEM] ⏱️ 定时周期到达，执行扫描")
+				runOnce("auto")
+			case reason := <-triggerScanCh:
+				log.Printf("[SYSTEM] ⚡ 收到指令打断，执行扫描 (触发源: %s)", reason)
+				runOnce(reason)
 			}
 		} else {
 			select {
@@ -246,12 +255,12 @@ func queueStatusLoop() {
 
 /* ================= 扫描 & worker ================= */
 
-func runOnce() {
+func runOnce(triggerReason string) {
 	appConfigMu.RLock()
 	currentWorkers := appConfig.Workers
 	currentDirs := make([]string, len(appConfig.Dirs))
 	copy(currentDirs, appConfig.Dirs)
-	currentInterval := appConfig.ScanInterval // 获取当前设置的间隔
+	currentInterval := appConfig.ScanInterval
 	appConfigMu.RUnlock()
 
 	taskCh := make(chan string, currentWorkers*2)
@@ -268,12 +277,12 @@ func runOnce() {
 
 	log.Printf("[SCAN][START] 🔍 启动目录探测，并发Workers:[%d] 目标路径:[%s]", currentWorkers, strings.Join(currentDirs, " | "))
 
-	// ⭐ 推送更丰富的扫描启动信息给前端
 	broadcastWS("scanStarted", map[string]interface{}{
 		"time":     time.Now().UnixMilli(),
 		"dirs":     currentDirs,
 		"interval": currentInterval,
 		"workers":  currentWorkers,
+		"trigger":  triggerReason,
 	})
 
 	for i := 0; i < currentWorkers; i++ {
@@ -323,7 +332,6 @@ func runOnce() {
 	}
 	dirStatusesMu.Unlock()
 
-	// ⭐ 用于统计本轮新压入队列的文件数
 	var newlyAddedFiles int32 = 0
 
 	for _, root := range currentDirs {
@@ -356,7 +364,7 @@ func runOnce() {
 			dirStatusesMu.Unlock()
 
 			atomic.AddInt64(&queueCount, 1)
-			atomic.AddInt32(&newlyAddedFiles, 1) // 累加计数
+			atomic.AddInt32(&newlyAddedFiles, 1)
 			taskCh <- path
 			return nil
 		})
@@ -369,7 +377,6 @@ func runOnce() {
 	wg.Wait()
 	log.Println("[SCAN][END] 🏁 本轮目录扫描已全部处理完成")
 
-	// ⭐ 把新增文件数通过 WS 发给前端弹窗展示
 	broadcastWS("scanFinished", map[string]interface{}{
 		"time":  time.Now().UnixMilli(),
 		"added": newlyAddedFiles,
@@ -501,7 +508,12 @@ func upload(local, remote string, size int64) bool {
 		"speed":    0,
 	})
 
-	req, _ := http.NewRequest("PUT", server+"/api/fs/put", pr)
+	// ⭐ 动态读取目标服务器地址
+	appConfigMu.RLock()
+	targetServer := appConfig.RemoteServer
+	appConfigMu.RUnlock()
+
+	req, _ := http.NewRequest("PUT", targetServer+"/api/fs/put", pr)
 	req.ContentLength = size
 	req.Header.Set("File-Path", remote)
 	req.Header.Set("Content-Type", "application/octet-stream")
@@ -678,29 +690,25 @@ func currentRate() int {
 func cleanFileName(name string) string {
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
+
 	var b strings.Builder
+	lastDash := false
+
 	for _, r := range base {
 		if (r >= 0x4E00 && r <= 0x9FFF) || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
 			b.WriteRune(r)
-		} else {
+			lastDash = false
+		} else if !lastDash {
 			b.WriteRune('-')
+			lastDash = true
 		}
 	}
+
 	res := strings.Trim(b.String(), "-")
 	if res == "" {
 		res = "file"
 	}
 	return res + ext
-}
-
-func isChinese(r rune) bool {
-	return r >= 0x4E00 && r <= 0x9FFF
-}
-
-func isAlphaNum(r rune) bool {
-	return (r >= 'a' && r <= 'z') ||
-		(r >= 'A' && r <= 'Z') ||
-		(r >= '0' && r <= '9')
 }
 
 type UploadRecord struct {
@@ -815,8 +823,15 @@ func sendReport() {
 }
 
 func login() error {
-	body := fmt.Sprintf("Username=%s&Password=%s", uploadServerUsername, uploadServerPassword)
-	req, _ := http.NewRequest("POST", server+"/api/auth/login", strings.NewReader(body))
+	// ⭐ 动态读取配置中的账号密码和服务器地址
+	appConfigMu.RLock()
+	targetServer := appConfig.RemoteServer
+	usr := appConfig.RemoteUser
+	pwd := appConfig.RemotePass
+	appConfigMu.RUnlock()
+
+	body := fmt.Sprintf("Username=%s&Password=%s", usr, pwd)
+	req, _ := http.NewRequest("POST", targetServer+"/api/auth/login", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := httpCli.Do(req)

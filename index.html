@@ -151,6 +151,16 @@
             color: var(--color-primary-light-4);
         }
 
+        /* 强制覆盖表格边框样式，确保竖线清晰可见 */
+        .arco-table-bordered .arco-table-container {
+            border-left: 1px solid var(--glass-border) !important;
+            border-top: 1px solid var(--glass-border) !important;
+        }
+        .arco-table-bordered .arco-table-th, .arco-table-bordered .arco-table-td {
+            border-right: 1px solid var(--glass-border) !important;
+            border-bottom: 1px solid var(--glass-border) !important;
+        }
+
         @media screen and (max-width: 768px) {
             .main-container { padding: 12px; }
             .stat-value { font-size: 22px; }
@@ -351,8 +361,8 @@
 
                     <div class="action-bar" style="justify-content: space-between; align-items: center; margin-bottom: 20px;">
                         <a-radio-group v-model="liveTaskFilter" type="button" size="medium" style="background-color: var(--glass-border); border-radius: 8px; padding: 2px;">
-                            <a-radio value="uploading">未上传 / 处理中 ({{ uploadingTasks.length }})</a-radio>
-                            <a-radio value="completed">已上传 ({{ completedTasks.length }})</a-radio>
+                            <a-radio value="uploading">未处理 / 处理中 ({{ uploadingTasks.length }})</a-radio>
+                            <a-radio value="completed">已处理记录 ({{ completedTasks.length }})</a-radio>
                         </a-radio-group>
 
                         <a-button size="small" type="outline" @click="fetchLiveTasks" class="hover-effect">
@@ -368,7 +378,9 @@
                                     </span>
                             </template>
                             <div style="overflow-x: auto;">
-                                <a-table :data="uploadingTasks" size="small" :pagination="false" style="min-width: 800px; min-height: 400px;" :bordered="false">
+                                <a-table :data="uploadingTasks" size="small" :pagination="false"
+                                         style="min-height: 400px;"
+                                         bordered stripe hoverable column-resizable>
                                     <template #empty>
                                         <div style="padding: 80px 0; color: var(--color-text-3); text-align: center;">
                                             <icon-inbox style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-inbox>
@@ -381,7 +393,7 @@
                                         <a-table-column title="进度" data-index="progress" :width="200"><template #cell="{ record }"><a-progress :percent="calculatePercent(record.uploaded, record.size)" size="small"></a-progress></template></a-table-column>
                                         <a-table-column title="速度" data-index="speed" :width="100"><template #cell="{ record }">{{ formatSpeed(record.speed) }}</template></a-table-column>
                                         <a-table-column title="已传时间" :width="100"><template #cell="{ record }">{{ getElapsedTime(record.startTime) }}</template></a-table-column>
-                                        <a-table-column title="状态" data-index="status" :width="100"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ record.status }}</a-tag></template></a-table-column>
+                                        <a-table-column title="状态" data-index="status" :width="100"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ formatStatusText(record.status) }}</a-tag></template></a-table-column>
                                     </template>
                                 </a-table>
                             </div>
@@ -390,11 +402,13 @@
                         <a-card v-else-if="liveTaskFilter === 'completed'" class="apple-glass hover-effect" bordered key="completed">
                             <template #title>
                                     <span style="color: var(--color-success-light-4); display:flex; align-items:center; gap:6px;">
-                                        <icon-check-circle-fill /> 近期已完成上传的文件
+                                        <icon-check-circle-fill /> 近期已处理完成的文件
                                     </span>
                             </template>
                             <div style="overflow-x: auto;">
-                                <a-table :data="completedTasks" size="small" :pagination="false" style="min-width: 800px; min-height: 400px;" :bordered="false">
+                                <a-table :data="completedTasks" size="small" :pagination="false"
+                                         style="min-height: 400px;"
+                                         bordered stripe hoverable column-resizable>
                                     <template #empty>
                                         <div style="padding: 80px 0; color: var(--color-text-3); text-align: center;">
                                             <icon-check-circle style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-check-circle>
@@ -405,7 +419,7 @@
                                         <a-table-column title="文件名" data-index="filename" :width="300" ellipsis tooltip></a-table-column>
                                         <a-table-column title="大小" data-index="size" :width="120"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
                                         <a-table-column title="传输耗时" data-index="duration" :width="120"><template #cell="{ record }">{{ formatDurationSeconds(record.duration) }}</template></a-table-column>
-                                        <a-table-column title="状态" data-index="status" :width="120"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ record.status }}</a-tag></template></a-table-column>
+                                        <a-table-column title="状态" data-index="status" :width="120"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ formatStatusText(record.status) }}</a-tag></template></a-table-column>
                                         <a-table-column title="备注 / 错误信息" data-index="error" ellipsis tooltip></a-table-column>
                                     </template>
                                 </a-table>
@@ -418,15 +432,18 @@
                     <template #title><icon-history></icon-history> 历史记录</template>
                     <div class="action-bar">
                         <a-input-search v-model="historyQuery.filename" placeholder="搜索文件名" size="small" style="width: 250px" @search="fetchHistory" @keyup.enter="fetchHistory"></a-input-search>
+
                         <a-select v-model="historyQuery.status" placeholder="全部状态" size="small" style="width: 120px" allow-clear @change="fetchHistory">
-                            <a-option value="success">Success</a-option>
-                            <a-option value="failed">Failed</a-option>
+                            <a-option value="success">成功</a-option>
+                            <a-option value="failed">失败</a-option>
                         </a-select>
                         <a-button size="small" type="primary" @click="fetchHistory"><template #icon><icon-search></icon-search></template> 查询</a-button>
                     </div>
                     <a-card class="apple-glass hover-effect" bordered>
                         <div style="overflow-x: auto;">
-                            <a-table :data="historyData.items" size="small" :pagination="pagination" @page-change="onPageChange" style="min-width: 800px; min-height: 450px;" :bordered="false">
+                            <a-table :data="historyData.items" size="small" :pagination="pagination" @page-change="onPageChange"
+                                     style="min-height: 450px;"
+                                     bordered stripe hoverable column-resizable>
                                 <template #empty>
                                     <div style="padding: 100px 0; color: var(--color-text-3); text-align: center;">
                                         <icon-history style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-history>
@@ -438,7 +455,7 @@
                                     <a-table-column title="文件名" data-index="filename" :width="200" ellipsis tooltip></a-table-column>
                                     <a-table-column title="大小" data-index="size" :width="100"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
                                     <a-table-column title="耗时" data-index="duration" :width="100"><template #cell="{ record }">{{ formatDurationSeconds(record.duration) }}</template></a-table-column>
-                                    <a-table-column title="状态" data-index="status" :width="100"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ record.status }}</a-tag></template></a-table-column>
+                                    <a-table-column title="状态" data-index="status" :width="100"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ formatStatusText(record.status) }}</a-tag></template></a-table-column>
                                     <a-table-column title="失败详情" data-index="error" ellipsis tooltip></a-table-column>
                                 </template>
                             </a-table>
@@ -502,6 +519,13 @@
                     <template #title><icon-settings></icon-settings> 系统参数设置</template>
                     <a-card class="apple-glass hover-effect" bordered style="max-width: 800px;">
                         <a-form :model="configForm" layout="vertical" @submit="saveConfig">
+                            <a-form-item field="remoteServer" label="远端服务器 API 地址">
+                                <a-input v-model="configForm.remoteServer" size="small" placeholder="例如: https://wustwust.cn:8081"><template #prefix><icon-link></icon-link></template></a-input>
+                            </a-form-item>
+                            <a-row :gutter="24">
+                                <a-col :xs="24" :sm="12"><a-form-item field="remoteUser" label="远端认证账号"><a-input v-model="configForm.remoteUser" size="small"><template #prefix><icon-user></icon-user></template></a-input></a-form-item></a-col>
+                                <a-col :xs="24" :sm="12"><a-form-item field="remotePass" label="远端认证密码"><a-input-password v-model="configForm.remotePass" size="small"><template #prefix><icon-lock></icon-lock></template></a-input-password></a-form-item></a-col>
+                            </a-row>
                             <a-row :gutter="24">
                                 <a-col :xs="24" :sm="12"><a-form-item field="workers" label="核心并发数 (Workers)"><a-input-number v-model="configForm.workers" :min="1" :max="20" size="small"><template #prefix><icon-layers></icon-layers></template></a-input-number></a-form-item></a-col>
                                 <a-col :xs="24" :sm="12"><a-form-item field="scanInterval" label="目录扫描间隔 (分钟)"><a-input-number v-model="configForm.scanInterval" :min="1" size="small"><template #prefix><icon-clock-circle></icon-clock-circle></template></a-input-number></a-form-item></a-col>
@@ -565,13 +589,22 @@
 
     const app = createApp({
         setup() {
-            const isDarkMode = ref(true);
-            const toggleTheme = () => { isDarkMode.value = !isDarkMode.value; applyTheme(); renderChart(); };
-            const applyTheme = () => { document.body.setAttribute('arco-theme', isDarkMode.value ? 'dark' : ''); };
+            const isDarkMode = ref(false);
+
             const autoSetThemeByTime = () => {
                 const hour = new Date().getHours();
-                isDarkMode.value = !(hour >= 8 && hour < 18);
+                isDarkMode.value = (hour < 8 || hour >= 18);
                 applyTheme();
+            };
+
+            const toggleTheme = () => {
+                isDarkMode.value = !isDarkMode.value;
+                applyTheme();
+                renderChart();
+            };
+
+            const applyTheme = () => {
+                document.body.setAttribute('arco-theme', isDarkMode.value ? 'dark' : '');
             };
 
             const openGitHub = () => { window.open('https://github.com/Xiaoxusheng/go-auto-uploader', '_blank'); };
@@ -580,7 +613,6 @@
             const loginLoading = ref(false);
             const activeTab = ref('overview');
 
-            // ⭐ WebSocket 状态管理与数据心跳统计
             const wsStatus = ref('connecting');
             const wsStats = reactive({
                 msgCount: 0,
@@ -589,15 +621,14 @@
             });
             let wsPulseTimeout = null;
 
-            // ⭐ Ping 延迟相关变量与颜色计算
             const wsLatency = ref(0);
             let pingTimer = null;
 
             const getLatencyColor = (ms) => {
                 if (ms === 0) return 'var(--color-text-3)';
-                if (ms <= 50) return '#00B42A'; // 绿色 (极佳)
-                if (ms <= 150) return '#FF7D00'; // 橙色 (一般)
-                return '#F53F3F'; // 红色 (较差)
+                if (ms <= 50) return '#00B42A';
+                if (ms <= 150) return '#FF7D00';
+                return '#F53F3F';
             };
 
             const liveTaskFilter = ref('uploading');
@@ -709,7 +740,6 @@
                 ws.onopen = () => {
                     wsStatus.value = 'connected';
 
-                    // ⭐ WebSocket 连接成功后，启动定时 Ping (每5秒测速一次)
                     if (pingTimer) clearInterval(pingTimer);
                     pingTimer = setInterval(() => {
                         if (ws.readyState === WebSocket.OPEN) {
@@ -722,7 +752,6 @@
                     try {
                         const msg = JSON.parse(event.data);
 
-                        // ⭐ 拦截 Pong 响应 (不触发视觉闪烁和事件累加，以免晃眼)
                         if (msg.type === 'pong') {
                             wsLatency.value = Date.now() - msg.payload;
                             return;
@@ -740,9 +769,23 @@
                             fetchLiveTasks(); fetchQueue();
                         }
                         else if (msg.type === 'scanStarted') {
+                            let titleText = '📡 系统扫描已启动';
+                            let contentText = `当前并发：${msg.payload.workers} 个线程\n扫描目标：共 ${msg.payload.dirs.length} 个目录`;
+
+                            if (msg.payload.trigger === 'auto') {
+                                titleText = '⏱️ 定时扫描执行中';
+                                contentText = `定时周期：${msg.payload.interval} 分钟/次\n` + contentText;
+                            } else if (msg.payload.trigger === 'start') {
+                                titleText = '▶️ 系统已恢复运行';
+                            } else if (msg.payload.trigger === 'rescan') {
+                                titleText = '🔍 手动深度扫描启动';
+                            } else if (msg.payload.trigger === 'config-update') {
+                                titleText = '⚙️ 配置重载扫描';
+                            }
+
                             Notification.info({
-                                title: '📡 系统扫描周期已启动',
-                                content: `定时周期：${msg.payload.interval} 分钟/次\n当前并发：${msg.payload.workers} 个线程\n扫描目标：共 ${msg.payload.dirs.length} 个目录`,
+                                title: titleText,
+                                content: contentText,
                                 position: 'bottomRight',
                                 duration: 4000,
                                 style: { whiteSpace: 'pre-wrap', lineHeight: '1.6' }
@@ -762,7 +805,7 @@
 
                 ws.onclose = () => {
                     wsStatus.value = 'disconnected';
-                    wsLatency.value = 0; // 断开时清空延迟
+                    wsLatency.value = 0;
                     if (pingTimer) clearInterval(pingTimer);
                     if (isLoggedIn.value) setTimeout(connectWS, 5000);
                 };
@@ -836,6 +879,10 @@
                     await api.put('/config', configForm.value);
 
                     let changes = [];
+                    if (configForm.value.remoteServer !== originalConfigSnapshot.remoteServer) changes.push(`🔗 API 地址已更新`);
+                    if (configForm.value.remoteUser !== originalConfigSnapshot.remoteUser) changes.push(`👤 认证账号已更新`);
+                    if (configForm.value.remotePass !== originalConfigSnapshot.remotePass) changes.push(`🔑 认证密码已更新`);
+
                     if (configForm.value.workers !== originalConfigSnapshot.workers) changes.push(`🚀 并发数: ${originalConfigSnapshot.workers} ➜ ${configForm.value.workers}`);
                     if (configForm.value.scanInterval !== originalConfigSnapshot.scanInterval) changes.push(`⏱️ 扫描间隔: ${originalConfigSnapshot.scanInterval} ➜ ${configForm.value.scanInterval} 分钟`);
                     if (configForm.value.dayRate !== originalConfigSnapshot.dayRate) changes.push(`☀️ 白天限速: ${originalConfigSnapshot.dayRate} ➜ ${configForm.value.dayRate} MB/s`);
@@ -887,6 +934,17 @@
             const getElapsedTime = (startTime) => {
                 if (!startTime) return '0s';
                 return formatDurationSeconds(Math.floor((clientTime.value - startTime) / 1000));
+            };
+
+            const formatStatusText = (status) => {
+                if (!status) return '未知';
+                const lower = status.toLowerCase();
+                if (lower.includes('success(秒传)')) return '成功 (秒传)';
+                if (lower.includes('success')) return '成功';
+                if (lower.includes('fail')) return '失败';
+                if (lower === 'uploading') return '处理中';
+                if (lower === 'waiting') return '等待中';
+                return status;
             };
 
             const getStatusColor = (status) => {
@@ -943,7 +1001,7 @@
                 historyQuery, historyData, pagination, fetchHistory, onPageChange,
                 logQuery, logData, logExportLimit, logContainerRef, fetchLogs, downloadLogs,
                 configForm, configDirsString, fetchConfig, saveConfig,
-                formatSize, formatSpeed, calculatePercent, formatDuration, formatDurationSeconds, getElapsedTime, getStatusColor, getLogLevelColor, fetchLiveTasks
+                formatSize, formatSpeed, calculatePercent, formatDuration, formatDurationSeconds, getElapsedTime, getStatusColor, getLogLevelColor, fetchLiveTasks, formatStatusText
             };
         }
     });

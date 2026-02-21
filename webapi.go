@@ -27,7 +27,7 @@ var (
 	}
 
 	wsClients   = make(map[*websocket.Conn]bool)
-	wsMutex     sync.Mutex // ⭐ 使用 Mutex 确保高频发包与广播时的并发写入安全
+	wsMutex     sync.Mutex
 	wsBroadcast = make(chan WSMessage, 100)
 
 	running      = false
@@ -72,6 +72,7 @@ type DirStatus struct {
 	LastScanTime  int64  `json:"lastScanTime"`
 }
 
+// ⭐ Config 结构体新增服务器信息字段
 type Config struct {
 	ScanInterval  int      `json:"scanInterval"`
 	Workers       int      `json:"workers"`
@@ -84,6 +85,9 @@ type Config struct {
 	EnableLogs    bool     `json:"enableLogs"`
 	LogLevel      string   `json:"logLevel"`
 	Dirs          []string `json:"dirs"`
+	RemoteServer  string   `json:"remoteServer"`
+	RemoteUser    string   `json:"remoteUser"`
+	RemotePass    string   `json:"remotePass"`
 }
 
 type LogEntry struct {
@@ -132,7 +136,7 @@ func StartWebServer(port int) {
 	go logCollector()
 
 	addr := fmt.Sprintf(":%d", port)
-	log.Printf("[WEB] Server starting on http://127.0.0.1%s", addr)
+	log.Printf("[WEB] 控制台已就绪: http://127.0.0.1%s", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("[WEB] Server error: %v", err)
 	}
@@ -170,11 +174,9 @@ func broadcastWS(msgType string, payload interface{}) {
 	select {
 	case wsBroadcast <- WSMessage{Type: msgType, Payload: payload}:
 	default:
-		// log.Printf("[WS] Warning: Broadcast channel full")
 	}
 }
 
-// ⭐ 核心升级：增加 Ping-Pong 反射探测器
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -193,7 +195,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		// ⭐ 如果是测速探针，直接把携带的时间戳原封不动反射回去
 		if msg.Type == "ping" {
 			wsMutex.Lock()
 			_ = conn.WriteJSON(WSMessage{Type: "pong", Payload: msg.Payload})
@@ -400,7 +401,7 @@ func handleControlStart(w http.ResponseWriter, r *http.Request) {
 	runningMu.Unlock()
 
 	log.Println("[CONTROL] 🚀 用户下发指令：启动系统，恢复扫描与上传任务")
-	triggerScan()
+	triggerScan("start")
 	sendJSONSuccess(w, nil)
 }
 
@@ -423,6 +424,7 @@ func handleControlStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleControlRelogin(w http.ResponseWriter, r *http.Request) {
+	// 如果用户修改了账号密码点保存，我们顺带在这个接口帮他重连
 	if err := login(); err != nil {
 		log.Println("[CONTROL][ERR] 用户尝试刷新远端授权失败:", err)
 		sendJSONError(w, http.StatusInternalServerError, "Relogin failed")
@@ -434,7 +436,7 @@ func handleControlRelogin(w http.ResponseWriter, r *http.Request) {
 
 func handleControlRescan(w http.ResponseWriter, r *http.Request) {
 	log.Println("[CONTROL] 🔍 用户下发指令：手动触发深度目录重新扫描")
-	triggerScan()
+	triggerScan("rescan")
 	sendJSONSuccess(w, map[string]interface{}{"message": "重新扫描已触发"})
 }
 
@@ -500,6 +502,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		appConfigMu.RLock()
 		currentConfig := appConfig
 		appConfigMu.RUnlock()
+		// 处于安全考虑，如果你不想让密码回显，可以把 RemotePass 抹掉，但为了面板方便编辑，这里先下发
 		sendJSONSuccess(w, currentConfig)
 	case http.MethodPut:
 		var newConfig Config
@@ -513,7 +516,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("[CONTROL] ⚙️ 用户保存了新配置，目标扫描目录已变更为: [%s]", strings.Join(newConfig.Dirs, " | "))
 
-		triggerScan()
+		triggerScan("config-update")
 		triggerReportReset()
 
 		sendJSONSuccess(w, nil)
