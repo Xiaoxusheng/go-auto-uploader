@@ -151,7 +151,6 @@
             color: var(--color-primary-light-4);
         }
 
-        /* 强制覆盖表格边框样式，确保竖线清晰可见 */
         .arco-table-bordered .arco-table-container {
             border-left: 1px solid var(--glass-border) !important;
             border-top: 1px solid var(--glass-border) !important;
@@ -766,7 +765,7 @@
                                 liveTasks.value[idx].speed = msg.payload.speed;
                             } else fetchLiveTasks();
                         } else if (msg.type === 'taskDone') {
-                            fetchLiveTasks(); fetchQueue();
+                            fetchLiveTasks(); fetchQueue(); fetchHistory();
                         }
                         else if (msg.type === 'scanStarted') {
                             let titleText = '📡 系统扫描已启动';
@@ -982,6 +981,11 @@
                     if (!logPollingTimer) logPollingTimer = setInterval(fetchLogs, 4000);
                 } else if (logPollingTimer) {
                     clearInterval(logPollingTimer); logPollingTimer = null;
+                }
+
+                // ⭐ 修复：切换到历史记录标签页时，自动拉取最新历史记录数据
+                if (newTab === 'history') {
+                    fetchHistory();
                 }
             });
 

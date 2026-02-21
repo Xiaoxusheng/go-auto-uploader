@@ -31,13 +31,11 @@ var (
 	scanningInterval int
 	webPort          int
 
-	dashboardUsername = "admin"
-	dashboardPassword = "admin"
-
-	UserName = "admin"
-	Password = "LilKmxNF"
-	// 移除全局写死的 server, uploadServerUsername, uploadServerPassword
-	// 改由动态的 appConfig 接管
+	dashboardUsername    = "admin"
+	dashboardPassword    = "admin"
+	uploadServerUsername = "admin"
+	uploadServerPassword = "LilKmxNF"
+	otpCode              = "123456"
 
 	token   string
 	tokenMu sync.Mutex
@@ -174,7 +172,6 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	log.SetOutput(&logInterceptor{original: os.Stdout})
 
-	// ⭐ 赋予 appConfig 初始值，并将命令行传来的 server 作为默认远端地址
 	appConfigMu.Lock()
 	appConfig.ScanInterval = scanningInterval
 	appConfig.Workers = workers
@@ -184,8 +181,8 @@ func main() {
 	appConfig.Dirs = strings.Split(dirs, ",")
 	appConfig.EnableLogs = true
 	appConfig.RemoteServer = server
-	appConfig.RemoteUser = UserName
-	appConfig.RemotePass = Password
+	appConfig.RemoteUser = "admin"
+	appConfig.RemotePass = "LilKmxNF"
 	appConfigMu.Unlock()
 
 	addLog("info", "系统初始化完成，启动中...", "")
@@ -355,6 +352,12 @@ func runOnce(triggerReason string) {
 				return nil
 			}
 
+			// ⭐ 核心防线 1：热文件跳过。
+			// 如果文件在过去 2 分钟内被修改过，说明可能还在录制/拷贝中，静默跳过它。
+			if time.Since(info.ModTime()) < 2*time.Minute {
+				return nil
+			}
+
 			dirStatusesMu.Lock()
 			if ds, exists := dirStatuses[root]; exists {
 				ds.PendingFiles++
@@ -381,6 +384,27 @@ func runOnce(triggerReason string) {
 		"time":  time.Now().UnixMilli(),
 		"added": newlyAddedFiles,
 	})
+}
+
+// ⭐ 核心防线 2：清理该文件历史产生的“失败”僵尸记录
+func cleanupFailedTasksByPath(targetPath string) {
+	liveTasksMu.Lock()
+	defer liveTasksMu.Unlock()
+
+	queueMu.Lock()
+	defer queueMu.Unlock()
+
+	var toDelete []string
+	for id, task := range liveTasks {
+		if task.Path == targetPath && task.Status == "failed" {
+			toDelete = append(toDelete, id)
+			delete(liveTasks, id)
+		}
+	}
+
+	for _, id := range toDelete {
+		queueFail = removeTask(queueFail, id)
+	}
 }
 
 /* ================= 文件处理 ================= */
@@ -448,6 +472,9 @@ func handleFile(path string) {
 			"id":     taskID,
 			"status": "success",
 		})
+
+		// ⭐ 如果秒传成功了，说明之前残留的失败记录可以删除了
+		cleanupFailedTasksByPath(path)
 		return
 	}
 
@@ -508,12 +535,7 @@ func upload(local, remote string, size int64) bool {
 		"speed":    0,
 	})
 
-	// ⭐ 动态读取目标服务器地址
-	appConfigMu.RLock()
-	targetServer := appConfig.RemoteServer
-	appConfigMu.RUnlock()
-
-	req, _ := http.NewRequest("PUT", targetServer+"/api/fs/put", pr)
+	req, _ := http.NewRequest("PUT", server+"/api/fs/put", pr)
 	req.ContentLength = size
 	req.Header.Set("File-Path", remote)
 	req.Header.Set("Content-Type", "application/octet-stream")
@@ -574,6 +596,10 @@ func upload(local, remote string, size int64) bool {
 			"status":   "success",
 			"progress": 100,
 		})
+
+		// ⭐ 正常上传成功了，抹除历史曾经由于未录制完导致的失败记录
+		cleanupFailedTasksByPath(local)
+
 		return true
 	} else {
 		log.Printf("[UPLOAD][REMOTE][ERR] 服务器返回错误码: %d 文件: %s", r.Code, filepath.Base(local))
@@ -616,22 +642,24 @@ func removeTask(tasks []string, taskID string) []string {
 /* ================= 动态速率流 ================= */
 
 type ProgressReader struct {
-	name   string
-	r      io.Reader
-	total  int64
-	read   int64
-	last   time.Time
-	start  time.Time
-	taskID string
+	name        string
+	r           io.Reader
+	total       int64
+	read        int64
+	last        time.Time
+	start       time.Time
+	taskID      string
+	lastLogProg int
 }
 
 func NewProgressReaderWithID(name string, r io.Reader, total int64, taskID string) *ProgressReader {
 	return &ProgressReader{
-		name:   name,
-		r:      r,
-		total:  total,
-		start:  time.Now(),
-		taskID: taskID,
+		name:        name,
+		r:           r,
+		total:       total,
+		start:       time.Now(),
+		taskID:      taskID,
+		lastLogProg: -1,
 	}
 }
 
@@ -654,6 +682,12 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 		progress := int(float64(p.read) * 100 / float64(p.total))
 		speed := int64(float64(p.read) / float64(time.Since(p.start).Seconds()))
 
+		// ⭐ 修复了高频刷屏的问题：控制台采用 10% 步长阶梯式打印
+		step := progress / 10
+		if step > p.lastLogProg {
+			p.lastLogProg = step
+			log.Printf("[UPLOAD][PROGRESS] 文件: %s -> 进度: %d%%", p.name, step*10)
+		}
 		liveTasksMu.Lock()
 		if task, exists := liveTasks[p.taskID]; exists {
 			task.Progress = progress
@@ -823,7 +857,7 @@ func sendReport() {
 }
 
 func login() error {
-	// ⭐ 动态读取配置中的账号密码和服务器地址
+
 	appConfigMu.RLock()
 	targetServer := appConfig.RemoteServer
 	usr := appConfig.RemoteUser
@@ -931,7 +965,7 @@ func addLog(level, message, errorMsg string) {
 	}
 
 	entry := &LogEntry{
-		Time:    time.Now().Format("2006-01-02 15:04:05"),
+		Time:    time.Now().Format(time.DateTime),
 		Level:   level,
 		Message: message,
 		Error:   errorMsg,
