@@ -3,6 +3,7 @@
 # =========================
 uploader
 dist/
+.trae
 *.exe
 *.out
 

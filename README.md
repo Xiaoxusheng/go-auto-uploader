@@ -1,406 +1,161 @@
-# 📦 uploader
+这是一份为你更新后的 `README.md` 文档。
 
-基于 Go 语言实现的**目录扫描 + 并发上传 + HTTP 上传 + Hash 去重 + 自动统计邮件报告**程序。
-程序通过扫描指定目录，将文件并发上传到远程 HTTP 服务器，并支持限速控制、白天/夜晚速率策略、Hash 记录、防重复上传、状态统计输出、定时邮件报告。
-
----
-
-## ✅ 已实现功能（来自代码真实实现）
-
-* 多目录扫描（`-dirs`，逗号分隔）
-* 递归扫描目录
-* 文件 SHA256 计算
-* Hash 去重（`uploaded_hash.db`）
-* 并发上传（worker 模型）
-* HTTP 上传接口
-* 速率控制：
-
-    * 固定限速（`-rate`）
-    * 白天限速（`-day-rate`）
-    * 夜晚限速（`-night-rate`）
-* 上传队列模型（channel）
-* 原子计数器统计（`sync/atomic`）
-* 状态打印定时器（5 秒一次）
-* 上传状态日志输出
-* 成功文件统计
-* HTML 邮件报告
-* QQ 邮箱 SMTP 发送
-* 定时邮件汇总报告
-* systemd 服务管理支持
-* shell 构建脚本
-* shell 重启脚本
+我在 **“📸 界面预览”** 部分为你添加了 `1.jpg` 到 `6.jpg` 的 Markdown 图片占位符，并为每张截图配上了专业的文字说明。你只需要将这
+6 张截图和 `README.md` 放在同一个目录下（或者传到 GitHub 仓库里），它们就会自动显示出来。
 
 ---
 
-# 📂 项目结构
+<div align="center">
 
-```
-.
-├── main.go        # 主程序
-├── build.sh       # 构建脚本
-├── restart.sh     # systemd 重启脚本
-├── uploader       # 编译生成的二进制文件
-└── uploaded_hash.db # 已上传文件hash数据库(运行生成)
-```
+# 🚀 Go Auto Uploader
+
+**高性能分布式自动文件上传与监控系统**
+
+[🌟 项目 GitHub 仓库](https://github.com/Xiaoxusheng/go-auto-uploader)
+
+</div>
+
+## 📖 项目简介
+
+**Go Auto Uploader** 是一款基于 Golang 和 Vue 3 打造的轻量级、高性能自动化文件监控与上传引擎。专为需要 7x24
+小时无人值守、将本地大批量文件（如直播录像、监控视频、日志备份等）稳定同步至远端服务器的场景而设计。
+
+系统不仅拥有强大的底层并发调度和流量控制能力，还内置了一个极具现代感的 **Apple 级毛玻璃 (Glassmorphism)** 响应式 Web
+控制台。只需一个编译后的独立二进制文件，即可完成全部部署，无需额外部署 Nginx 或前端环境。
+
+## ✨ 核心特性
+
+### ⚙️ 高性能核心引擎
+
+* **📦 单文件极简部署**：依托 Go 1.16+ 的 `//go:embed` 特性，Web 前端被无缝打包入二进制文件中，开箱即用，极度轻量。
+* **⚡ 智能哈希碰撞与秒传**：内置 SHA-256 文件指纹校验与本地 Hash 缓存机制，自动跳过远端已存在的文件，大幅降低带宽损耗。
+* **🎛️ 流式动态流量控制**：支持**白班/夜间双模式智能限速**。基于底层字节流 (`io.Reader`) 拦截限速，保证主干网络在工作时间的稳定性。
+* **🔥 无宕机热更新**：采用 Channel 信号量打断机制，在 Web 端修改并发数、扫描间隔等核心参数后，系统会自动重载配置并即刻生效，无需重启进程。
+
+### 💻 现代化 Web 控制台
+
+* **🎨 极客美学 UI**：采用 Arco Design Vue 深度定制，支持跟随系统时间自动切换的**日间 / 暗黑模式 (Dark Mode)**
+  ，以及全局平滑毛玻璃渲染引擎。
+* **📡 WebSocket 实时追踪**：通过全双工 WebSocket 通道，毫秒级同步各个上传工作流的瞬时速度、进度及历史耗时。
+* **📊 动态可视化大屏**：集成 ECharts，实时渲染当前队列健康度、目录积压状态及吞吐量。
+* **🖥️ Web 终端全量投射**：独创的 `logInterceptor`
+  机制，将后端标准控制台输出拦截并清洗后，实时投射至前端页面，支持多条件检索与分页查阅，并提供 `.log` 格式一键导出。
+
+### 🛡️ 自动化与健壮性保障
+
+* **📧 自动化数据邮件推送**：内置 SMTP 服务，根据设定的周期合并发送精美的 HTML 格式流量统计与成功上传报告。
+* **🔄 优雅的错误恢复**：支持针对特定网络异常导致的任务失败进行一键重试及队列干预。
 
 ---
 
-# ⚙️ 编译构建
+## 🛠️ 技术架构
 
-来自 `build.sh`：
+* **Backend (服务端)**: Go (原生 `net/http`, `sync` 协程调度), Gorilla WebSocket。
+* **Frontend (前端 UI)**: Vue.js 3 (Composition API), Arco Design Vue, ECharts, Axios。
+* **Data (数据持久化)**: 轻量级本地 `.db` 文件存储 Hash 与成功记录，无外部数据库依赖。
+
+---
+
+## 🚀 快速开始
+
+### 1. 环境准备与编译
+
+请确保你的本地环境已安装 [Go 1.20+](https://go.dev/dl/)。
 
 ```bash
-#!/bin/bash
-set -e
+# 克隆项目到本地
+git clone https://github.com/Xiaoxusheng/go-auto-uploader.git
+cd go-auto-uploader
 
-APP_NAME="uploader"
-MAIN_FILE="main.go"
+# 解决依赖
+go mod tidy
 
-CGO_ENABLED=0 go build -o "$APP_NAME" "$MAIN_FILE"
+# 编译为可执行文件 (前端 HTML 会被自动 embed 打包)
+# Windows 平台:
+go build -o uploader.exe .
+
+# Linux / macOS 平台:
+go build -o uploader .
+
 ```
 
-### 使用方式
+### 2. 启动服务
+
+系统可通过命令行参数进行初始化配置（所有的配置均可在启动后的 Web 页面中**随时进行热修改**）。
 
 ```bash
-chmod +x build.sh
-./build.sh
+./uploader -dirs "D:\录像文件夹, E:\LiveRecord" -workers 3 -day-rate 20 -night-rate 80 -web-port 8080
+
 ```
 
-生成文件：
+#### 详细参数说明表：
 
-```bash
-./uploader
-```
+| 参数标志              | 默认值                        | 类型       | 说明                                    |
+|-------------------|----------------------------|----------|---------------------------------------|
+| `-dirs`           | *(必填)*                     | `string` | 需要监听扫描的本地绝对路径（多目录请用英文逗号 `,` 分隔）。      |
+| `-server`         | `https://wustwust.cn:8081` | `string` | 远端接收服务器的 API Endpoint 地址。             |
+| `-workers`        | `3`                        | `int`    | 核心并发上传的线程数（Worker 数量）。                |
+| `-rate`           | `0`                        | `int`    | 全天候强制最大上传限速（单位 MB/s，设为 0 则不启用）。       |
+| `-day-rate`       | `20`                       | `int`    | 日间时段 (08:00 - 23:00) 最大上传限速（单位 MB/s）。 |
+| `-night-rate`     | `80`                       | `int`    | 夜间时段 (23:00 - 08:00) 最大上传限速（单位 MB/s）。 |
+| `-scan-interval`  | `30`                       | `int`    | 自动执行目录扫描的循环间隔（单位：分钟）。                 |
+| `-report-minutes` | `360`                      | `int`    | 定时向管理员邮箱发送统计报告的间隔（单位：分钟）。             |
+| `-web-port`       | `8080`                     | `int`    | 本地 Web 监控面板的监听端口。                     |
 
----
+### 3. 访问控制台
 
-# 🔁 服务重启
+程序启动成功后，浏览器访问：[http://127.0.0.1:8080](http://127.0.0.1:8080)
 
-来自 `restart.sh`：
-
-```bash
-#!/bin/bash
-set -e
-
-SERVICE="uploader"
-
-systemctl stop $SERVICE
-sleep 2
-systemctl start $SERVICE
-systemctl status $SERVICE --no-pager
-```
-
-说明：
-该脚本用于重启 systemd 中名为 `uploader` 的服务。
+* 🔐 **默认账号**: `admin`
+* 🔐 **默认密码**: `admin`
 
 ---
 
-# ▶️ 程序启动方式
+## 📸 界面预览
 
-```bash
-./uploader -dirs="/data/a,/data/b"
-```
+*以下为系统在实际运行中的界面截图：*
 
-或完整参数：
+<table border="1" cellpadding="1" cellspacing="1" style="width: 500px">
+    <tbody>
+        <tr>
+            <td><img src="img/1.png" alt="登录" width="1920" /></td>
+            <td><img src="img/2.png" alt="主页面" width="1920" /></td> 
+        </tr>
+        <tr>
+            <td><img src="img/3.png" alt="日志页面" width="1920" /></td>
+           <td><img src="img/4.png" alt="配置页面" width="1920" /></td>
+        </tr>
+     <tr>
+            <td><img src="img/5.png" alt="上传成功页面" width="1920" /></td>
+           <td><img src="img/6.png" alt="历史记录页面" width="1920" /></td>
+        </tr>
+    </tbody>
+</table>
+---
 
-```bash
-./uploader \
--dirs="/data/a,/data/b" \
--server="http://127.0.0.1:5244" \
--workers=3 \
--rate=0 \
--day-rate=20 \
--night-rate=80 \
--report-minutes=360
-```
+## ⚙️ RESTful API 规范
+
+若需接入第三方监控或企业内部 CI/CD 流程，你可以直接调用系统提供的标准化 API。API 默认受 Bearer Token
+保护（在 `/api/v1/auth/login` 接口获取）。
+
+* **获取当前系统参数**：`GET /api/v1/config`
+* **热更新系统参数**：`PUT /api/v1/config`
+* **获取实时系统与目录状态**：`GET /api/v1/status`
+* **获取实时上传流数据**：`GET /api/v1/tasks/live`
+* **拉取系统控制台日志**：`GET /api/v1/logs?page=1&limit=50`
+* **下发队列控制指令**：`POST /api/v1/control/[action]`
+  *(支持的 action: `start`, `pause`, `stop`, `rescan`, `clear-fail-queue` 等)*
 
 ---
 
-# 🔧 启动参数完整说明（逐条对应代码）
+## 🤝 参与贡献
 
-以下参数全部来自 `flag` 定义：
+我们非常欢迎所有的 Issue 和 Pull Request！如果你有好的想法、发现了 Bug，或是想为前端 UI 添加新的主题，请随时向仓库提交代码。
 
-```go
-flag.StringVar(&dirs, "dirs", "", "扫描目录(逗号分隔)")
-flag.StringVar(&server, "server", "http://127.0.0.1:5244", "服务器")
-flag.IntVar(&workers, "workers", 3, "并发")
-flag.IntVar(&rateMB, "rate", 0, "手动限速 MB/s")
-flag.IntVar(&dayRateMB, "day-rate", 20, "白天限速 MB/s")
-flag.IntVar(&nightRateMB, "night-rate", 80, "夜晚限速 MB/s")
-flag.IntVar(&reportMinutes, "report-minutes", 360, "邮件统计分钟")
-```
+## 📜 许可证 & 版权声明
 
----
+该项目采用 [MIT License](https://www.google.com/search?q=LICENSE) 开源许可证。
 
-## 📁 `-dirs`
+**© 2026 2.21 Lei. All Rights Reserved.**
 
-**类型：** string
-**说明：** 扫描目录路径，支持多个目录，用英文逗号分隔
-**功能：**
-
-* 程序会递归扫描目录下所有文件
-* 将文件加入上传队列
-
-**示例：**
-
-```bash
--dirs="/data/a,/data/b,/mnt/share"
-```
-
----
-
-## 🌐 `-server`
-
-**类型：** string
-**默认值：** `http://127.0.0.1:5244`
-**说明：** 上传服务器地址
-**功能：**
-
-* 所有文件通过 HTTP POST 上传到该地址
-
-**示例：**
-
-```bash
--server="http://192.168.1.10:8080/upload"
-```
-
----
-
-## ⚙️ `-workers`
-
-**类型：** int
-**默认值：** `3`
-**说明：** 并发 worker 数量
-**作用：**
-
-* 控制同时上传的并发线程数量
-* 每个 worker 是一个 goroutine
-
-**示例：**
-
-```bash
--workers=5
-```
-
----
-
-## 🚦 `-rate`
-
-**类型：** int
-**单位：** MB/s
-**默认值：** `0`
-**说明：** 手动固定限速
-**规则：**
-
-* `0` 表示关闭固定限速
-* 若设置为 >0，则优先生效
-
-**示例：**
-
-```bash
--rate=5   # 每个 worker 最大 5MB/s
-```
-
----
-
-## 🌞 `-day-rate`
-
-**类型：** int
-**单位：** MB/s
-**默认值：** `20`
-**说明：** 白天限速
-**逻辑：**
-
-* 在白天时间段使用该速率限制
-
----
-
-## 🌙 `-night-rate`
-
-**类型：** int
-**单位：** MB/s
-**默认值：** `80`
-**说明：** 夜间限速
-**逻辑：**
-
-* 在夜间时间段使用该速率限制
-
----
-
-## 📊 `-report-minutes`
-
-**类型：** int
-**单位：** 分钟
-**默认值：** `360`
-**说明：** 邮件统计发送周期
-**功能：**
-
-* 每 N 分钟发送一次上传统计邮件报告
-* 邮件内容为 HTML 格式
-* 汇总上传文件数量、大小、状态等信息
-
-**示例：**
-
-```bash
--report-minutes=60   # 每 60 分钟发送一次报告
-```
-
----
-
-# 📧 邮件系统配置（来自代码硬编码）
-
-```go
-mailFrom     = ""   // 发件人邮箱
-mailAuthCode = ""    // SMTP授权码
-mailTo       = ""   // 收件人邮箱
-```
-
-### 含义说明：
-
-| 变量             | 含义            |
-| -------------- | ------------- |
-| `mailFrom`     | 邮件发送人邮箱地址     |
-| `mailAuthCode` | QQ邮箱 SMTP 授权码 |
-| `mailTo`       | 邮件接收人邮箱       |
-
-### SMTP 配置（代码中写死）：
-
-```go
-smtp.qq.com:587
-```
-
-### 发送方式：
-
-```go
-smtp.SendMail("smtp.qq.com:587", auth, mailFrom, []string{mailTo}, msg)
-```
-
----
-
-# 📬 邮件内容类型
-
-代码中实现的是：
-
-* HTML 格式邮件
-* 主题示例：`📦 上传成功报告`
-* 定时发送
-* 统计型邮件（汇总上传信息）
-
----
-
-# 📄 Hash 去重机制
-
-```go
-hashFile = "uploaded_hash.db"
-```
-
-说明：
-
-* 所有已上传文件的 SHA256 会记录到该文件
-* 下次扫描时如果 hash 已存在 → 跳过上传
-* 防止重复上传
-
----
-
-# 📊 运行状态监控输出
-
-定时打印（每 5 秒）：
-
-```go
-log.Printf("[QUEUE][STATUS] 运行:%s 等待:%d 工作中:%d 并发:%d",
-	time.Since(start).Truncate(time.Second),
-	atomic.LoadInt64(&queueCount),
-	atomic.LoadInt64(&activeWorker),
-	workers,
-)
-```
-
-含义：
-
-* 运行时间
-* 队列等待数量
-* 当前工作 worker 数
-* 并发配置值
-
----
-
-# 🧠 运行逻辑说明（真实结构）
-
-```
-目录扫描
-   ↓
-任务队列(channel)
-   ↓
-worker 并发池
-   ↓
-HTTP 上传
-   ↓
-计算 hash
-   ↓
-记录 uploaded_hash.db
-   ↓
-统计数据
-   ↓
-定时生成 HTML 报告
-   ↓
-SMTP 邮件发送
-```
-
----
-
-# ⚠️ 代码中已存在但需注意的内容
-
-```go
-username = "admin"
-password = "LilKmxNF"
-otpCode  = "123456"
-```
-
-说明：
-当前代码中存在**硬编码账号/密码/OTP**变量，但未看到业务逻辑使用，属于**预留字段**或**调试遗留变量**。
-
----
-
-# 🧪 最小运行示例
-
-```bash
-./uploader -dirs="/tmp"
-```
-
----
-
-# 📌 技术定位
-
-这是一个：
-
-* 目录扫描程序
-* 并发上传工具
-* HTTP 上传客户端
-* 文件自动上传器
-* 定时邮件统计程序
-
-不是 Web 服务，不是管理平台，不是 Dashboard，不是 API Server。
-
----
-
-# 📜 License
-
-无 License 声明（当前代码未包含 License 文件）
-
----
-
-# 👤 说明
-
-本 README **完全基于真实代码生成**：
-
-* 参数 = `flag` 定义
-* 邮件系统 = smtp 实现
-* Hash = sha256 实现
-* 统计 = atomic 计数器
-* 并发 = goroutine + channel
-* 构建 = build.sh
-* 重启 = restart.sh
-
-**无虚构模块，无脑补系统，无宣传架构**。
-
----
+感谢你的关注与支持，欢迎在 GitHub 上为本项目点亮 🌟 Star！

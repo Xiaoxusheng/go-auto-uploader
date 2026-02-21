@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>分布式文件上传系统面板</title>
+    <link rel="icon" href="data:,">
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/@arco-design/web-vue/dist/arco-vue.min.js"></script>
+    <script src="https://unpkg.com/@arco-design/web-vue/dist/arco-vue-icon.min.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://unpkg.com/echarts/dist/echarts.min.js"></script>
+    <link href="https://unpkg.com/@arco-design/web-vue/dist/arco.min.css" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-base: #f0f2f5;
+            --glass-bg: rgba(255, 255, 255, 0.75);
+            --nav-glass-bg: rgba(255, 255, 255, 0.90);
+            --glass-border: rgba(0, 0, 0, 0.06);
+            --hover-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+        }
+
+        body[arco-theme='dark'] {
+            --bg-base: #000000;
+            --glass-bg: rgba(35, 35, 36, 0.65);
+            --nav-glass-bg: rgba(20, 20, 20, 0.85);
+            --glass-border: rgba(255, 255, 255, 0.12);
+            --hover-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        body {
+            background-color: var(--bg-base); margin: 0; padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            color: var(--color-text-1); transition: background-color 0.3s ease;
+        }
+
+        .apple-glass {
+            background-color: var(--glass-bg) !important;
+            backdrop-filter: saturate(180%) blur(20px);
+            -webkit-backdrop-filter: saturate(180%) blur(20px);
+            border-radius: 12px;
+            transition: background-color 0.3s ease, border-color 0.3s ease;
+        }
+
+        .nav-glass {
+            background-color: var(--nav-glass-bg) !important;
+            backdrop-filter: saturate(180%) blur(20px);
+            -webkit-backdrop-filter: saturate(180%) blur(20px);
+            border-bottom: 1px solid var(--glass-border);
+            position: sticky; top: 0; z-index: 1000;
+        }
+
+        .hover-effect {
+            transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .hover-effect:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--hover-shadow);
+        }
+
+        .fade-enter-active, .fade-leave-active {
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+        .fade-enter-from, .fade-leave-to {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+
+        @keyframes breathe {
+            0% { transform: scale(0.85); box-shadow: 0 0 0 0 rgba(0, 180, 42, 0.7); }
+            50% { transform: scale(1.1); box-shadow: 0 0 10px 4px rgba(0, 180, 42, 0.3); }
+            100% { transform: scale(0.85); box-shadow: 0 0 0 0 rgba(0, 180, 42, 0); }
+        }
+        .status-dot-connected { background-color: #00B42A; animation: breathe 2.5s infinite ease-in-out; }
+
+        @keyframes pulse {
+            0% { transform: scale(0.9); opacity: 0.8; }
+            50% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(0.9); opacity: 0.8; }
+        }
+        .status-dot-connecting { background-color: #165DFF; animation: pulse 1s infinite; }
+
+        @keyframes flash-warning {
+            0%, 100% { opacity: 1; background-color: #F53F3F; box-shadow: 0 0 8px #F53F3F; }
+            50% { opacity: 0.4; background-color: #F53F3F; box-shadow: none; }
+        }
+        .status-dot-disconnected { background-color: #F53F3F; animation: flash-warning 1s infinite; }
+
+        @keyframes wifi-wave {
+            0% { opacity: 0.4; transform: scale(0.95); }
+            50% { opacity: 1; transform: scale(1.05); }
+            100% { opacity: 0.4; transform: scale(0.95); }
+        }
+        .ws-icon-connected { color: #00B42A !important; animation: wifi-wave 3s infinite ease-in-out; }
+        .ws-icon-connecting { color: #165DFF !important; animation: pulse 1s infinite; }
+        .ws-icon-disconnected { color: #F53F3F !important; opacity: 0.8 !important; }
+
+        #app { min-height: 100vh; display: flex; flex-direction: column; }
+        .main-container { padding: 24px; max-width: 1400px; margin: 0 auto; width: 100%; box-sizing: border-box; flex: 1; }
+        .login-wrapper { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .login-box { width: 360px; padding: 32px; border: 1px solid var(--glass-border); }
+
+        .arco-card { background: transparent !important; border-radius: 12px; }
+        .arco-card-bordered { border: 1px solid var(--glass-border) !important; }
+        .arco-card-header { border-bottom: 1px solid var(--glass-border) !important; padding: 12px 16px !important;}
+        .arco-card-body { padding: 16px !important; }
+        .arco-layout-content, .arco-tabs-nav::before { background: transparent !important; }
+
+        .stat-card { padding: 20px; height: 100%; box-sizing: border-box; }
+        .stat-value { font-size: 26px; font-weight: 600; color: var(--color-text-1); margin-top: 10px; display: flex; align-items: center; gap: 8px; }
+        .stat-label { font-size: 13px; color: var(--color-text-3); display: flex; align-items: center; gap: 6px; }
+        .action-bar { margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+        .log-container { padding: 16px; height: 420px; overflow-y: auto; font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 13px; border-radius: 12px; scroll-behavior: smooth; border: 1px solid var(--glass-border); }
+
+        .download-btn {
+            background-color: var(--color-primary-light-1);
+            color: var(--color-primary-6);
+            border: 1px solid var(--color-primary-light-3);
+        }
+
+        .footer-copyright {
+            text-align: center;
+            padding: 16px 24px;
+            font-size: 12px;
+            color: var(--color-text-3);
+        }
+        .footer-copyright a {
+            color: var(--color-text-3);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        .footer-copyright a:hover {
+            color: var(--color-primary-light-4);
+        }
+
+        @media screen and (max-width: 768px) {
+            .main-container { padding: 12px; }
+            .stat-value { font-size: 22px; }
+            .action-bar { display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+            .action-bar .arco-btn { margin-bottom: 4px; }
+            .login-box { width: 90%; padding: 24px; }
+            .arco-tabs-nav-type-rounded .arco-tabs-tab { padding: 4px 12px; font-size: 13px; }
+            header .arco-tag { display: none; }
+            header .nav-title { font-size: 15px !important; }
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div v-if="!isLoggedIn" class="login-wrapper">
+        <div class="apple-glass login-box hover-effect">
+            <h2 style="text-align: center; margin-bottom: 24px; font-weight: 500;">
+                <icon-safe></icon-safe> 系统登录
+            </h2>
+            <a-form :model="loginForm" layout="vertical" @submit="handleLogin">
+                <a-form-item field="username" label="用户名">
+                    <a-input v-model="loginForm.username" size="medium"><template #prefix><icon-user></icon-user></template></a-input>
+                </a-form-item>
+                <a-form-item field="password" label="密码">
+                    <a-input-password v-model="loginForm.password" size="medium"><template #prefix><icon-lock></icon-lock></template></a-input-password>
+                </a-form-item>
+                <a-button type="primary" html-type="submit" long size="medium" :loading="loginLoading" style="border-radius: 8px; margin-top: 12px;">
+                    <template #icon><icon-login></icon-login></template> 进入控制台
+                </a-button>
+            </a-form>
+            <div class="footer-copyright" style="margin-top: 20px; padding: 0;">
+                &copy; 2026 2.21 Lei. <br>
+                <a href="https://github.com/Xiaoxusheng/go-auto-uploader" target="_blank">
+                    <icon-github></icon-github> go-auto-uploader
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <template v-else>
+        <header class="nav-glass" style="padding: 12px 24px; display: flex; justify-content: space-between; align-items: center;">
+            <div class="nav-title" style="font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 8px;">
+                <icon-cloud style="color: var(--color-primary-light-4); font-size: 20px;"></icon-cloud>
+                分布式文件上传系统
+                <a-tag :color="systemStatus.running ? 'green' : 'red'" size="small" style="margin-left: 8px; border-radius: 4px;">
+                    <template #icon><icon-check-circle v-if="systemStatus.running"></icon-check-circle><icon-minus-circle v-else></icon-minus-circle></template>
+                    {{ systemStatus.running ? '运行中' : '已暂停' }}
+                </a-tag>
+            </div>
+            <a-space size="medium">
+                    <span style="font-size: 12px; color: var(--color-text-3); display: flex; align-items: center; gap: 4px; margin-right: 8px;">
+                        <icon-dashboard></icon-dashboard> Uptime: {{ formatDuration(systemStatus.uptime) }}
+                    </span>
+                <a-button type="text" shape="circle" size="small" @click="openGitHub">
+                    <icon-github style="font-size: 16px; color: var(--color-text-2);"></icon-github>
+                </a-button>
+                <a-button type="text" shape="circle" size="small" @click="toggleTheme">
+                    <icon-sun-fill v-if="!isDarkMode" style="font-size: 16px; color: var(--color-text-2);"></icon-sun-fill>
+                    <icon-moon-fill v-else style="font-size: 16px; color: var(--color-text-2);"></icon-moon-fill>
+                </a-button>
+                <a-button type="text" status="danger" size="small" @click="handleLogout">
+                    <template #icon><icon-poweroff></icon-poweroff></template> 退出
+                </a-button>
+            </a-space>
+        </header>
+
+        <main class="main-container">
+            <a-tabs v-model:active-key="activeTab" type="rounded" size="small" class="apple-glass" style="padding: 16px; border-radius: 12px; border: 1px solid var(--glass-border);">
+
+                <a-tab-pane key="overview">
+                    <template #title><icon-apps></icon-apps> 系统概览</template>
+
+                    <div class="action-bar" style="margin-top: 8px;">
+                        <a-button type="primary" status="success" size="small" @click="control('start')" :disabled="systemStatus.running">
+                            <template #icon><icon-play-arrow></icon-play-arrow></template> 启动扫描
+                        </a-button>
+                        <a-button type="primary" status="warning" size="small" @click="control('pause')" :disabled="!systemStatus.running">
+                            <template #icon><icon-pause></icon-pause></template> 暂停任务
+                        </a-button>
+                        <a-button type="outline" status="danger" size="small" @click="control('stop')">
+                            <template #icon><icon-stop></icon-stop></template> 停止系统
+                        </a-button>
+                        <a-button type="outline" size="small" @click="control('rescan')">
+                            <template #icon><icon-refresh></icon-refresh></template> 手动重扫
+                        </a-button>
+                        <a-button type="outline" size="small" @click="control('relogin')">
+                            <template #icon><icon-robot></icon-robot></template> 刷新远端授权
+                        </a-button>
+                    </div>
+
+                    <a-row :gutter="[16, 16]">
+                        <a-col :xs="24" :md="16">
+                            <a-row :gutter="[16, 16]">
+                                <a-col :xs="12" :sm="6">
+                                    <a-card class="apple-glass" hoverable bordered>
+                                        <div class="stat-label"><icon-list></icon-list> 等待队列</div>
+                                        <div class="stat-value" style="color: #F5A623;">{{ queueStatus.waiting || 0 }}</div>
+                                    </a-card>
+                                </a-col>
+                                <a-col :xs="12" :sm="6">
+                                    <a-card class="apple-glass" hoverable bordered>
+                                        <div class="stat-label"><icon-cloud-upload></icon-cloud-upload> 上传中</div>
+                                        <div class="stat-value" style="color: #165DFF;">{{ queueStatus.uploading || 0 }}</div>
+                                    </a-card>
+                                </a-col>
+                                <a-col :xs="12" :sm="6">
+                                    <a-card class="apple-glass" hoverable bordered>
+                                        <div class="stat-label"><icon-check-circle></icon-check-circle> 成功队列</div>
+                                        <div class="stat-value" style="color: #00B42A;">{{ queueStatus.success || 0 }}</div>
+                                    </a-card>
+                                </a-col>
+                                <a-col :xs="12" :sm="6">
+                                    <a-card class="apple-glass" hoverable bordered>
+                                        <div class="stat-label"><icon-close-circle></icon-close-circle> 失败队列</div>
+                                        <div class="stat-value" style="color: #F53F3F;">{{ queueStatus.failed || 0 }}</div>
+                                    </a-card>
+                                </a-col>
+
+                                <a-col :xs="24" :lg="13">
+                                    <a-card class="apple-glass" hoverable bordered style="height: 100%;">
+                                        <div style="display: flex; gap:12px; align-items:center; flex-wrap: wrap; height: 100%;">
+                                            <div class="stat-label" style="margin-right: 4px; width: 100%;"><icon-tool></icon-tool> 队列快捷清理</div>
+                                            <a-button size="small" status="danger" type="outline" @click="control('clear-fail-queue')">清空失败</a-button>
+                                            <a-button size="small" status="warning" type="outline" @click="control('retry-fail-queue')">重试失败任务</a-button>
+                                            <a-button size="small" status="success" type="outline" @click="control('clear-success-queue')">清空成功记录</a-button>
+                                        </div>
+                                    </a-card>
+                                </a-col>
+
+                                <a-col :xs="24" :lg="11">
+                                    <a-card class="apple-glass" hoverable bordered style="height: 100%;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; height: 100%;">
+                                            <div>
+                                                <div class="stat-label"><icon-swap></icon-swap> WebSocket 通信网络</div>
+                                                <div style="margin-top: 10px; display: flex; align-items: center; font-size: 15px; font-weight: 500;">
+                                                    <span class="status-indicator" :class="'status-dot-' + wsStatus"></span>
+                                                    <span v-if="wsStatus === 'connected'" style="color: #00B42A; letter-spacing: 0.5px;">双向通道已连接</span>
+                                                    <span v-else-if="wsStatus === 'connecting'" style="color: #165DFF; letter-spacing: 0.5px;">正在握手连接...</span>
+                                                    <span v-else style="color: #F53F3F; letter-spacing: 0.5px;">信道断开,自动重连</span>
+                                                </div>
+                                            </div>
+                                            <icon-wifi style="font-size: 38px; color: var(--color-text-3); transition: all 0.4s;" :class="'ws-icon-' + wsStatus" />
+                                        </div>
+                                    </a-card>
+                                </a-col>
+
+                            </a-row>
+                        </a-col>
+                        <a-col :xs="24" :md="8">
+                            <a-card class="apple-glass" hoverable bordered style="height: 100%;">
+                                <div class="stat-label"><icon-pie-chart></icon-pie-chart> 整体任务分布</div>
+                                <div id="queueChart" style="height: 220px; margin-top: 12px;"></div>
+                            </a-card>
+                        </a-col>
+                    </a-row>
+
+                    <h3 style="margin: 28px 0 16px; font-size: 15px; font-weight: 500; display: flex; align-items: center; gap: 8px;">
+                        <icon-folder></icon-folder> 目录监控状态 (实时)
+                    </h3>
+                    <a-row :gutter="[16, 16]">
+                        <a-col :xs="24" :sm="12" :md="8" v-for="(dir, idx) in systemStatus.dirs" :key="idx">
+                            <a-card class="apple-glass" hoverable bordered>
+                                <template #title>
+                                    <div style="font-size: 13px; word-break: break-all; color: var(--color-text-2); display: flex; align-items: center; gap: 6px;">
+                                        <icon-drive-file></icon-drive-file> {{ dir.path }}
+                                    </div>
+                                </template>
+                                <a-descriptions :column="2" size="medium">
+                                    <a-descriptions-item label="待处理"><a-tag size="small" color="arcoblue">{{ dir.pendingFiles }}</a-tag></a-descriptions-item>
+                                    <a-descriptions-item label="已上传"><a-tag size="small" color="green">{{ dir.uploadedFiles }}</a-tag></a-descriptions-item>
+                                    <a-descriptions-item label="总文件">{{ dir.totalFiles }}</a-descriptions-item>
+                                    <a-descriptions-item label="上传量">{{ formatSize(dir.uploadedSize) }}</a-descriptions-item>
+                                </a-descriptions>
+                            </a-card>
+                        </a-col>
+                    </a-row>
+                </a-tab-pane>
+
+                <a-tab-pane key="live">
+                    <template #title><icon-thunderbolt></icon-thunderbolt> 实时任务</template>
+
+                    <div class="action-bar" style="justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <a-radio-group v-model="liveTaskFilter" type="button" size="medium" style="background-color: var(--glass-border); border-radius: 8px; padding: 2px;">
+                            <a-radio value="uploading">未上传 / 处理中 ({{ uploadingTasks.length }})</a-radio>
+                            <a-radio value="completed">已上传 ({{ completedTasks.length }})</a-radio>
+                        </a-radio-group>
+
+                        <a-button size="small" type="outline" @click="fetchLiveTasks" class="hover-effect">
+                            <template #icon><icon-refresh></icon-refresh></template> 手动刷新列表
+                        </a-button>
+                    </div>
+
+                    <transition name="fade" mode="out-in">
+                        <a-card v-if="liveTaskFilter === 'uploading'" class="apple-glass hover-effect" bordered key="uploading">
+                            <template #title>
+                                    <span style="color: var(--color-primary-light-4); display:flex; align-items:center; gap:6px;">
+                                        <icon-sync :spin="uploadingTasks.length > 0" /> 正在处理中的文件
+                                    </span>
+                            </template>
+                            <div style="overflow-x: auto;">
+                                <a-table :data="uploadingTasks" size="small" :pagination="false" style="min-width: 800px;" :bordered="false">
+                                    <template #columns>
+                                        <a-table-column title="文件名" data-index="filename" :width="240" ellipsis tooltip></a-table-column>
+                                        <a-table-column title="大小" data-index="size" :width="100"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
+                                        <a-table-column title="进度" data-index="progress" :width="200"><template #cell="{ record }"><a-progress :percent="calculatePercent(record.uploaded, record.size)" size="small"></a-progress></template></a-table-column>
+                                        <a-table-column title="速度" data-index="speed" :width="100"><template #cell="{ record }">{{ formatSpeed(record.speed) }}</template></a-table-column>
+                                        <a-table-column title="已传时间" :width="100"><template #cell="{ record }">{{ getElapsedTime(record.startTime) }}</template></a-table-column>
+                                        <a-table-column title="状态" data-index="status" :width="100"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ record.status }}</a-tag></template></a-table-column>
+                                    </template>
+                                </a-table>
+                                <div v-if="uploadingTasks.length === 0" style="text-align: center; color: var(--color-text-3); padding: 20px 0;">
+                                    目前没有正在处理的任务
+                                </div>
+                            </div>
+                        </a-card>
+
+                        <a-card v-else-if="liveTaskFilter === 'completed'" class="apple-glass hover-effect" bordered key="completed">
+                            <template #title>
+                                    <span style="color: var(--color-success-light-4); display:flex; align-items:center; gap:6px;">
+                                        <icon-check-circle-fill /> 近期已完成上传的文件
+                                    </span>
+                            </template>
+                            <div style="overflow-x: auto;">
+                                <a-table :data="completedTasks" size="small" :pagination="false" style="min-width: 800px;" :bordered="false">
+                                    <template #columns>
+                                        <a-table-column title="文件名" data-index="filename" :width="300" ellipsis tooltip></a-table-column>
+                                        <a-table-column title="大小" data-index="size" :width="120"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
+                                        <a-table-column title="传输耗时" data-index="duration" :width="120"><template #cell="{ record }">{{ formatDurationSeconds(record.duration) }}</template></a-table-column>
+                                        <a-table-column title="状态" data-index="status" :width="120"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ record.status }}</a-tag></template></a-table-column>
+                                        <a-table-column title="备注 / 错误信息" data-index="error" ellipsis tooltip></a-table-column>
+                                    </template>
+                                </a-table>
+                            </div>
+                        </a-card>
+                    </transition>
+                </a-tab-pane>
+
+                <a-tab-pane key="history">
+                    <template #title><icon-history></icon-history> 历史记录</template>
+                    <div class="action-bar">
+                        <a-input-search v-model="historyQuery.filename" placeholder="搜索文件名" size="small" style="width: 250px" @search="fetchHistory" @keyup.enter="fetchHistory"></a-input-search>
+                        <a-select v-model="historyQuery.status" placeholder="全部状态" size="small" style="width: 120px" allow-clear @change="fetchHistory">
+                            <a-option value="success">Success</a-option>
+                            <a-option value="failed">Failed</a-option>
+                        </a-select>
+                        <a-button size="small" type="primary" @click="fetchHistory"><template #icon><icon-search></icon-search></template> 查询</a-button>
+                    </div>
+                    <a-card class="apple-glass hover-effect" bordered>
+                        <div style="overflow-x: auto;">
+                            <a-table :data="historyData.items" size="small" :pagination="pagination" @page-change="onPageChange" style="min-width: 800px;" :bordered="false">
+                                <template #columns>
+                                    <a-table-column title="完成时间" data-index="id" :width="160"></a-table-column>
+                                    <a-table-column title="文件名" data-index="filename" :width="200" ellipsis tooltip></a-table-column>
+                                    <a-table-column title="大小" data-index="size" :width="100"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
+                                    <a-table-column title="耗时" data-index="duration" :width="100"><template #cell="{ record }">{{ formatDurationSeconds(record.duration) }}</template></a-table-column>
+                                    <a-table-column title="状态" data-index="status" :width="100"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ record.status }}</a-tag></template></a-table-column>
+                                    <a-table-column title="失败详情" data-index="error" ellipsis tooltip></a-table-column>
+                                </template>
+                            </a-table>
+                        </div>
+                    </a-card>
+                </a-tab-pane>
+
+                <a-tab-pane key="logs">
+                    <template #title><icon-code></icon-code> 系统终端日志</template>
+                    <div class="action-bar" style="justify-content: space-between; align-items: center;">
+                        <a-space size="small" wrap>
+                            <a-select v-model="logQuery.level" placeholder="等级" size="small" style="width: 100px" allow-clear @change="logQuery.page=1; fetchLogs()">
+                                <a-option value="info">Info</a-option>
+                                <a-option value="error">Error</a-option>
+                                <a-option value="warn">Warn</a-option>
+                            </a-select>
+                            <a-input-search v-model="logQuery.keyword" placeholder="日志关键词搜索..." size="small" style="width: 200px" @search="logQuery.page=1; fetchLogs()" @keyup.enter="logQuery.page=1; fetchLogs()"></a-input-search>
+                            <a-button size="small" type="primary" @click="logQuery.page=1; fetchLogs()"><template #icon><icon-refresh></icon-refresh></template> 立即刷新</a-button>
+                        </a-space>
+
+                        <a-space size="small" wrap>
+                            <a-select v-model="logExportLimit" size="small" style="width: 140px">
+                                <a-option :value="50">导出最新 50 条</a-option>
+                                <a-option :value="200">导出最新 200 条</a-option>
+                                <a-option :value="500">导出最新 500 条</a-option>
+                                <a-option :value="1000">导出全部 (上限1000)</a-option>
+                            </a-select>
+                            <a-button class="download-btn hover-effect" size="small" @click="downloadLogs">
+                                <template #icon><icon-download></icon-download></template> 导出 .log 文件
+                            </a-button>
+                        </a-space>
+                    </div>
+
+                    <div class="apple-glass log-container" ref="logContainerRef" style="height: 420px; margin-bottom: 12px;">
+                        <div v-for="(log, index) in logData.items" :key="index" style="margin-bottom: 6px; border-bottom: 1px dashed rgba(128,128,128,0.15); padding-bottom: 6px;">
+                            <span style="color: var(--color-text-3);">[{{ log.time }}]</span>
+                            <span :style="{ color: getLogLevelColor(log.level), display: 'inline-block', width: '55px', fontWeight: 'bold' }">[{{ log.level.toUpperCase() }}]</span>
+                            <span style="color: var(--color-text-1);">{{ log.message }}</span>
+                            <div v-if="log.error" style="color: var(--color-danger-light-4); margin-left: 175px;">↳ Err: {{ log.error }}</div>
+                        </div>
+                        <div v-if="logData.items.length === 0" style="color: var(--color-text-3); text-align: center; margin-top: 40px;">
+                            <icon-empty style="font-size: 32px; display: block; margin-bottom: 12px;"></icon-empty> 暂无系统日志
+                        </div>
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end;">
+                        <a-pagination
+                                :total="logData.total"
+                                v-model:current="logQuery.page"
+                                v-model:page-size="logQuery.limit"
+                                :page-size-options="[50, 100, 200, 500]"
+                                show-page-size
+                                size="small"
+                                @change="fetchLogs"
+                                @page-size-change="logQuery.page=1; fetchLogs()"
+                        />
+                    </div>
+                </a-tab-pane>
+
+                <a-tab-pane key="settings">
+                    <template #title><icon-settings></icon-settings> 系统参数设置</template>
+                    <a-card class="apple-glass hover-effect" bordered style="max-width: 800px;">
+                        <a-form :model="configForm" layout="vertical" @submit="saveConfig">
+                            <a-row :gutter="24">
+                                <a-col :xs="24" :sm="12"><a-form-item field="workers" label="核心并发数 (Workers)"><a-input-number v-model="configForm.workers" :min="1" :max="20" size="small"><template #prefix><icon-layers></icon-layers></template></a-input-number></a-form-item></a-col>
+                                <a-col :xs="24" :sm="12"><a-form-item field="scanInterval" label="目录扫描间隔 (分钟)"><a-input-number v-model="configForm.scanInterval" :min="1" size="small"><template #prefix><icon-clock-circle></icon-clock-circle></template></a-input-number></a-form-item></a-col>
+                            </a-row>
+                            <a-row :gutter="24">
+                                <a-col :xs="24" :sm="12"><a-form-item field="dayRate" label="白天限速封顶 (MB/s)"><a-input-number v-model="configForm.dayRate" :min="0" size="small"><template #prefix><icon-sun></icon-sun></template></a-input-number></a-form-item></a-col>
+                                <a-col :xs="24" :sm="12"><a-form-item field="nightRate" label="夜晚限速封顶 (MB/s)"><a-input-number v-model="configForm.nightRate" :min="0" size="small"><template #prefix><icon-moon></icon-moon></template></a-input-number></a-form-item></a-col>
+                            </a-row>
+                            <a-form-item field="emailInterval" label="邮件合并发送间隔 (分钟)"><a-input-number v-model="configForm.emailInterval" :min="10" size="small"><template #prefix><icon-email></icon-email></template></a-input-number></a-form-item>
+                            <a-form-item field="dirs" label="需被监听扫描的本地目录 (多目录用逗号 , 隔开)">
+                                <a-textarea v-model="configDirsString" :auto-size="{ minRows: 3 }" size="small" placeholder="例: D:\录像\, E:\LiveRecord\"></a-textarea>
+                            </a-form-item>
+                            <a-row :gutter="24">
+                                <a-col :xs="24" :sm="8"><a-form-item field="enableLogs" label="前端日志同步"><a-switch v-model="configForm.enableLogs" size="small"></a-switch></a-form-item></a-col>
+                                <a-col :xs="24" :sm="8"><a-form-item field="autoRetry" label="失败自动重试"><a-switch v-model="configForm.autoRetry" size="small"></a-switch></a-form-item></a-col>
+                                <a-col :xs="24" :sm="8"><a-form-item field="maxRetry" label="重试次数上限"><a-input-number v-model="configForm.maxRetry" :min="1" :max="10" size="small"></a-input-number></a-form-item></a-col>
+                            </a-row>
+                            <a-divider style="margin: 12px 0 24px 0"></a-divider>
+                            <a-form-item style="margin-bottom: 0;">
+                                <a-button type="primary" html-type="submit" size="medium" style="border-radius: 8px;"><template #icon><icon-save></icon-save></template> 生效并保存配置</a-button>
+                                <a-button type="outline" size="medium" style="margin-left: 12px; border-radius: 8px;" @click="fetchConfig">撤销改动</a-button>
+                            </a-form-item>
+                        </a-form>
+                    </a-card>
+                </a-tab-pane>
+
+            </a-tabs>
+        </main>
+
+        <footer class="footer-copyright">
+            &copy; 2026 2.21 Lei. All Rights Reserved. <br>
+            <a href="https://github.com/Xiaoxusheng/go-auto-uploader" target="_blank" style="display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;">
+                <icon-github></icon-github> go-auto-uploader
+            </a>
+        </footer>
+
+    </template>
+</div>
+
+<script>
+    const { createApp, ref, reactive, onMounted, onUnmounted, computed, watch, nextTick } = Vue;
+    const { Message } = ArcoVue;
+
+    const api = axios.create({ baseURL: '/api/v1', timeout: 10000 });
+    api.interceptors.response.use(
+        res => {
+            if (res.data.code !== 200) { Message.error(res.data.message || '请求失败'); return Promise.reject(new Error(res.data.message)); }
+            return res.data;
+        },
+        err => {
+            if (err.response && err.response.status === 401) { localStorage.removeItem('upload_system_token'); window.location.reload(); }
+            Message.error(err.response?.data?.message || err.message || '网络错误');
+            return Promise.reject(err);
+        }
+    );
+    api.interceptors.request.use(config => {
+        const token = localStorage.getItem('upload_system_token');
+        if (token) config.headers['Authorization'] = `Bearer ${token}`;
+        return config;
+    });
+
+    const app = createApp({
+        setup() {
+            const isDarkMode = ref(true);
+            const toggleTheme = () => { isDarkMode.value = !isDarkMode.value; applyTheme(); renderChart(); };
+            const applyTheme = () => { document.body.setAttribute('arco-theme', isDarkMode.value ? 'dark' : ''); };
+            const autoSetThemeByTime = () => {
+                const hour = new Date().getHours();
+                isDarkMode.value = !(hour >= 8 && hour < 18);
+                applyTheme();
+            };
+
+            const openGitHub = () => { window.open('https://github.com/Xiaoxusheng/go-auto-uploader', '_blank'); };
+
+            const isLoggedIn = ref(!!localStorage.getItem('upload_system_token'));
+            const loginLoading = ref(false);
+            const activeTab = ref('overview');
+
+            const wsStatus = ref('connecting');
+            const liveTaskFilter = ref('uploading');
+
+            let pollingTimer = null; let logPollingTimer = null; let ws = null;
+
+            const loginForm = reactive({ username: 'admin', password: 'admin', otp: '' });
+
+            const systemStatus = reactive({ running: false, uptime: 0, workers: 0, rate: 0, dirs: [] });
+            const queueStatus = reactive({ waiting: 0, uploading: 0, success: 0, failed: 0, retrying: 0 });
+
+            const liveTasks = ref([]);
+            const clientTime = ref(Date.now());
+
+            const uploadingTasks = computed(() => liveTasks.value.filter(t => t.status === 'uploading' || t.status === 'waiting'));
+            const completedTasks = computed(() => liveTasks.value.filter(t => t.status !== 'uploading' && t.status !== 'waiting'));
+
+            const historyQuery = reactive({ page: 1, limit: 15, filename: '', status: '' });
+            const historyData = reactive({ items: [], total: 0 });
+            const pagination = computed(() => ({ total: historyData.total, current: historyQuery.page, pageSize: historyQuery.limit, size: 'small' }));
+
+            const logQuery = reactive({ page: 1, limit: 50, level: '', keyword: '' });
+            const logData = reactive({ items: [], total: 0 });
+            const logExportLimit = ref(1000);
+            const logContainerRef = ref(null);
+
+            const configForm = ref({});
+            const configDirsString = ref('');
+
+            let chartInstance = null;
+            const renderChart = () => {
+                if (activeTab.value !== 'overview') return;
+                nextTick(() => {
+                    const dom = document.getElementById('queueChart');
+                    if (!dom) return;
+                    if (!chartInstance) chartInstance = echarts.init(dom);
+
+                    const option = {
+                        backgroundColor: 'transparent',
+                        tooltip: { trigger: 'item', formatter: '{b}状态: {c} 个文件 ({d}%)' },
+                        legend: { bottom: '0%', left: 'center', textStyle: { color: isDarkMode.value ? '#E5E6EB' : '#1D2129' }, itemGap: 12 },
+                        color: ['#F5A623', '#165DFF', '#00B42A', '#F53F3F'],
+                        series: [{
+                            type: 'pie',
+                            radius: ['45%', '70%'],
+                            center: ['50%', '42%'],
+                            avoidLabelOverlap: true,
+                            itemStyle: { borderRadius: 6, borderColor: isDarkMode.value ? '#232324' : '#ffffff', borderWidth: 2 },
+                            label: { show: false, position: 'center' },
+                            emphasis: { label: { show: true, fontSize: '16', fontWeight: 'bold' } },
+                            labelLine: { show: false },
+                            data: [
+                                { value: queueStatus.waiting, name: '等待中' },
+                                { value: queueStatus.uploading, name: '上传中' },
+                                { value: queueStatus.success, name: '已成功' },
+                                { value: queueStatus.failed, name: '已失败' }
+                            ]
+                        }]
+                    };
+                    chartInstance.setOption(option);
+                });
+            };
+
+            watch(queueStatus, renderChart, { deep: true });
+            watch(activeTab, (val) => { if (val === 'overview') { setTimeout(renderChart, 200); }});
+            window.addEventListener('resize', () => { if(chartInstance) chartInstance.resize(); });
+
+            const handleLogin = async () => {
+                loginLoading.value = true;
+                try {
+                    const res = await api.post('/auth/login', loginForm);
+                    localStorage.setItem('upload_system_token', res.data.token);
+                    isLoggedIn.value = true;
+                    Message.success('登录系统成功');
+                    initDashboard();
+                } catch (e) {} finally { loginLoading.value = false; }
+            };
+
+            const handleLogout = async () => {
+                try { await api.post('/auth/logout'); } catch (e) {}
+                localStorage.removeItem('upload_system_token');
+                isLoggedIn.value = false; cleanUp();
+            };
+
+            const fetchStatus = async () => { try { Object.assign(systemStatus, (await api.get('/status')).data); } catch (e) {} };
+            const fetchQueue = async () => { try { Object.assign(queueStatus, (await api.get('/tasks/queue')).data); } catch (e) {} };
+            const fetchLiveTasks = async () => { try { liveTasks.value = (await api.get('/tasks/live')).data || []; } catch (e) {} };
+
+            const connectWS = () => {
+                if (ws) {
+                    ws.onclose = null;
+                    ws.close();
+                }
+                wsStatus.value = 'connecting';
+
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
+
+                ws.onopen = () => {
+                    wsStatus.value = 'connected';
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (msg.type === 'uploadProgress') {
+                            const idx = liveTasks.value.findIndex(t => t.id === msg.payload.id);
+                            if (idx > -1) {
+                                liveTasks.value[idx].uploaded = msg.payload.uploaded;
+                                liveTasks.value[idx].speed = msg.payload.speed;
+                            } else fetchLiveTasks();
+                        } else if (msg.type === 'taskDone') {
+                            fetchLiveTasks(); fetchQueue();
+                        }
+                    } catch (e) {}
+                };
+
+                ws.onclose = () => {
+                    wsStatus.value = 'disconnected';
+                    if (isLoggedIn.value) setTimeout(connectWS, 5000);
+                };
+
+                ws.onerror = () => {
+                    wsStatus.value = 'disconnected';
+                };
+            };
+
+            const control = async (action) => {
+                try { await api.post(`/control/${action}`); Message.success('指令下发成功'); fetchStatus(); fetchQueue(); } catch (e) {}
+            };
+
+            const fetchHistory = async () => {
+                try {
+                    const res = await api.get('/tasks/history', { params: historyQuery });
+                    historyData.items = res.data.items || []; historyData.total = res.data.total || 0;
+                } catch (e) {}
+            };
+            const onPageChange = (page) => { historyQuery.page = page; fetchHistory(); };
+
+            const fetchLogs = async () => {
+                try {
+                    const res = await api.get('/logs', { params: logQuery });
+                    logData.items = res.data.items || [];
+                    logData.total = res.data.total || 0;
+                } catch (e) {}
+            };
+
+            const downloadLogs = () => {
+                const url = `/api/v1/logs/download?level=${logQuery.level}&keyword=${logQuery.keyword}&limit=${logExportLimit.value}`;
+                window.open(url, '_blank');
+            };
+
+            const fetchConfig = async () => {
+                try {
+                    const res = await api.get('/config');
+                    configForm.value = res.data || {};
+                    configDirsString.value = (res.data.dirs || []).join(', ');
+                } catch (e) {}
+            };
+            const saveConfig = async () => {
+                try {
+                    configForm.value.dirs = configDirsString.value.split(',').map(s => s.trim()).filter(s => s);
+                    await api.put('/config', configForm.value);
+                    Message.success('系统参数已成功保存并下发生效，后台已开始执行重新扫描');
+                    fetchStatus();
+                } catch (e) {}
+            };
+
+            const formatSize = (bytes) => {
+                if (!bytes) return '0 B';
+                const k = 1024, sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            };
+
+            const formatSpeed = (bps) => formatSize(bps) + '/s';
+            const calculatePercent = (up, tot) => (!tot ? 0 : Number((up / tot).toFixed(2)));
+
+            const formatDurationSeconds = (sec) => {
+                if (!sec && sec !== 0) return '-';
+                if (sec === 0) return '< 1s';
+                const m = Math.floor(sec / 60);
+                const s = sec % 60;
+                return m > 0 ? `${m}m ${s}s` : `${s}s`;
+            };
+
+            const formatDuration = (seconds) => {
+                const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60);
+                return `${h}h ${m}m`;
+            };
+
+            const getElapsedTime = (startTime) => {
+                if (!startTime) return '0s';
+                return formatDurationSeconds(Math.floor((clientTime.value - startTime) / 1000));
+            };
+
+            const getStatusColor = (status) => {
+                if (status.includes('success')) return 'green';
+                if (status.includes('fail')) return 'red';
+                if (status === 'uploading') return 'arcoblue';
+                return 'orange';
+            };
+            const getLogLevelColor = (level) => ({ 'info': '#00b42a', 'error': '#f53f3f', 'warn': '#ff7d00' }[level] || 'var(--color-text-3)');
+
+            const initDashboard = () => {
+                fetchStatus(); fetchQueue(); fetchLiveTasks(); fetchHistory(); fetchLogs(); fetchConfig();
+                connectWS();
+                if (pollingTimer) clearInterval(pollingTimer);
+                pollingTimer = setInterval(() => {
+                    clientTime.value = Date.now();
+                    fetchStatus(); fetchQueue();
+                }, 5000);
+            };
+
+            const cleanUp = () => {
+                if (pollingTimer) clearInterval(pollingTimer);
+                if (logPollingTimer) clearInterval(logPollingTimer);
+                if (ws) { ws.onclose = null; ws.close(); }
+                if (chartInstance) { chartInstance.dispose(); chartInstance = null; }
+            };
+
+            onMounted(() => { autoSetThemeByTime(); if (isLoggedIn.value) initDashboard(); });
+            onUnmounted(cleanUp);
+
+            watch(activeTab, (newTab) => {
+                if (newTab === 'logs') {
+                    fetchLogs();
+                    if (!logPollingTimer) logPollingTimer = setInterval(fetchLogs, 4000);
+                } else if (logPollingTimer) {
+                    clearInterval(logPollingTimer); logPollingTimer = null;
+                }
+            });
+
+            // ⭐ 核心修复：滚动到 scrollHeight（即最底部），符合终端直觉
+            watch(() => logData.items, () => {
+                nextTick(() => {
+                    if (logContainerRef.value) {
+                        logContainerRef.value.scrollTop = logContainerRef.value.scrollHeight;
+                    }
+                });
+            });
+
+            return {
+                isDarkMode, toggleTheme, openGitHub,
+                isLoggedIn, loginLoading, loginForm, activeTab, handleLogin, handleLogout,
+                wsStatus, liveTaskFilter,
+                systemStatus, queueStatus, liveTasks, uploadingTasks, completedTasks, control,
+                historyQuery, historyData, pagination, fetchHistory, onPageChange,
+                logQuery, logData, logExportLimit, logContainerRef, fetchLogs, downloadLogs,
+                configForm, configDirsString, fetchConfig, saveConfig,
+                formatSize, formatSpeed, calculatePercent, formatDuration, formatDurationSeconds, getElapsedTime, getStatusColor, getLogLevelColor, fetchLiveTasks
+            };
+        }
+    });
+
+    app.use(ArcoVue);
+    app.use(ArcoVueIcon);
+    app.mount('#app');
+</script>
+</body>
+</html>
