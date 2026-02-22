@@ -12,14 +12,13 @@ jobs:
   build:
     name: Build Matrix
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
         os: [linux, windows, darwin]
         arch: [amd64, arm64]
         exclude:
           - os: windows
-            arch: arm64   # Go 对 windows arm64 支持不稳定，先排除
+            arch: arm64
 
     steps:
       - name: Checkout
@@ -31,72 +30,64 @@ jobs:
           go-version: '1.25'
           cache: true
 
-      - name: Go mod tidy
-        run: |
-          if [ -f go.mod ]; then
-            go mod tidy
-          fi
-
       - name: Build
-        env:
-          GOOS: ${{ matrix.os }}
-          GOARCH: ${{ matrix.arch }}
+        shell: bash
         run: |
-          VERSION=${GITHUB_REF_NAME}
-          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-          BIN_NAME=uploader
-          if [ "$GOOS" = "windows" ]; then
-            BIN_NAME=uploader.exe
+          # 确定文件名
+          BIN_NAME="uploader"
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            BIN_NAME="uploader.exe"
           fi
+          
+          # 编译
+          CGO_ENABLED=0 GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} \
+          go build -trimpath -ldflags "-w -s -X main.Version=${{ github.ref_name }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          -o "$BIN_NAME"
 
-          CGO_ENABLED=0 go build -o $BIN_NAME \
-            -ldflags "-w -s \
-            -X main.Version=$VERSION \
-            -X main.BuildTime=$BUILD_TIME"
-
-          TAR_NAME=uploader-${GOOS}-${GOARCH}.tar.gz
-          tar -czf $TAR_NAME $BIN_NAME
-
-          sha256sum $TAR_NAME > $TAR_NAME.sha256
+          # 打包并命名（增加平台标识）
+          PKG_NAME="uploader-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
+          tar -czf "$PKG_NAME" "$BIN_NAME"
+          sha256sum "$PKG_NAME" > "$PKG_NAME.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: uploader-${{ matrix.os }}-${{ matrix.arch }}
-          path: |
-            uploader-*.tar.gz
-            uploader-*.sha256
+          path: uploader-*.tar.gz*
 
   release:
     name: Auto Release
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-
+    # --- 核心修复：添加写入权限 ---
+    permissions:
+      contents: write
+    # ----------------------------
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # 必须完整历史才能生成 changelog
+          fetch-depth: 0
 
-      - name: Download artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: dist
+          path: ./dist
+          merge-multiple: true # 将所有 matrix 的产物合并到同一个目录下
 
       - name: Generate Changelog
         id: changelog
+        shell: bash
         run: |
           PREV_TAG=$(git tag --sort=-creatordate | sed -n '2p')
+          echo "CHANGELOG<<EOF" >> $GITHUB_ENV
           if [ -z "$PREV_TAG" ]; then
-            echo "CHANGELOG=Initial release 🎉" >> $GITHUB_ENV
+            echo "Initial release 🎉" >> $GITHUB_ENV
           else
-            LOG=$(git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)")
-            echo "CHANGELOG<<EOF" >> $GITHUB_ENV
-            echo "$LOG" >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
+            git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)" >> $GITHUB_ENV
           fi
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -105,18 +96,13 @@ jobs:
           body: |
             ## 🚀 Release ${{ github.ref_name }}
 
-            ### 📦 Binaries
-            - linux / windows / macOS
-            - amd64 / arm64
-
             ### 📝 Changelog
             ${{ env.CHANGELOG }}
 
-            ### 🔐 Checksums
-            sha256 files included
-
+            ### 🔐 Checksums (SHA256)
+            Verified binaries for Linux, Windows, and macOS.
           files: |
-            dist/**/**/*.tar.gz
-            dist/**/**/*.sha256
+            dist/*.tar.gz
+            dist/*.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
