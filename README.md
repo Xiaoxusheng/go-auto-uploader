@@ -125,6 +125,10 @@ go build -o uploader .
             <td><img src="img/5.png" alt="上传成功页面" width="1920" /></td>
            <td><img src="img/6.png" alt="历史记录页面" width="1920" /></td>
         </tr>
+     <tr>
+            <td><img src="img/7.png" alt="主播设置页面" width="1920" /></td>
+           <td><img src="img/8.png" alt="暗黑模式页面" width="1920" /></td>
+        </tr>
     </tbody>
 </table>
 ---
