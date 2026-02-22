@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,21 +76,22 @@ type DirStatus struct {
 }
 
 type Config struct {
-	ScanInterval   int      `json:"scanInterval"`
-	Workers        int      `json:"workers"`
-	DayRate        int      `json:"dayRate"`
-	NightRate      int      `json:"nightRate"`
-	EmailInterval  int      `json:"emailInterval"`
-	Running        bool     `json:"running"`
-	AutoRetry      bool     `json:"autoRetry"`
-	MaxRetry       int      `json:"maxRetry"`
-	EnableLogs     bool     `json:"enableLogs"`
-	LogLevel       string   `json:"logLevel"`
-	Dirs           []string `json:"dirs"`
-	RemoteServer   string   `json:"remoteServer"`
-	RemoteUser     string   `json:"remoteUser"`
-	RemotePass     string   `json:"remotePass"`
-	LiveConfigPath string   `json:"liveConfigPath"`
+	ScanInterval      int      `json:"scanInterval"`
+	Workers           int      `json:"workers"`
+	DayRate           int      `json:"dayRate"`
+	NightRate         int      `json:"nightRate"`
+	EmailInterval     int      `json:"emailInterval"`
+	Running           bool     `json:"running"`
+	AutoRetry         bool     `json:"autoRetry"`
+	MaxRetry          int      `json:"maxRetry"`
+	EnableLogs        bool     `json:"enableLogs"`
+	LogLevel          string   `json:"logLevel"`
+	Dirs              []string `json:"dirs"`
+	RemoteServer      string   `json:"remoteServer"`
+	RemoteUser        string   `json:"remoteUser"`
+	RemotePass        string   `json:"remotePass"`
+	LiveConfigPath    string   `json:"liveConfigPath"`
+	RecorderContainer string   `json:"recorderContainer"`
 }
 
 type Streamer struct {
@@ -125,6 +128,7 @@ func StartWebServer(port int) {
 	mux.HandleFunc("/api/v1/tasks/live", handleLiveTasks)
 	mux.HandleFunc("/api/v1/tasks/history", handleHistory)
 	mux.HandleFunc("/api/v1/tasks/queue", handleQueue)
+
 	mux.HandleFunc("/api/v1/control/start", handleControlStart)
 	mux.HandleFunc("/api/v1/control/pause", handleControlPause)
 	mux.HandleFunc("/api/v1/control/stop", handleControlStop)
@@ -133,12 +137,18 @@ func StartWebServer(port int) {
 	mux.HandleFunc("/api/v1/control/clear-fail-queue", handleControlClearFailQueue)
 	mux.HandleFunc("/api/v1/control/retry-fail-queue", handleControlRetryFailQueue)
 	mux.HandleFunc("/api/v1/control/clear-success-queue", handleControlClearSuccessQueue)
+
 	mux.HandleFunc("/api/v1/dirs/status", handleDirsStatus)
 	mux.HandleFunc("/api/v1/config", handleConfig)
 	mux.HandleFunc("/api/v1/logs", handleLogs)
 	mux.HandleFunc("/api/v1/logs/download", handleLogsDownload)
 
 	mux.HandleFunc("/api/v1/streamers", handleStreamers)
+	mux.HandleFunc("/api/v1/streamers/active", handleActiveStreamers)
+
+	mux.HandleFunc("/api/v1/recorder/status", handleRecorderStatus)
+	mux.HandleFunc("/api/v1/recorder/control", handleRecorderControl)
+	mux.HandleFunc("/api/v1/recorder/logs", handleRecorderLogs)
 
 	mux.HandleFunc("/ws/live", handleWebSocket)
 
@@ -533,7 +543,6 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ⭐ 修复：彻底剥离 UTF-8 BOM 幽灵字符
 func handleStreamers(w http.ResponseWriter, r *http.Request) {
 	appConfigMu.RLock()
 	configPath := appConfig.LiveConfigPath
@@ -546,7 +555,6 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// ⭐ 清理物理文件头部的 UTF-8 BOM (\xef\xbb\xbf 对应的就是 \ufeff)
 		content := string(data)
 		content = strings.TrimPrefix(content, "\ufeff")
 
@@ -554,7 +562,6 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 		var streamers []Streamer
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
-			// 再次尝试清理每行开头的幽灵字符
 			line = strings.TrimPrefix(line, "\ufeff")
 
 			if line == "" {
@@ -565,14 +572,11 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(line, "#") {
 				active = false
 				line = strings.TrimPrefix(line, "#")
-				// 有些情况是 # 后面紧跟了一个 BOM
 				line = strings.TrimPrefix(line, "\ufeff")
 			}
 
-			// 解析 url 和名字
 			parts := strings.SplitN(line, ",", 2)
 			url := strings.TrimSpace(parts[0])
-			// 深度清理 URL 中可能夹杂的不可见字符
 			url = strings.ReplaceAll(url, "\ufeff", "")
 
 			name := ""
@@ -582,6 +586,11 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 				name = strings.TrimPrefix(name, "主播:")
 				name = strings.ReplaceAll(name, "\ufeff", "")
 			}
+
+			if name == "未命名" || name == "⏳ 等待自动获取..." {
+				name = ""
+			}
+
 			streamers = append(streamers, Streamer{URL: url, Name: name, Active: active})
 		}
 		sendJSONSuccess(w, streamers)
@@ -597,7 +606,6 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 
 		var sb strings.Builder
 		for _, s := range req {
-			// 在保存回物理文件前，也强制清理掉传进来的幽灵字符
 			cleanURL := strings.ReplaceAll(s.URL, "\ufeff", "")
 			cleanName := strings.ReplaceAll(s.Name, "\ufeff", "")
 
@@ -607,15 +615,13 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 
 			sb.WriteString(cleanURL)
 
-			if cleanName != "" {
+			if cleanName != "" && cleanName != "未命名" && cleanName != "⏳ 等待自动获取..." && !strings.Contains(cleanName, "等待引擎抓取") {
 				sb.WriteString(",主播: " + cleanName)
-			} else {
-				sb.WriteString(",主播: 未命名")
 			}
+
 			sb.WriteString("\n")
 		}
 
-		// 写回文件，不带 BOM
 		err := os.WriteFile(configPath, []byte(sb.String()), 0644)
 		if err != nil {
 			log.Printf("[CONTROL][ERR] 无法写入录制配置文件 %s: %v", configPath, err)
@@ -629,6 +635,126 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+}
+
+func handleActiveStreamers(w http.ResponseWriter, r *http.Request) {
+	appConfigMu.RLock()
+	configuredDirs := appConfig.Dirs
+	appConfigMu.RUnlock()
+
+	activeMap := make(map[string]bool)
+
+	for _, dir := range configuredDirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+
+		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+
+			if time.Since(info.ModTime()) < 3*time.Minute {
+				rel, err := filepath.Rel(dir, path)
+				if err == nil {
+					parts := strings.Split(filepath.ToSlash(rel), "/")
+					if len(parts) >= 2 {
+						streamerName := parts[len(parts)-2]
+						activeMap[streamerName] = true
+					} else if len(parts) == 1 {
+						name := strings.Split(parts[0], "_")[0]
+						activeMap[name] = true
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	var result []string
+	for k := range activeMap {
+		result = append(result, k)
+	}
+
+	sendJSONSuccess(w, result)
+}
+
+func handleRecorderStatus(w http.ResponseWriter, r *http.Request) {
+	appConfigMu.RLock()
+	container := appConfig.RecorderContainer
+	appConfigMu.RUnlock()
+
+	if container == "" {
+		sendJSONSuccess(w, "未配置")
+		return
+	}
+
+	// ⭐ 修改点：强制使用 container inspect，防止用户填错名字导致解析模板崩溃
+	out, err := exec.Command("docker", "container", "inspect", "-f", "{{.State.Status}}", container).CombinedOutput()
+	if err != nil {
+		errMsg := strings.TrimSpace(string(out))
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+
+		// 捕捉常见错误，返回更友好的提示
+		if strings.Contains(errMsg, "No such container") {
+			sendJSONError(w, http.StatusInternalServerError, "未找到该容器，您填写的可能是镜像名，请填写真实的容器名")
+			return
+		}
+
+		sendJSONError(w, http.StatusInternalServerError, "获取失败: "+errMsg)
+		return
+	}
+	status := strings.TrimSpace(string(out))
+	sendJSONSuccess(w, status)
+}
+
+func handleRecorderControl(w http.ResponseWriter, r *http.Request) {
+	action := r.URL.Query().Get("action")
+	if action != "start" && action != "stop" && action != "restart" {
+		sendJSONError(w, http.StatusBadRequest, "非法的控制指令")
+		return
+	}
+
+	appConfigMu.RLock()
+	container := appConfig.RecorderContainer
+	appConfigMu.RUnlock()
+
+	if container == "" {
+		sendJSONError(w, http.StatusBadRequest, "尚未配置 Docker 容器名，请在设置中填写")
+		return
+	}
+
+	log.Printf("[DOCKER] 用户请求执行容器控制: docker %s %s", action, container)
+
+	out, err := exec.Command("docker", action, container).CombinedOutput()
+
+	if err != nil {
+		log.Printf("[DOCKER][ERR] 执行失败: %s", string(out))
+		errMsg := strings.TrimSpace(string(out))
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		sendJSONError(w, http.StatusInternalServerError, "操作失败: "+errMsg)
+		return
+	}
+
+	sendJSONSuccess(w, "操作成功执行")
+}
+
+func handleRecorderLogs(w http.ResponseWriter, r *http.Request) {
+	appConfigMu.RLock()
+	container := appConfig.RecorderContainer
+	appConfigMu.RUnlock()
+
+	out, err := exec.Command("docker", "logs", "--tail", "100", container).CombinedOutput()
+	if err != nil {
+		sendJSONError(w, http.StatusInternalServerError, "获取日志失败: "+string(out))
+		return
+	}
+	sendJSONSuccess(w, string(out))
 }
 
 func handleLogs(w http.ResponseWriter, r *http.Request) {

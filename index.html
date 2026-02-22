@@ -129,6 +129,7 @@
         .action-bar { margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
 
         .log-container { padding: 16px; height: 420px; overflow-y: auto; font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 13px; border-radius: 12px; scroll-behavior: smooth; border: 1px solid var(--glass-border); }
+        .docker-logs { background: #1e1e1e; color: #a9b7c6; font-family: 'Consolas', monospace; padding: 16px; border-radius: 8px; white-space: pre-wrap; overflow-y: auto; height: 500px; font-size: 13px; }
 
         .download-btn {
             background-color: var(--color-primary-light-1);
@@ -191,7 +192,7 @@
                 </a-button>
             </a-form>
             <div class="footer-copyright" style="margin-top: 20px; padding: 0;">
-                &copy; 2026 2.21 Lei. <br>
+                &copy; 2026 Lei. <br>
                 <a href="https://github.com/Xiaoxusheng/go-auto-uploader" target="_blank">
                     <icon-github></icon-github> go-auto-uploader
                 </a>
@@ -466,9 +467,28 @@
                     <template #title><icon-video-camera></icon-video-camera> 录制名单管理</template>
 
                     <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <div style="font-size: 15px; font-weight: 500;">
+                                    <icon-computer /> 录制引擎容器 (Docker)
+                                </div>
+                                <a-badge v-if="recorderStatus === 'running'" status="success" text="🟢 Running (运行中)"></a-badge>
+                                <a-badge v-else-if="recorderStatus === 'exited'" status="danger" text="🔴 Exited (已停止)"></a-badge>
+                                <a-badge v-else status="warning" :text="'🟠 ' + recorderStatus"></a-badge>
+                            </div>
+                            <a-space size="small">
+                                <a-button type="primary" status="success" size="small" @click="controlRecorder('start')" :disabled="recorderStatus === 'running' || recorderControlLoading">启动引擎</a-button>
+                                <a-button type="primary" status="warning" size="small" @click="controlRecorder('restart')" :loading="recorderControlLoading">重启引擎 (使配置生效)</a-button>
+                                <a-button type="outline" status="danger" size="small" @click="controlRecorder('stop')" :disabled="recorderStatus !== 'running' || recorderControlLoading">停止录制</a-button>
+                                <a-button type="secondary" size="small" @click="openLogsModal"><template #icon><icon-code/></template> 实时引擎日志</a-button>
+                            </a-space>
+                        </div>
+                    </a-card>
+
+                    <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
                         <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
                             <a-input v-model="newStreamer.url" placeholder="在此输入直播间链接 (例如: https://live.douyin.com/...)" style="width: 350px;" size="medium"><template #prefix><icon-link/></template></a-input>
-                            <a-input v-model="newStreamer.name" placeholder="主播名称" style="width: 180px;" size="medium"><template #prefix><icon-user/></template></a-input>
+                            <a-input v-model="newStreamer.name" placeholder="主播名称 (留空自动抓取)" style="width: 180px;" size="medium"><template #prefix><icon-user/></template></a-input>
                             <a-button type="primary" status="success" @click="addStreamer" size="medium">
                                 <template #icon><icon-plus/></template> 添加到名单
                             </a-button>
@@ -495,8 +515,11 @@
                                 <template #columns>
                                     <a-table-column title="主播名称" data-index="name" :width="180">
                                         <template #cell="{ record }">
-                                            <span :style="{ color: record.active ? 'var(--color-text-1)' : 'var(--color-text-3)', fontWeight: record.active ? '500' : 'normal' }">
-                                                {{ record.name || '未命名' }}
+                                            <span v-if="record.name" :style="{ color: record.active ? 'var(--color-text-1)' : 'var(--color-text-3)', fontWeight: record.active ? '500' : 'normal' }">
+                                                {{ record.name }}
+                                            </span>
+                                            <span v-else style="color: var(--color-text-4); font-size: 13px;">
+                                                <icon-sync spin /> ⏳ 等待抓取...
                                             </span>
                                         </template>
                                     </a-table-column>
@@ -509,15 +532,20 @@
                                         </template>
                                     </a-table-column>
 
-                                    <a-table-column title="监听状态" data-index="active" :width="160" align="center">
+                                    <a-table-column title="录制状态" :width="120" align="center">
                                         <template #cell="{ record }">
-                                            <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
-                                                <a-badge :status="record.active ? 'success' : 'normal'" :text="record.active ? '监控中' : '已忽略'" style="margin-right: 4px;"></a-badge>
+                                            <a-badge v-if="activeRecordingStreamers.includes(record.name) && record.active" status="processing" color="red" text="正在录制"></a-badge>
+                                            <a-badge v-else status="normal" text="未在录制"></a-badge>
+                                        </template>
+                                    </a-table-column>
 
-                                                <a-switch v-model="record.active" type="round" size="small" @change="saveStreamers(false)">
-                                                    <template #checked-icon><icon-check/></template>
-                                                    <template #unchecked-icon><icon-close/></template>
-                                                </a-switch>
+                                    <a-table-column title="监听状态" data-index="active" :width="120" align="center">
+                                        <template #cell="{ record }">
+                                            <div style="display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                                <a-switch v-model="record.active" size="small" @change="saveStreamers(false)"></a-switch>
+                                                <span :style="{ color: record.active ? 'var(--color-success-light-4)' : 'var(--color-text-4)', fontSize: '13px' }">
+                                                    {{ record.active ? '监控中' : '已忽略' }}
+                                                </span>
                                             </div>
                                         </template>
                                     </a-table-column>
@@ -591,9 +619,19 @@
                     <template #title><icon-settings></icon-settings> 系统参数设置</template>
                     <a-card class="apple-glass hover-effect" bordered style="max-width: 800px;">
                         <a-form :model="configForm" layout="vertical" @submit="saveConfig">
-                            <a-form-item field="liveConfigPath" label="直播录制配置文件物理路径 (URL_config.ini)">
-                                <a-input v-model="configForm.liveConfigPath" size="small"><template #prefix><icon-file></icon-file></template></a-input>
-                            </a-form-item>
+
+                            <a-row :gutter="24">
+                                <a-col :xs="24" :sm="12">
+                                    <a-form-item field="liveConfigPath" label="直播录制配置文件物理路径 (URL_config.ini)">
+                                        <a-input v-model="configForm.liveConfigPath" size="small"><template #prefix><icon-file></icon-file></template></a-input>
+                                    </a-form-item>
+                                </a-col>
+                                <a-col :xs="24" :sm="12">
+                                    <a-form-item field="recorderContainer" label="录制引擎 Docker 容器名">
+                                        <a-input v-model="configForm.recorderContainer" size="small"><template #prefix><icon-computer></icon-computer></template></a-input>
+                                    </a-form-item>
+                                </a-col>
+                            </a-row>
 
                             <a-form-item field="remoteServer" label="远端服务器 API 地址">
                                 <a-input v-model="configForm.remoteServer" size="small" placeholder="例如: https://wustwust.cn:8081"><template #prefix><icon-link></icon-link></template></a-input>
@@ -632,11 +670,22 @@
         </main>
 
         <footer class="footer-copyright">
-            &copy; 2026 2.21 Lei. All Rights Reserved. <br>
+            &copy; 2026 Lei. All Rights Reserved. <br>
             <a href="https://github.com/Xiaoxusheng/go-auto-uploader" target="_blank" style="display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;">
                 <icon-github></icon-github> go-auto-uploader
             </a>
         </footer>
+
+        <a-modal v-model:visible="showLogsModal" title="录制引擎实时日志输出" width="80%" :footer="false" draggable>
+            <div class="action-bar" style="margin-bottom: 12px;">
+                <a-button type="primary" size="small" @click="fetchRecorderLogs"><template #icon><icon-refresh/></template> 刷新日志</a-button>
+                <span style="color: var(--color-text-3); font-size: 13px; margin-left: 12px;">显示最后 100 行容器日志</span>
+            </div>
+            <div class="docker-logs" ref="dockerLogsRef">
+                {{ recorderLogsContent }}
+                <div v-if="!recorderLogsContent" style="color: gray;">暂无日志输出...</div>
+            </div>
+        </a-modal>
 
     </template>
 </div>
@@ -646,6 +695,7 @@
     const { Message, Modal, Notification } = ArcoVue;
 
     const api = axios.create({ baseURL: '/api/v1', timeout: 10000 });
+
     api.interceptors.response.use(
         res => {
             if (res.data.code !== 200) { Message.error(res.data.message || '请求失败'); return Promise.reject(new Error(res.data.message)); }
@@ -709,7 +759,10 @@
 
             const liveTaskFilter = ref('uploading');
 
-            let pollingTimer = null; let logPollingTimer = null; let ws = null;
+            let pollingTimer = null;
+            let logPollingTimer = null;
+            let streamerPollingTimer = null;
+            let ws = null;
 
             const loginForm = reactive({ username: 'admin', password: 'admin', otp: '' });
 
@@ -722,6 +775,15 @@
             const streamers = ref([]);
             const newStreamer = reactive({ url: '', name: '' });
             const activeStreamersCount = computed(() => streamers.value.filter(s => s.active).length);
+            const isSavingStreamers = ref(false);
+
+            const activeRecordingStreamers = ref([]);
+
+            const recorderStatus = ref('读取中...');
+            const recorderControlLoading = ref(false);
+            const showLogsModal = ref(false);
+            const recorderLogsContent = ref('');
+            const dockerLogsRef = ref(null);
 
             const uploadingTasks = computed(() => liveTasks.value.filter(t => t.status === 'uploading' || t.status === 'waiting'));
             const completedTasks = computed(() => liveTasks.value.filter(t => t.status !== 'uploading' && t.status !== 'waiting'));
@@ -799,7 +861,57 @@
             const fetchQueue = async () => { try { Object.assign(queueStatus, (await api.get('/tasks/queue')).data); } catch (e) {} };
             const fetchLiveTasks = async () => { try { liveTasks.value = (await api.get('/tasks/live')).data || []; } catch (e) {} };
 
+            const fetchRecorderStatus = async () => {
+                try {
+                    const res = await api.get('/recorder/status');
+                    recorderStatus.value = res.data || '获取失败';
+                } catch (e) {
+                    recorderStatus.value = '离线/异常';
+                }
+            };
+
+            const controlRecorder = async (action) => {
+                if (!configForm.value.recorderContainer) {
+                    Message.error('请先在系统参数设置中配置 Docker 容器名');
+                    activeTab.value = 'settings';
+                    return;
+                }
+                recorderControlLoading.value = true;
+                try {
+                    await api.post('/recorder/control', null, { params: { action } });
+                    Message.success('操作已成功执行');
+                    fetchRecorderStatus();
+                } catch (e) {} finally {
+                    recorderControlLoading.value = false;
+                }
+            };
+
+            const fetchRecorderLogs = async () => {
+                try {
+                    const res = await api.get('/recorder/logs');
+                    recorderLogsContent.value = res.data;
+                    nextTick(() => {
+                        if (dockerLogsRef.value) {
+                            dockerLogsRef.value.scrollTop = dockerLogsRef.value.scrollHeight;
+                        }
+                    });
+                } catch (e) {}
+            };
+
+            const openLogsModal = () => {
+                showLogsModal.value = true;
+                fetchRecorderLogs();
+            };
+
+            const fetchActiveStreamers = async () => {
+                try {
+                    const res = await api.get('/streamers/active');
+                    activeRecordingStreamers.value = res.data || [];
+                } catch (e) {}
+            };
+
             const fetchStreamers = async () => {
+                if (isSavingStreamers.value) return;
                 try {
                     const res = await api.get('/streamers');
                     streamers.value = res.data || [];
@@ -807,10 +919,16 @@
             };
 
             const saveStreamers = async (showMsg = true) => {
+                isSavingStreamers.value = true;
                 try {
                     await api.put('/streamers', streamers.value);
                     if (showMsg) Message.success('录制名单配置已热更新并保存到文件');
-                } catch (e) {}
+                } catch (e) {
+                } finally {
+                    const res = await api.get('/streamers');
+                    streamers.value = res.data || [];
+                    setTimeout(() => { isSavingStreamers.value = false; }, 500);
+                }
             };
 
             const addStreamer = () => {
@@ -994,6 +1112,7 @@
 
                     let changes = [];
                     if (configForm.value.liveConfigPath !== originalConfigSnapshot.liveConfigPath) changes.push(`📄 录制名单路径已更新`);
+                    if (configForm.value.recorderContainer !== originalConfigSnapshot.recorderContainer) changes.push(`💻 容器名已更新`);
                     if (configForm.value.remoteServer !== originalConfigSnapshot.remoteServer) changes.push(`🔗 API 地址已更新`);
                     if (configForm.value.remoteUser !== originalConfigSnapshot.remoteUser) changes.push(`👤 认证账号已更新`);
                     if (configForm.value.remotePass !== originalConfigSnapshot.remotePass) changes.push(`🔑 认证密码已更新`);
@@ -1083,6 +1202,7 @@
             const cleanUp = () => {
                 if (pollingTimer) clearInterval(pollingTimer);
                 if (logPollingTimer) clearInterval(logPollingTimer);
+                if (streamerPollingTimer) clearInterval(streamerPollingTimer);
                 if (pingTimer) clearInterval(pingTimer);
                 if (ws) { ws.onclose = null; ws.close(); }
                 if (chartInstance) { chartInstance.dispose(); chartInstance = null; }
@@ -1104,7 +1224,18 @@
                 }
 
                 if (newTab === 'streamers') {
+                    fetchRecorderStatus();
                     fetchStreamers();
+                    fetchActiveStreamers();
+                    if (!streamerPollingTimer) {
+                        streamerPollingTimer = setInterval(() => {
+                            fetchRecorderStatus();
+                            fetchStreamers();
+                            fetchActiveStreamers();
+                        }, 3000);
+                    }
+                } else if (streamerPollingTimer) {
+                    clearInterval(streamerPollingTimer); streamerPollingTimer = null;
                 }
             });
 
@@ -1125,6 +1256,8 @@
                 logQuery, logData, logExportLimit, logContainerRef, fetchLogs, downloadLogs,
                 configForm, configDirsString, fetchConfig, saveConfig,
                 streamers, newStreamer, activeStreamersCount, fetchStreamers, saveStreamers, addStreamer, removeStreamer,
+                activeRecordingStreamers,
+                recorderStatus, recorderControlLoading, showLogsModal, recorderLogsContent, dockerLogsRef, fetchRecorderStatus, controlRecorder, fetchRecorderLogs, openLogsModal,
                 formatSize, formatSpeed, calculatePercent, formatDuration, formatDurationSeconds, getElapsedTime, getStatusColor, getLogLevelColor, fetchLiveTasks, formatStatusText
             };
         }
