@@ -1,0 +1,32 @@
+[Unit]
+Description=File Auto Uploader Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# 程序路径
+ExecStart=/home/upload/uploader \
+  -dirs=/home/file/static/抖音直播,/home/file/static/SOOP \
+  -workers=5 \
+  -rate=10 \
+  -server=http://127.0.0.1:5244 \
+  -web-port=8888
+# 工作目录（hash 文件、日志都在这里）
+WorkingDirectory=/home/upload
+
+# 异常自动重启
+Restart=always
+RestartSec=10
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+
+# 资源限制（避免大文件被系统杀）
+LimitNOFILE=1048576
+OOMScoreAdjust=-1000
+
+[Install]
+WantedBy=multi-user.target

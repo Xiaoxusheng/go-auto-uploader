@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,22 +73,28 @@ type DirStatus struct {
 	LastScanTime  int64  `json:"lastScanTime"`
 }
 
-// ⭐ Config 结构体新增服务器信息字段
 type Config struct {
-	ScanInterval  int      `json:"scanInterval"`
-	Workers       int      `json:"workers"`
-	DayRate       int      `json:"dayRate"`
-	NightRate     int      `json:"nightRate"`
-	EmailInterval int      `json:"emailInterval"`
-	Running       bool     `json:"running"`
-	AutoRetry     bool     `json:"autoRetry"`
-	MaxRetry      int      `json:"maxRetry"`
-	EnableLogs    bool     `json:"enableLogs"`
-	LogLevel      string   `json:"logLevel"`
-	Dirs          []string `json:"dirs"`
-	RemoteServer  string   `json:"remoteServer"`
-	RemoteUser    string   `json:"remoteUser"`
-	RemotePass    string   `json:"remotePass"`
+	ScanInterval   int      `json:"scanInterval"`
+	Workers        int      `json:"workers"`
+	DayRate        int      `json:"dayRate"`
+	NightRate      int      `json:"nightRate"`
+	EmailInterval  int      `json:"emailInterval"`
+	Running        bool     `json:"running"`
+	AutoRetry      bool     `json:"autoRetry"`
+	MaxRetry       int      `json:"maxRetry"`
+	EnableLogs     bool     `json:"enableLogs"`
+	LogLevel       string   `json:"logLevel"`
+	Dirs           []string `json:"dirs"`
+	RemoteServer   string   `json:"remoteServer"`
+	RemoteUser     string   `json:"remoteUser"`
+	RemotePass     string   `json:"remotePass"`
+	LiveConfigPath string   `json:"liveConfigPath"`
+}
+
+type Streamer struct {
+	URL    string `json:"url"`
+	Name   string `json:"name"`
+	Active bool   `json:"active"`
 }
 
 type LogEntry struct {
@@ -130,6 +137,9 @@ func StartWebServer(port int) {
 	mux.HandleFunc("/api/v1/config", handleConfig)
 	mux.HandleFunc("/api/v1/logs", handleLogs)
 	mux.HandleFunc("/api/v1/logs/download", handleLogsDownload)
+
+	mux.HandleFunc("/api/v1/streamers", handleStreamers)
+
 	mux.HandleFunc("/ws/live", handleWebSocket)
 
 	go wsBroadcastLoop()
@@ -424,7 +434,6 @@ func handleControlStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleControlRelogin(w http.ResponseWriter, r *http.Request) {
-	// 如果用户修改了账号密码点保存，我们顺带在这个接口帮他重连
 	if err := login(); err != nil {
 		log.Println("[CONTROL][ERR] 用户尝试刷新远端授权失败:", err)
 		sendJSONError(w, http.StatusInternalServerError, "Relogin failed")
@@ -502,7 +511,6 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		appConfigMu.RLock()
 		currentConfig := appConfig
 		appConfigMu.RUnlock()
-		// 处于安全考虑，如果你不想让密码回显，可以把 RemotePass 抹掉，但为了面板方便编辑，这里先下发
 		sendJSONSuccess(w, currentConfig)
 	case http.MethodPut:
 		var newConfig Config
@@ -523,6 +531,104 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
+}
+
+// ⭐ 修复：彻底剥离 UTF-8 BOM 幽灵字符
+func handleStreamers(w http.ResponseWriter, r *http.Request) {
+	appConfigMu.RLock()
+	configPath := appConfig.LiveConfigPath
+	appConfigMu.RUnlock()
+
+	if r.Method == http.MethodGet {
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			sendJSONSuccess(w, []Streamer{})
+			return
+		}
+
+		// ⭐ 清理物理文件头部的 UTF-8 BOM (\xef\xbb\xbf 对应的就是 \ufeff)
+		content := string(data)
+		content = strings.TrimPrefix(content, "\ufeff")
+
+		lines := strings.Split(content, "\n")
+		var streamers []Streamer
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			// 再次尝试清理每行开头的幽灵字符
+			line = strings.TrimPrefix(line, "\ufeff")
+
+			if line == "" {
+				continue
+			}
+
+			active := true
+			if strings.HasPrefix(line, "#") {
+				active = false
+				line = strings.TrimPrefix(line, "#")
+				// 有些情况是 # 后面紧跟了一个 BOM
+				line = strings.TrimPrefix(line, "\ufeff")
+			}
+
+			// 解析 url 和名字
+			parts := strings.SplitN(line, ",", 2)
+			url := strings.TrimSpace(parts[0])
+			// 深度清理 URL 中可能夹杂的不可见字符
+			url = strings.ReplaceAll(url, "\ufeff", "")
+
+			name := ""
+			if len(parts) > 1 {
+				name = strings.TrimSpace(parts[1])
+				name = strings.TrimPrefix(name, "主播: ")
+				name = strings.TrimPrefix(name, "主播:")
+				name = strings.ReplaceAll(name, "\ufeff", "")
+			}
+			streamers = append(streamers, Streamer{URL: url, Name: name, Active: active})
+		}
+		sendJSONSuccess(w, streamers)
+		return
+	}
+
+	if r.Method == http.MethodPut {
+		var req []Streamer
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sendJSONError(w, http.StatusBadRequest, "Invalid JSON body")
+			return
+		}
+
+		var sb strings.Builder
+		for _, s := range req {
+			// 在保存回物理文件前，也强制清理掉传进来的幽灵字符
+			cleanURL := strings.ReplaceAll(s.URL, "\ufeff", "")
+			cleanName := strings.ReplaceAll(s.Name, "\ufeff", "")
+
+			if !s.Active {
+				sb.WriteString("#")
+			}
+
+			sb.WriteString(cleanURL)
+
+			if cleanName != "" {
+				sb.WriteString(",主播: " + cleanName)
+			} else {
+				sb.WriteString(",主播: 未命名")
+			}
+			sb.WriteString("\n")
+		}
+
+		// 写回文件，不带 BOM
+		err := os.WriteFile(configPath, []byte(sb.String()), 0644)
+		if err != nil {
+			log.Printf("[CONTROL][ERR] 无法写入录制配置文件 %s: %v", configPath, err)
+			sendJSONError(w, http.StatusInternalServerError, "保存配置文件失败")
+			return
+		}
+
+		log.Printf("[CONTROL] 🎥 用户更新了直播监控名单，共 %d 条记录已写入物理文件", len(req))
+		sendJSONSuccess(w, nil)
+		return
+	}
+
+	sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 }
 
 func handleLogs(w http.ResponseWriter, r *http.Request) {

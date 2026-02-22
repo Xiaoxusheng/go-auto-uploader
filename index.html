@@ -462,6 +462,79 @@
                     </a-card>
                 </a-tab-pane>
 
+                <a-tab-pane key="streamers">
+                    <template #title><icon-video-camera></icon-video-camera> 录制名单管理</template>
+
+                    <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
+                        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                            <a-input v-model="newStreamer.url" placeholder="在此输入直播间链接 (例如: https://live.douyin.com/...)" style="width: 350px;" size="medium"><template #prefix><icon-link/></template></a-input>
+                            <a-input v-model="newStreamer.name" placeholder="主播名称" style="width: 180px;" size="medium"><template #prefix><icon-user/></template></a-input>
+                            <a-button type="primary" status="success" @click="addStreamer" size="medium">
+                                <template #icon><icon-plus/></template> 添加到名单
+                            </a-button>
+                            <div style="flex: 1;"></div>
+                            <div style="display: flex; gap: 16px; font-size: 13px;">
+                                <span><icon-menu /> 总计: <b>{{ streamers.length }}</b></span>
+                                <span style="color: #00B42A"><icon-play-circle /> 监控中: <b>{{ activeStreamersCount }}</b></span>
+                                <span style="color: var(--color-text-3)"><icon-minus-circle /> 已忽略: <b>{{ streamers.length - activeStreamersCount }}</b></span>
+                            </div>
+                        </div>
+                    </a-card>
+
+                    <a-card class="apple-glass hover-effect" bordered>
+                        <div style="overflow-x: auto;">
+                            <a-table :data="streamers" size="small" :pagination="{ pageSize: 20 }"
+                                     style="min-height: 450px;"
+                                     bordered stripe hoverable column-resizable>
+                                <template #empty>
+                                    <div style="padding: 100px 0; color: var(--color-text-3); text-align: center;">
+                                        <icon-user-group style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-user-group>
+                                        <div>当前配置文件中没有主播记录</div>
+                                    </div>
+                                </template>
+                                <template #columns>
+                                    <a-table-column title="主播名称" data-index="name" :width="180">
+                                        <template #cell="{ record }">
+                                            <span :style="{ color: record.active ? 'var(--color-text-1)' : 'var(--color-text-3)', fontWeight: record.active ? '500' : 'normal' }">
+                                                {{ record.name || '未命名' }}
+                                            </span>
+                                        </template>
+                                    </a-table-column>
+
+                                    <a-table-column title="直播链接" data-index="url" ellipsis tooltip>
+                                        <template #cell="{ record }">
+                                            <a :href="record.url" target="_blank" :style="{ color: record.active ? 'var(--color-primary-light-4)' : 'var(--color-text-4)', textDecoration: 'none' }">
+                                                {{ record.url }}
+                                            </a>
+                                        </template>
+                                    </a-table-column>
+
+                                    <a-table-column title="监听状态" data-index="active" :width="160" align="center">
+                                        <template #cell="{ record }">
+                                            <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+                                                <a-badge :status="record.active ? 'success' : 'normal'" :text="record.active ? '监控中' : '已忽略'" style="margin-right: 4px;"></a-badge>
+
+                                                <a-switch v-model="record.active" type="round" size="small" @change="saveStreamers(false)">
+                                                    <template #checked-icon><icon-check/></template>
+                                                    <template #unchecked-icon><icon-close/></template>
+                                                </a-switch>
+                                            </div>
+                                        </template>
+                                    </a-table-column>
+
+                                    <a-table-column title="操作" :width="100" align="center">
+                                        <template #cell="{ rowIndex }">
+                                            <a-button type="text" status="danger" size="mini" @click="removeStreamer(rowIndex)">
+                                                <template #icon><icon-delete/></template> 删除
+                                            </a-button>
+                                        </template>
+                                    </a-table-column>
+                                </template>
+                            </a-table>
+                        </div>
+                    </a-card>
+                </a-tab-pane>
+
                 <a-tab-pane key="logs">
                     <template #title><icon-code></icon-code> 系统终端日志</template>
                     <div class="action-bar" style="justify-content: space-between; align-items: center;">
@@ -518,6 +591,10 @@
                     <template #title><icon-settings></icon-settings> 系统参数设置</template>
                     <a-card class="apple-glass hover-effect" bordered style="max-width: 800px;">
                         <a-form :model="configForm" layout="vertical" @submit="saveConfig">
+                            <a-form-item field="liveConfigPath" label="直播录制配置文件物理路径 (URL_config.ini)">
+                                <a-input v-model="configForm.liveConfigPath" size="small"><template #prefix><icon-file></icon-file></template></a-input>
+                            </a-form-item>
+
                             <a-form-item field="remoteServer" label="远端服务器 API 地址">
                                 <a-input v-model="configForm.remoteServer" size="small" placeholder="例如: https://wustwust.cn:8081"><template #prefix><icon-link></icon-link></template></a-input>
                             </a-form-item>
@@ -642,6 +719,10 @@
             const liveTasks = ref([]);
             const clientTime = ref(Date.now());
 
+            const streamers = ref([]);
+            const newStreamer = reactive({ url: '', name: '' });
+            const activeStreamersCount = computed(() => streamers.value.filter(s => s.active).length);
+
             const uploadingTasks = computed(() => liveTasks.value.filter(t => t.status === 'uploading' || t.status === 'waiting'));
             const completedTasks = computed(() => liveTasks.value.filter(t => t.status !== 'uploading' && t.status !== 'waiting'));
 
@@ -717,6 +798,40 @@
             const fetchStatus = async () => { try { Object.assign(systemStatus, (await api.get('/status')).data); } catch (e) {} };
             const fetchQueue = async () => { try { Object.assign(queueStatus, (await api.get('/tasks/queue')).data); } catch (e) {} };
             const fetchLiveTasks = async () => { try { liveTasks.value = (await api.get('/tasks/live')).data || []; } catch (e) {} };
+
+            const fetchStreamers = async () => {
+                try {
+                    const res = await api.get('/streamers');
+                    streamers.value = res.data || [];
+                } catch (e) {}
+            };
+
+            const saveStreamers = async (showMsg = true) => {
+                try {
+                    await api.put('/streamers', streamers.value);
+                    if (showMsg) Message.success('录制名单配置已热更新并保存到文件');
+                } catch (e) {}
+            };
+
+            const addStreamer = () => {
+                if (!newStreamer.url) {
+                    Message.warning('请输入直播间链接');
+                    return;
+                }
+                streamers.value.unshift({
+                    url: newStreamer.url.trim(),
+                    name: newStreamer.name.trim(),
+                    active: true
+                });
+                newStreamer.url = '';
+                newStreamer.name = '';
+                saveStreamers();
+            };
+
+            const removeStreamer = (index) => {
+                streamers.value.splice(index, 1);
+                saveStreamers();
+            };
 
             const triggerWsPulse = (eventType) => {
                 wsStats.msgCount++;
@@ -878,6 +993,7 @@
                     await api.put('/config', configForm.value);
 
                     let changes = [];
+                    if (configForm.value.liveConfigPath !== originalConfigSnapshot.liveConfigPath) changes.push(`📄 录制名单路径已更新`);
                     if (configForm.value.remoteServer !== originalConfigSnapshot.remoteServer) changes.push(`🔗 API 地址已更新`);
                     if (configForm.value.remoteUser !== originalConfigSnapshot.remoteUser) changes.push(`👤 认证账号已更新`);
                     if (configForm.value.remotePass !== originalConfigSnapshot.remotePass) changes.push(`🔑 认证密码已更新`);
@@ -983,9 +1099,12 @@
                     clearInterval(logPollingTimer); logPollingTimer = null;
                 }
 
-                // ⭐ 修复：切换到历史记录标签页时，自动拉取最新历史记录数据
                 if (newTab === 'history') {
                     fetchHistory();
+                }
+
+                if (newTab === 'streamers') {
+                    fetchStreamers();
                 }
             });
 
@@ -1005,6 +1124,7 @@
                 historyQuery, historyData, pagination, fetchHistory, onPageChange,
                 logQuery, logData, logExportLimit, logContainerRef, fetchLogs, downloadLogs,
                 configForm, configDirsString, fetchConfig, saveConfig,
+                streamers, newStreamer, activeStreamersCount, fetchStreamers, saveStreamers, addStreamer, removeStreamer,
                 formatSize, formatSpeed, calculatePercent, formatDuration, formatDurationSeconds, getElapsedTime, getStatusColor, getLogLevelColor, fetchLiveTasks, formatStatusText
             };
         }

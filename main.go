@@ -30,12 +30,10 @@ var (
 	reportMinutes    int
 	scanningInterval int
 	webPort          int
+	liveConfigPath   string // ⭐ 新增：录制名单配置文件路径
 
-	dashboardUsername    = "admin"
-	dashboardPassword    = "admin"
-	uploadServerUsername = "admin"
-	uploadServerPassword = "LilKmxNF"
-	otpCode              = "123456"
+	dashboardUsername = "admin"
+	dashboardPassword = "admin"
 
 	token   string
 	tokenMu sync.Mutex
@@ -163,6 +161,8 @@ func main() {
 	flag.IntVar(&scanningInterval, "scan-interval", 30, "默认30min扫描一次")
 	flag.IntVar(&reportMinutes, "report-minutes", 360, "邮件统计分钟")
 	flag.IntVar(&webPort, "web-port", 8080, "Web API 端口")
+	// ⭐ 默认预设为你给的物理路径
+	flag.StringVar(&liveConfigPath, "live-config", "/home/live/DouyinLiveRecorder/config/URL_config.ini", "录制配置文件路径")
 	flag.Parse()
 
 	if dirs == "" {
@@ -183,6 +183,7 @@ func main() {
 	appConfig.RemoteServer = server
 	appConfig.RemoteUser = "admin"
 	appConfig.RemotePass = "LilKmxNF"
+	appConfig.LiveConfigPath = liveConfigPath // ⭐ 将路径存入全局配置
 	appConfigMu.Unlock()
 
 	addLog("info", "系统初始化完成，启动中...", "")
@@ -352,8 +353,6 @@ func runOnce(triggerReason string) {
 				return nil
 			}
 
-			// ⭐ 核心防线 1：热文件跳过。
-			// 如果文件在过去 2 分钟内被修改过，说明可能还在录制/拷贝中，静默跳过它。
 			if time.Since(info.ModTime()) < 2*time.Minute {
 				return nil
 			}
@@ -386,7 +385,6 @@ func runOnce(triggerReason string) {
 	})
 }
 
-// ⭐ 核心防线 2：清理该文件历史产生的“失败”僵尸记录
 func cleanupFailedTasksByPath(targetPath string) {
 	liveTasksMu.Lock()
 	defer liveTasksMu.Unlock()
@@ -473,7 +471,6 @@ func handleFile(path string) {
 			"status": "success",
 		})
 
-		// ⭐ 如果秒传成功了，说明之前残留的失败记录可以删除了
 		cleanupFailedTasksByPath(path)
 		return
 	}
@@ -535,7 +532,11 @@ func upload(local, remote string, size int64) bool {
 		"speed":    0,
 	})
 
-	req, _ := http.NewRequest("PUT", server+"/api/fs/put", pr)
+	appConfigMu.RLock()
+	targetServer := appConfig.RemoteServer
+	appConfigMu.RUnlock()
+
+	req, _ := http.NewRequest("PUT", targetServer+"/api/fs/put", pr)
 	req.ContentLength = size
 	req.Header.Set("File-Path", remote)
 	req.Header.Set("Content-Type", "application/octet-stream")
@@ -545,6 +546,7 @@ func upload(local, remote string, size int64) bool {
 	tokenMu.Unlock()
 
 	resp, err := httpCli.Do(req)
+
 	if err != nil {
 		log.Printf("[UPLOAD][HTTP][ERR] %s -> %v", filepath.Base(local), err)
 
@@ -573,7 +575,9 @@ func upload(local, remote string, size int64) bool {
 	defer resp.Body.Close()
 
 	var r struct{ Code int }
-	json.NewDecoder(resp.Body).Decode(&r)
+	if decodeErr := json.NewDecoder(resp.Body).Decode(&r); decodeErr != nil {
+		r.Code = resp.StatusCode
+	}
 
 	if r.Code == 200 {
 		liveTasksMu.Lock()
@@ -597,15 +601,36 @@ func upload(local, remote string, size int64) bool {
 			"progress": 100,
 		})
 
-		// ⭐ 正常上传成功了，抹除历史曾经由于未录制完导致的失败记录
 		cleanupFailedTasksByPath(local)
-
 		return true
-	} else {
-		log.Printf("[UPLOAD][REMOTE][ERR] 服务器返回错误码: %d 文件: %s", r.Code, filepath.Base(local))
-	}
 
-	return false
+	} else {
+		log.Printf("[UPLOAD][REMOTE][ERR] 远端服务器拒绝或异常，状态码: %d 文件: %s", r.Code, filepath.Base(local))
+		errMsg := fmt.Sprintf("远端拒绝接收 (Code: %d)", r.Code)
+
+		liveTasksMu.Lock()
+		if task, exists := liveTasks[taskID]; exists {
+			task.Status = "failed"
+			task.Error = errMsg
+			task.EndTime = time.Now()
+		}
+		liveTasksMu.Unlock()
+
+		queueMu.Lock()
+		queueUploading = removeTask(queueUploading, taskID)
+		queueFail = append(queueFail, taskID)
+		queueMu.Unlock()
+
+		addHistoryRecord(local, remote, size, "failed", time.Since(startTime).Seconds(), errMsg)
+
+		broadcastWS("taskDone", map[string]interface{}{
+			"id":     taskID,
+			"status": "fail",
+			"error":  errMsg,
+		})
+
+		return false
+	}
 }
 
 /* ================= 历史记录 ================= */
@@ -682,12 +707,12 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 		progress := int(float64(p.read) * 100 / float64(p.total))
 		speed := int64(float64(p.read) / float64(time.Since(p.start).Seconds()))
 
-		// ⭐ 修复了高频刷屏的问题：控制台采用 10% 步长阶梯式打印
 		step := progress / 10
 		if step > p.lastLogProg {
 			p.lastLogProg = step
 			log.Printf("[UPLOAD][PROGRESS] 文件: %s -> 进度: %d%%", p.name, step*10)
 		}
+
 		liveTasksMu.Lock()
 		if task, exists := liveTasks[p.taskID]; exists {
 			task.Progress = progress
@@ -857,7 +882,6 @@ func sendReport() {
 }
 
 func login() error {
-
 	appConfigMu.RLock()
 	targetServer := appConfig.RemoteServer
 	usr := appConfig.RemoteUser
@@ -965,7 +989,7 @@ func addLog(level, message, errorMsg string) {
 	}
 
 	entry := &LogEntry{
-		Time:    time.Now().Format(time.DateTime),
+		Time:    time.Now().Format("2006-01-02 15:04:05"),
 		Level:   level,
 		Message: message,
 		Error:   errorMsg,
