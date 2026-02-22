@@ -20,7 +20,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
 
       - name: Go env
         run: go env
@@ -33,7 +33,7 @@ jobs:
 
       - name: Build
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o uploader 
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o uploader -ldflags "-w -s"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
