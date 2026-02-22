@@ -1,4 +1,4 @@
-name: Go CI
+name: Go CI/CD
 
 on:
   push:
@@ -10,8 +10,16 @@ on:
 
 jobs:
   build:
-    name: Build
+    name: Build Matrix
     runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        os: [linux, windows, darwin]
+        arch: [amd64, arm64]
+        exclude:
+          - os: windows
+            arch: arm64   # Go 对 windows arm64 支持不稳定，先排除
 
     steps:
       - name: Checkout
@@ -21,9 +29,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-
-      - name: Go env
-        run: go env
+          cache: true
 
       - name: Go mod tidy
         run: |
@@ -32,17 +38,38 @@ jobs:
           fi
 
       - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o uploader -ldflags "-w -s"
+          VERSION=${GITHUB_REF_NAME}
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          BIN_NAME=uploader
+          if [ "$GOOS" = "windows" ]; then
+            BIN_NAME=uploader.exe
+          fi
+
+          CGO_ENABLED=0 go build -o $BIN_NAME \
+            -ldflags "-w -s \
+            -X main.Version=$VERSION \
+            -X main.BuildTime=$BUILD_TIME"
+
+          TAR_NAME=uploader-${GOOS}-${GOARCH}.tar.gz
+          tar -czf $TAR_NAME $BIN_NAME
+
+          sha256sum $TAR_NAME > $TAR_NAME.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: uploader-linux-amd64
-          path: uploader
+          name: uploader-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            uploader-*.tar.gz
+            uploader-*.sha256
 
   release:
-    name: Release
+    name: Auto Release
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
@@ -50,21 +77,46 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          fetch-depth: 0   # 必须完整历史才能生成 changelog
 
-      - name: Build binary
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Generate Changelog
+        id: changelog
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o uploader -ldflags "-w -s"
-          tar -czf uploader-linux-amd64.tar.gz uploader
+          PREV_TAG=$(git tag --sort=-creatordate | sed -n '2p')
+          if [ -z "$PREV_TAG" ]; then
+            echo "CHANGELOG=Initial release 🎉" >> $GITHUB_ENV
+          else
+            LOG=$(git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)")
+            echo "CHANGELOG<<EOF" >> $GITHUB_ENV
+            echo "$LOG" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          fi
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## 🚀 Release ${{ github.ref_name }}
+
+            ### 📦 Binaries
+            - linux / windows / macOS
+            - amd64 / arm64
+
+            ### 📝 Changelog
+            ${{ env.CHANGELOG }}
+
+            ### 🔐 Checksums
+            sha256 files included
+
           files: |
-            uploader-linux-amd64.tar.gz
+            dist/**/**/*.tar.gz
+            dist/**/**/*.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
