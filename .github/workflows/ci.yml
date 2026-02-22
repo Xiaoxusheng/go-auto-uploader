@@ -58,7 +58,7 @@ jobs:
 
       - name: Build binary
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o uploader main.go
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o uploader -ldflags "-w -s"
           tar -czf uploader-linux-amd64.tar.gz uploader
 
       - name: Create Release
