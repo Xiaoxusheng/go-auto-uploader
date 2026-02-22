@@ -12,13 +12,14 @@ jobs:
   build:
     name: Build Matrix
     runs-on: ubuntu-latest
+
     strategy:
       matrix:
         os: [linux, windows, darwin]
         arch: [amd64, arm64]
         exclude:
           - os: windows
-            arch: arm64
+            arch: arm64   # Go 对 windows arm64 支持不稳定，先排除
 
     steps:
       - name: Checkout
@@ -30,6 +31,12 @@ jobs:
           go-version: '1.25'
           cache: true
 
+      - name: Go mod tidy
+        run: |
+          if [ -f go.mod ]; then
+            go mod tidy
+          fi
+
       - name: Build
         shell: bash
         run: |
@@ -39,12 +46,12 @@ jobs:
             BIN_NAME="uploader.exe"
           fi
           
-          # 编译
+          # 编译并注入版本号和时间
           CGO_ENABLED=0 GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} \
           go build -trimpath -ldflags "-w -s -X main.Version=${{ github.ref_name }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
           -o "$BIN_NAME"
 
-          # 打包并命名（增加平台标识）
+          # 打包并生成 checksum
           PKG_NAME="uploader-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
           tar -czf "$PKG_NAME" "$BIN_NAME"
           sha256sum "$PKG_NAME" > "$PKG_NAME.sha256"
@@ -60,34 +67,41 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    # --- 核心修复：添加写入权限 ---
+
+    # --- 修复 1：解决 403 Forbidden 权限报错 ---
     permissions:
       contents: write
-    # ----------------------------
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0   # 必须完整历史才能生成 changelog
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./dist
-          merge-multiple: true # 将所有 matrix 的产物合并到同一个目录下
+          # --- 修复 2：将所有平台的产物合并平铺到同一个 dist 目录，避免嵌套过深 ---
+          merge-multiple: true
 
       - name: Generate Changelog
         id: changelog
         shell: bash
         run: |
           PREV_TAG=$(git tag --sort=-creatordate | sed -n '2p')
-          echo "CHANGELOG<<EOF" >> $GITHUB_ENV
-          if [ -z "$PREV_TAG" ]; then
-            echo "Initial release 🎉" >> $GITHUB_ENV
-          else
-            git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)" >> $GITHUB_ENV
-          fi
-          echo "EOF" >> $GITHUB_ENV
+          
+          # --- 修复 3：解决 EOF 粘连报错问题，统一输出重定向 ---
+          {
+            echo "CHANGELOG<<EOF"
+            if [ -z "$PREV_TAG" ]; then
+              echo "Initial release 🎉"
+            else
+              git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)"
+              echo "" # 强制换行，确保 EOF 独占一行
+            fi
+            echo "EOF"
+          } >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -96,11 +110,15 @@ jobs:
           body: |
             ## 🚀 Release ${{ github.ref_name }}
 
+            ### 📦 Binaries
+            - linux / windows / macOS
+            - amd64 / arm64
+
             ### 📝 Changelog
             ${{ env.CHANGELOG }}
 
-            ### 🔐 Checksums (SHA256)
-            Verified binaries for Linux, Windows, and macOS.
+            ### 🔐 Checksums
+            sha256 files included
           files: |
             dist/*.tar.gz
             dist/*.sha256
