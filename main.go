@@ -46,6 +46,10 @@ var (
 
 	queueCount   int64
 	activeWorker int64
+
+	// ⭐ 新增：暴露给前端的动态扫描周期与倒计时时间戳
+	currentDynamicIntervalGlobal int64
+	nextScanTimeGlobal           int64
 )
 
 var (
@@ -123,7 +127,6 @@ const (
 	mailTo       = "3096407768@qq.com"
 )
 
-// 拦截 log 输出
 type logInterceptor struct {
 	original io.Writer
 }
@@ -193,23 +196,22 @@ func main() {
 	go queueStatusLoop()
 	go reportLoop()
 
-	// ---------------- 智能动态调频核心引擎 ----------------
 	appConfigMu.RLock()
 	baseInterval := appConfig.ScanInterval
 	appConfigMu.RUnlock()
 	currentDynamicInterval := baseInterval
+	atomic.StoreInt64(&currentDynamicIntervalGlobal, int64(currentDynamicInterval))
 
-	// 系统启动时的首次自动执行
 	runningMu.RLock()
 	if running {
 		_ = login()
 		activeCount := runOnce("auto", currentDynamicInterval)
 		if activeCount > 0 {
-			// 公式: 新间隔 = 基础间隔 / (活跃数量 + 1)
 			currentDynamicInterval = baseInterval / (activeCount + 1)
 			if currentDynamicInterval < 3 {
 				currentDynamicInterval = 3
-			} // 最低3分钟触底
+			}
+			atomic.StoreInt64(&currentDynamicIntervalGlobal, int64(currentDynamicInterval))
 			log.Printf("[SCAN][DYNAMIC] 🔥 开机检测到 %d 个文件正在录制，下次扫描已动态提速至 %d 分钟后", activeCount, currentDynamicInterval)
 		}
 	}
@@ -221,35 +223,37 @@ func main() {
 		runningMu.RUnlock()
 
 		if isRunning {
-			select {
-			// 到达动态计算的时间后自动扫描
-			case <-time.After(time.Duration(currentDynamicInterval) * time.Minute):
-				_ = login()
+			// ⭐ 每次进入休眠前，精确计算并暴露下一次唤醒的时间戳
+			targetTime := time.Now().Add(time.Duration(currentDynamicInterval) * time.Minute)
+			atomic.StoreInt64(&nextScanTimeGlobal, targetTime.UnixMilli())
 
+			select {
+			case <-time.After(time.Until(targetTime)):
+				_ = login()
 				appConfigMu.RLock()
 				baseInterval = appConfig.ScanInterval
 				appConfigMu.RUnlock()
 
 				activeCount := runOnce("auto", currentDynamicInterval)
 
-				// 核心逻辑：按录制数量动态除算扫描间隔
 				if activeCount > 0 {
 					newInterval := baseInterval / (activeCount + 1)
 					if newInterval < 3 {
-						newInterval = 3 // 极端下限保护
+						newInterval = 3
 					}
 					if newInterval != currentDynamicInterval {
 						log.Printf("[SCAN][DYNAMIC] 🔥 当前有 %d 个主播处于录制写入状态，按比例调整下次扫描为 %d 分钟后", activeCount, newInterval)
 					}
 					currentDynamicInterval = newInterval
+					atomic.StoreInt64(&currentDynamicIntervalGlobal, int64(currentDynamicInterval))
 				} else {
 					if currentDynamicInterval != baseInterval {
 						log.Printf("[SCAN][DYNAMIC] 🟢 当前暂无录制任务，扫描间隔回归省电模式: %d 分钟", baseInterval)
 					}
 					currentDynamicInterval = baseInterval
+					atomic.StoreInt64(&currentDynamicIntervalGlobal, int64(currentDynamicInterval))
 				}
 
-			// 收到用户强制中断/重扫信号
 			case reason := <-triggerScanCh:
 				_ = login()
 				log.Printf("[SYSTEM] ⚡ 收到指令打断，执行扫描 (触发源: %s)", reason)
@@ -266,12 +270,16 @@ func main() {
 						newInterval = 3
 					}
 					currentDynamicInterval = newInterval
+					atomic.StoreInt64(&currentDynamicIntervalGlobal, int64(currentDynamicInterval))
 					log.Printf("[SCAN][DYNAMIC] 🔥 当前有 %d 个主播处于录制写入状态，下次扫描定为 %d 分钟后", activeCount, newInterval)
 				} else {
 					currentDynamicInterval = baseInterval
+					atomic.StoreInt64(&currentDynamicIntervalGlobal, int64(currentDynamicInterval))
 				}
 			}
 		} else {
+			// 系统挂起时，倒计时归零
+			atomic.StoreInt64(&nextScanTimeGlobal, 0)
 			select {
 			case <-time.After(5 * time.Second):
 			case <-triggerScanCh:
@@ -298,8 +306,10 @@ func queueStatusLoop() {
 	}
 }
 
-// 返回 activeRecordingCount 供主循环计算调频比例
 func runOnce(triggerReason string, currentDynamicInterval int) int {
+	// ⭐ 开始扫描时，将倒计时标记为 -1，通知前端显示“正在扫描中”
+	atomic.StoreInt64(&nextScanTimeGlobal, -1)
+
 	appConfigMu.RLock()
 	currentWorkers := appConfig.Workers
 	currentDirs := make([]string, len(appConfig.Dirs))
@@ -320,7 +330,6 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 
 	log.Printf("[SCAN][START] 🔍 启动目录探测，并发Workers:[%d] 目标路径:[%s]", currentWorkers, strings.Join(currentDirs, " | "))
 
-	// 告知前端本次执行是按什么间隔来的
 	broadcastWS("scanStarted", map[string]interface{}{
 		"time":     time.Now().UnixMilli(),
 		"dirs":     currentDirs,
@@ -400,7 +409,6 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 				return nil
 			}
 
-			// 如果文件在过去 2 分钟内被修改过，算作“正在录制的主播”，并跳过上传
 			if time.Since(info.ModTime()) < 2*time.Minute {
 				atomic.AddInt32(&activeRecordingCount, 1)
 				return nil
@@ -518,6 +526,7 @@ func handleFile(path string) {
 		broadcastWS("taskDone", map[string]interface{}{
 			"id":     taskID,
 			"status": "success",
+			"size":   info.Size(),
 		})
 
 		cleanupFailedTasksByPath(path)
@@ -573,10 +582,14 @@ func upload(local, remote string, size int64) bool {
 	queueMu.Unlock()
 
 	broadcastWS("uploadProgress", map[string]interface{}{
-		"id":       taskID,
-		"filename": filepath.Base(remote),
-		"progress": 0,
-		"speed":    0,
+		"id":        taskID,
+		"filename":  filepath.Base(remote),
+		"path":      local,
+		"size":      size,
+		"uploaded":  0,
+		"speed":     0,
+		"status":    "uploading",
+		"startTime": startTime.UnixMilli(),
 	})
 
 	appConfigMu.RLock()
@@ -646,6 +659,7 @@ func upload(local, remote string, size int64) bool {
 			"id":       taskID,
 			"status":   "success",
 			"progress": 100,
+			"size":     size,
 		})
 
 		cleanupFailedTasksByPath(local)
@@ -843,7 +857,6 @@ func reportLoop() {
 	intervalMinutes := appConfig.EmailInterval
 	appConfigMu.RUnlock()
 
-	// 设定绝对锚点时间
 	nextReportTime := time.Now().Add(time.Duration(intervalMinutes) * time.Minute)
 
 	for {
@@ -862,9 +875,7 @@ func reportLoop() {
 
 		select {
 		case <-time.After(sleepDuration):
-			// 睡醒后由外层循环的 <=0 逻辑捕获触发
 		case <-triggerReportCh:
-			// 点击了配置保存触发
 			log.Printf("[SYSTEM] 📧 配置发生变更，但这不会打断原有的邮件倒计时，邮件仍将在 %v 后发送", time.Until(nextReportTime).Truncate(time.Second))
 		}
 	}

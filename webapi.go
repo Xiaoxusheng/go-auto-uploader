@@ -209,9 +209,6 @@ func wsDashboardBroadcaster() {
 
 			broadcastWS("recorderStatus", getRecorderStatus())
 			broadcastWS("activeStreamers", getActiveStreamers())
-
-			// ⭐ 核心修复：将物理文件的主播数据也加入到每 3 秒一次的 WS 自动广播队列中！
-			// 这样即使后台 Python 引擎悄悄更新了名字写入了文件，前端也会在最多 3 秒内自动感知识别并刷新显示！
 			broadcastWS("streamersData", getStreamersData())
 		}
 	}
@@ -295,6 +292,12 @@ func buildStatusData() map[string]interface{} {
 	configuredDirs := appConfig.Dirs
 	appConfigMu.RUnlock()
 
+	dynInterval := atomic.LoadInt64(&currentDynamicIntervalGlobal)
+	if dynInterval == 0 {
+		dynInterval = int64(currentScanInterval)
+	}
+	nextScan := atomic.LoadInt64(&nextScanTimeGlobal)
+
 	dirStatusesMu.RLock()
 	dirs := make([]map[string]interface{}, 0)
 	for _, dir := range configuredDirs {
@@ -332,6 +335,8 @@ func buildStatusData() map[string]interface{} {
 		"workers":          currentWorkers,
 		"dirs":             dirs,
 		"scanningInterval": currentScanInterval,
+		"dynamicInterval":  dynInterval,
+		"nextScanTime":     nextScan, // ⭐ 新增：倒计时时间锚点
 		"rate":             currentRate(),
 		"dayRate":          currentDayRate,
 		"nightRate":        currentNightRate,
@@ -690,7 +695,6 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 	sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 }
 
-// ⭐ 修复：提取读取物理文件获取主播信息的逻辑，方便复用和推送
 func getStreamersData() []Streamer {
 	appConfigMu.RLock()
 	configPath := appConfig.LiveConfigPath
@@ -714,6 +718,8 @@ func getStreamersData() []Streamer {
 			continue
 		}
 
+		line = strings.ReplaceAll(line, "，", ",")
+
 		active := true
 		if strings.HasPrefix(line, "#") {
 			active = false
@@ -730,10 +736,11 @@ func getStreamersData() []Streamer {
 			name = strings.TrimSpace(parts[1])
 			name = strings.TrimPrefix(name, "主播: ")
 			name = strings.TrimPrefix(name, "主播:")
+			name = strings.TrimPrefix(name, "主播：")
 			name = strings.ReplaceAll(name, "\ufeff", "")
 		}
 
-		if name == "未命名" || name == "⏳ 等待自动获取..." {
+		if strings.TrimSpace(name) == "" || name == "未命名" || name == "⏳ 等待自动获取..." {
 			name = ""
 		}
 
@@ -790,7 +797,6 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("[CONTROL] 🎥 用户更新了直播监控名单，共 %d 条记录已写入物理文件", len(req))
 
-		// 写入完毕后立刻推一把更新
 		broadcastWS("streamersData", getStreamersData())
 		sendJSONSuccess(w, nil)
 		return
@@ -978,7 +984,6 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[CONTROL] 📥 用户导出了 %d 条系统日志\n", len(filtered))
 }
 
-// ⭐ 加回了新日志的 WebSocket 广播
 func logCollector() {
 	for entry := range logChan {
 		logsMu.Lock()

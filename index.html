@@ -14,6 +14,7 @@
     <link href="https://unpkg.com/@arco-design/web-vue/dist/arco.min.css" rel="stylesheet">
 
     <style>
+        /* 定义基础的 CSS 变量，用于明暗主题切换 */
         :root {
             --bg-base: #f0f2f5;
             --glass-bg: rgba(255, 255, 255, 0.75);
@@ -36,6 +37,7 @@
             color: var(--color-text-1); transition: background-color 0.3s ease;
         }
 
+        /* 统一的毛玻璃特效样式 */
         .apple-glass {
             background-color: var(--glass-bg) !important;
             backdrop-filter: saturate(180%) blur(20px);
@@ -76,6 +78,7 @@
             margin-right: 8px;
         }
 
+        /* 呼吸灯动画 */
         @keyframes breathe {
             0% { transform: scale(0.85); box-shadow: 0 0 0 0 rgba(0, 180, 42, 0.7); }
             50% { transform: scale(1.1); box-shadow: 0 0 10px 4px rgba(0, 180, 42, 0.3); }
@@ -161,15 +164,20 @@
             border-bottom: 1px solid var(--glass-border) !important;
         }
 
+        /* 移动端深度适配与按钮优化 */
         @media screen and (max-width: 768px) {
-            .main-container { padding: 12px; }
-            .stat-value { font-size: 22px; }
-            .action-bar { display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; }
-            .action-bar .arco-btn { margin-bottom: 4px; }
+            .main-container { padding: 12px 8px; }
+            .stat-value { font-size: 20px; }
+
+            .action-bar { display: flex; flex-wrap: wrap; gap: 8px; }
+            .action-bar .arco-btn { flex: 1 1 calc(50% - 8px); margin: 0; display: flex; justify-content: center; }
+            .action-bar .arco-btn[status="danger"] { flex: 1 1 100%; }
+
             .login-box { width: 90%; padding: 24px; }
             .arco-tabs-nav-type-rounded .arco-tabs-tab { padding: 4px 12px; font-size: 13px; }
-            header .arco-tag { display: none; }
-            header .nav-title { font-size: 15px !important; }
+
+            header.nav-glass { flex-wrap: wrap; padding: 12px 16px !important; }
+            .nav-title { width: 100%; justify-content: space-between; margin-bottom: 8px; font-size: 15px !important;}
         }
     </style>
 </head>
@@ -203,17 +211,20 @@
     <template v-else>
         <header class="nav-glass" style="padding: 12px 24px; display: flex; justify-content: space-between; align-items: center;">
             <div class="nav-title" style="font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 8px;">
-                <icon-cloud style="color: var(--color-primary-light-4); font-size: 20px;"></icon-cloud>
-                分布式文件上传系统
-                <a-tag :color="systemStatus.running ? 'green' : 'red'" size="small" style="margin-left: 8px; border-radius: 4px;">
+                <span style="display:flex; align-items:center; gap:6px;">
+                    <icon-cloud style="color: var(--color-primary-light-4); font-size: 20px;"></icon-cloud> 分布式文件上传系统
+                </span>
+
+                <a-tag :color="systemStatus.running ? 'green' : 'red'" size="small" style="border-radius: 4px;">
                     <template #icon><icon-check-circle v-if="systemStatus.running"></icon-check-circle><icon-minus-circle v-else></icon-minus-circle></template>
                     {{ systemStatus.running ? '运行中' : '已暂停' }}
                 </a-tag>
             </div>
+
             <a-space size="medium">
-                    <span style="font-size: 12px; color: var(--color-text-3); display: flex; align-items: center; gap: 4px; margin-right: 8px;">
-                        <icon-dashboard></icon-dashboard> Uptime: {{ formatDuration(systemStatus.uptime) }}
-                    </span>
+                <span style="font-size: 12px; color: var(--color-text-3); display: flex; align-items: center; gap: 4px; margin-right: 8px;">
+                    <icon-dashboard></icon-dashboard> Uptime: {{ formatDuration(systemStatus.uptime) }}
+                </span>
                 <a-button type="text" shape="circle" size="small" @click="openGitHub">
                     <icon-github style="font-size: 16px; color: var(--color-text-2);"></icon-github>
                 </a-button>
@@ -234,19 +245,19 @@
                     <template #title><icon-apps></icon-apps> 系统概览</template>
 
                     <div class="action-bar" style="margin-top: 8px;">
-                        <a-button type="primary" status="success" size="small" @click="control('start')" :disabled="systemStatus.running">
+                        <a-button type="primary" status="success" size="medium" @click="control('start')" :disabled="systemStatus.running">
                             <template #icon><icon-play-arrow></icon-play-arrow></template> 启动扫描
                         </a-button>
-                        <a-button type="primary" status="warning" size="small" @click="control('pause')" :disabled="!systemStatus.running">
+                        <a-button type="primary" status="warning" size="medium" @click="control('pause')" :disabled="!systemStatus.running">
                             <template #icon><icon-pause></icon-pause></template> 暂停任务
                         </a-button>
-                        <a-button type="outline" status="danger" size="small" @click="control('stop')">
+                        <a-button type="outline" status="danger" size="medium" @click="control('stop')">
                             <template #icon><icon-stop></icon-stop></template> 停止系统
                         </a-button>
-                        <a-button type="outline" size="small" @click="control('rescan')">
+                        <a-button type="outline" size="medium" @click="control('rescan')">
                             <template #icon><icon-refresh></icon-refresh></template> 手动重扫
                         </a-button>
-                        <a-button type="outline" size="small" @click="control('relogin')">
+                        <a-button type="outline" size="medium" @click="control('relogin')">
                             <template #icon><icon-robot></icon-robot></template> 刷新远端授权
                         </a-button>
                     </div>
@@ -279,18 +290,31 @@
                                     </a-card>
                                 </a-col>
 
-                                <a-col :xs="24" :lg="11">
-                                    <a-card class="apple-glass" hoverable bordered style="height: 100%;">
-                                        <div style="display: flex; gap:12px; align-items:center; flex-wrap: wrap; height: 100%;">
-                                            <div class="stat-label" style="margin-right: 4px; width: 100%;"><icon-tool></icon-tool> 队列快捷清理</div>
-                                            <a-button size="small" status="danger" type="outline" @click="control('clear-fail-queue')">清空失败</a-button>
-                                            <a-button size="small" status="warning" type="outline" @click="control('retry-fail-queue')">重试失败任务</a-button>
-                                            <a-button size="small" status="success" type="outline" @click="control('clear-success-queue')">清空成功记录</a-button>
+                                <a-col :xs="24" :lg="8">
+                                    <a-card class="apple-glass" hoverable bordered style="height: 100%; display: flex; flex-direction: column;">
+                                        <div class="stat-label">
+                                            <icon-scan :spin="radarState.status === 'scanning'" style="margin-right: 4px; color: var(--color-primary-light-4);"></icon-scan>
+                                            全局扫描调度引擎
+                                        </div>
+
+                                        <div style="margin-top: 10px; font-size: 24px; font-weight: 800; font-family: -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif; letter-spacing: 1px;" :style="{ color: radarState.color }">
+                                            {{ radarState.text }}
+                                        </div>
+
+                                        <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--glass-border); display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+                                            <span style="color: var(--color-text-3)">频率: <b>{{ systemStatus.dynamicInterval || systemStatus.scanningInterval }}</b> 分/次</span>
+
+                                            <span v-if="systemStatus.dynamicInterval < systemStatus.scanningInterval" style="color: #D22ECE; font-weight: bold; display: flex; align-items: center; gap: 4px;">
+                                                <icon-thunderbolt /> 狂暴模式
+                                            </span>
+                                            <span v-else style="color: #00B42A; display: flex; align-items: center; gap: 4px;">
+                                                <icon-clock-circle /> 节能休眠
+                                            </span>
                                         </div>
                                     </a-card>
                                 </a-col>
 
-                                <a-col :xs="24" :lg="13">
+                                <a-col :xs="24" :lg="16">
                                     <a-card class="apple-glass" hoverable bordered style="height: 100%; display: flex; flex-direction: column;">
                                         <div style="display: flex; justify-content: space-between; align-items: center;">
                                             <div>
@@ -320,6 +344,17 @@
                                             <span v-else style="color: var(--color-text-4); font-size: 14px; fontFamily: 'SF Mono, Consolas, monospace', display: 'flex', alignItems: 'center', gap: '4px'">
                                                 Ping: --
                                             </span>
+                                        </div>
+                                    </a-card>
+                                </a-col>
+
+                                <a-col :xs="24">
+                                    <a-card class="apple-glass" hoverable bordered style="height: 100%;">
+                                        <div style="display: flex; gap:12px; align-items:center; flex-wrap: wrap; height: 100%;">
+                                            <div class="stat-label" style="margin-right: 4px; width: 100%;"><icon-tool></icon-tool> 队列快捷清理</div>
+                                            <a-button size="small" status="danger" type="outline" @click="control('clear-fail-queue')">清空失败</a-button>
+                                            <a-button size="small" status="warning" type="outline" @click="control('retry-fail-queue')">重试失败任务</a-button>
+                                            <a-button size="small" status="success" type="outline" @click="control('clear-success-queue')">清空成功记录</a-button>
                                         </div>
                                     </a-card>
                                 </a-col>
@@ -520,7 +555,7 @@
                                 <template #columns>
                                     <a-table-column title="主播名称" data-index="name" :width="180">
                                         <template #cell="{ record }">
-                                            <span v-if="record.name" :style="{ color: record.active ? 'var(--color-text-1)' : 'var(--color-text-3)', fontWeight: record.active ? '500' : 'normal' }">
+                                            <span v-if="record.name && record.name.trim() !== ''" :style="{ color: record.active ? 'var(--color-text-1)' : 'var(--color-text-3)', fontWeight: record.active ? '500' : 'normal' }">
                                                 {{ record.name }}
                                             </span>
                                             <span v-else style="color: var(--color-text-4); font-size: 13px; display: inline-flex; align-items: center; gap: 4px;">
@@ -557,9 +592,11 @@
 
                                     <a-table-column title="操作" :width="100" align="center">
                                         <template #cell="{ rowIndex }">
-                                            <a-button type="text" status="danger" size="mini" @click="removeStreamer(rowIndex)">
-                                                <template #icon><icon-delete/></template> 删除
-                                            </a-button>
+                                            <a-popconfirm content="确定要删除此主播配置吗？" position="left" type="warning" @ok="removeStreamer(rowIndex)">
+                                                <a-button type="text" status="danger" size="mini">
+                                                    <template #icon><icon-delete/></template> 删除
+                                                </a-button>
+                                            </a-popconfirm>
                                         </template>
                                     </a-table-column>
                                 </template>
@@ -795,11 +832,7 @@
             const activeTab = ref('overview');
 
             const wsStatus = ref('connecting');
-            const wsStats = reactive({
-                msgCount: 0,
-                lastEvent: '-',
-                pulse: false
-            });
+            const wsStats = reactive({ msgCount: 0, lastEvent: '-', pulse: false });
             let wsPulseTimeout = null;
 
             const wsLatency = ref(0);
@@ -819,7 +852,7 @@
 
             const loginForm = reactive({ username: 'admin', password: 'admin', otp: '' });
 
-            const systemStatus = reactive({ running: false, uptime: 0, workers: 0, rate: 0, dirs: [] });
+            const systemStatus = reactive({ running: false, uptime: 0, workers: 0, rate: 0, dirs: [], dynamicInterval: 0, nextScanTime: 0, scanningInterval: 0 });
             const queueStatus = reactive({ waiting: 0, uploading: 0, success: 0, failed: 0, retrying: 0 });
 
             const liveTasks = ref([]);
@@ -844,6 +877,38 @@
 
             const cookiesForm = reactive({ douyin: '', kuaishou: '', sooplive: '' });
             const cookiesLoading = ref(false);
+
+            // 核心逻辑：智能雷达倒计时计算
+            const radarState = computed(() => {
+                const next = systemStatus.nextScanTime;
+
+                if (!systemStatus.running || next === 0) {
+                    return { status: 'paused', text: '系统已挂起', color: 'var(--color-text-3)' };
+                }
+
+                if (next === -1) {
+                    // 修改点 3 对应的 JS 返回值修改
+                    return { status: 'scanning', text: '正在同步目录状态...', color: '#165DFF' };
+                }
+
+                const diffSeconds = Math.floor((next - clientTime.value) / 1000);
+                if (diffSeconds < 0) {
+                    // 同步修改准备状态的文案
+                    return { status: 'scanning', text: '准备执行扫描...', color: '#165DFF' };
+                }
+
+                const m = Math.floor(diffSeconds / 60).toString().padStart(2, '0');
+                const s = (diffSeconds % 60).toString().padStart(2, '0');
+
+                // 仅剩 1 分钟时变红警告
+                const isUrgent = diffSeconds <= 60;
+
+                return {
+                    status: 'waiting',
+                    text: `${m} 分 ${s} 秒`,
+                    color: isUrgent ? '#F53F3F' : 'var(--color-text-1)'
+                };
+            });
 
             const fetchCookies = async () => {
                 if (!configForm.value.recorderConfigPath) return;
@@ -1010,7 +1075,6 @@
                     if (showMsg) Message.success('录制名单配置已热更新并保存到文件');
                 } catch (e) {
                 } finally {
-                    // 放开锁，让 WebSocket 可以接管后续的名单刷新
                     setTimeout(() => { isSavingStreamers.value = false; }, 500);
                 }
             };
@@ -1079,6 +1143,7 @@
             const removeStreamer = (index) => {
                 streamers.value.splice(index, 1);
                 saveStreamers();
+                Message.success('已成功删除该主播记录');
             };
 
             const triggerWsPulse = (eventType) => {
@@ -1126,13 +1191,11 @@
                         } else if (msg.type === 'activeStreamers') {
                             activeRecordingStreamers.value = msg.payload || [];
                         } else if (msg.type === 'streamersData') {
-                            // ⭐ 核心修复：接收后端定时推送的主播名单
-                            // 只有在用户没有正在操作保存时，才热更新列表
                             if (!isSavingStreamers.value) {
                                 const newStr = JSON.stringify(msg.payload);
                                 if (window.lastStreamersStr !== newStr) {
                                     streamers.value = msg.payload;
-                                    window.lastStreamersStr = newStr; // 缓存比对，防止 Vue 无意义的重渲染导致画面闪烁
+                                    window.lastStreamersStr = newStr;
                                 }
                             }
                         } else if (msg.type === 'uploadProgress') {
@@ -1140,20 +1203,37 @@
                             if (idx > -1) {
                                 liveTasks.value[idx].uploaded = msg.payload.uploaded;
                                 liveTasks.value[idx].speed = msg.payload.speed;
-                            } else fetchLiveTasks();
+                                liveTasks.value[idx].status = msg.payload.status;
+                            } else {
+                                liveTasks.value.unshift({
+                                    id: msg.payload.id,
+                                    filename: msg.payload.filename,
+                                    path: msg.payload.path,
+                                    size: msg.payload.size,
+                                    uploaded: msg.payload.uploaded,
+                                    speed: msg.payload.speed,
+                                    status: msg.payload.status,
+                                    startTime: msg.payload.startTime,
+                                    duration: 0
+                                });
+                            }
                         } else if (msg.type === 'systemStatus') {
                             Object.assign(systemStatus, msg.payload);
                         } else if (msg.type === 'queueStatus') {
                             Object.assign(queueStatus, msg.payload);
                         } else if (msg.type === 'taskDone') {
-                            fetchLiveTasks(); fetchQueue(); fetchHistory();
+                            const idx = liveTasks.value.findIndex(t => t.id === msg.payload.id);
+                            if (idx > -1) {
+                                liveTasks.value[idx].status = msg.payload.status;
+                                if (msg.payload.progress === 100) liveTasks.value[idx].uploaded = liveTasks.value[idx].size;
+                                if (msg.payload.error) liveTasks.value[idx].error = msg.payload.error;
+                            }
+                            if (activeTab.value === 'history') fetchHistory();
                         } else if (msg.type === 'newLog') {
-                            // ⭐ 将新的日志 push 追加到底部，保留原汁原味
                             const log = msg.payload;
                             if (logQuery.page === 1 && !logQuery.keyword && (!logQuery.level || logQuery.level === log.level)) {
-                                logData.items.push(log); // 拼在数组末尾（也就是 UI 最底部）
+                                logData.items.push(log);
                                 logData.total++;
-                                // 超过单页上限时，剔除最老的一条（也就是数组最前面的）
                                 if (logData.items.length > logQuery.limit) {
                                     logData.items.shift();
                                 }
@@ -1187,7 +1267,6 @@
                                 position: 'bottomRight',
                                 duration: 4000
                             });
-                            fetchStatus();
                         }
                     } catch (e) {}
                 };
@@ -1225,8 +1304,6 @@
                         try {
                             await api.post(`/control/${action}`);
                             Message.success('指令已成功下发');
-                            fetchStatus();
-                            fetchQueue();
                         } catch (e) {}
                     }
                 });
@@ -1288,7 +1365,6 @@
                     });
 
                     originalConfigSnapshot = JSON.parse(JSON.stringify(configForm.value));
-                    fetchStatus();
                 } catch (e) {}
             };
 
@@ -1359,27 +1435,16 @@
             onUnmounted(cleanUp);
 
             watch(activeTab, (newTab) => {
-                if (newTab === 'logs') {
-                    fetchLogs();
-                }
-
-                if (newTab === 'history') {
-                    fetchHistory();
-                }
-
-                if (newTab === 'cookies') {
-                    fetchCookies();
-                }
-
+                if (newTab === 'logs') fetchLogs();
+                if (newTab === 'history') fetchHistory();
+                if (newTab === 'cookies') fetchCookies();
                 if (newTab === 'streamers') {
-                    // 仅在此页面首次点开时主动拉取一次，之后全由 WebSocket 在后台静默推送到前端
                     fetchRecorderStatus();
                     fetchStreamers();
                     fetchActiveStreamers();
                 }
             });
 
-            // 恢复原汁原味的自动向下滚动机制
             watch(() => logData.items, () => {
                 nextTick(() => {
                     if (logContainerRef.value) {
@@ -1400,6 +1465,7 @@
                 activeRecordingStreamers,
                 showBatchAddModal, batchAddText, batchAddLoading, handleBatchAdd,
                 cookiesForm, cookiesLoading, fetchCookies, saveCookies,
+                radarState, // 抛出雷达数据计算属性给视图渲染
                 recorderStatus, recorderControlLoading, showLogsModal, recorderLogsContent, dockerLogsRef, fetchRecorderStatus, controlRecorder, fetchRecorderLogs, openLogsModal,
                 formatSize, formatSpeed, calculatePercent, formatDuration, formatDurationSeconds, getElapsedTime, getStatusColor, getLogLevelColor, fetchLiveTasks, formatStatusText
             };
