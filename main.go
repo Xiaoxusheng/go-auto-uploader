@@ -21,17 +21,18 @@ import (
 /* ================= 全局配置 ================= */
 
 var (
-	dirs              string
-	server            string
-	workers           int
-	rateMB            int
-	dayRateMB         int
-	nightRateMB       int
-	reportMinutes     int
-	scanningInterval  int
-	webPort           int
-	liveConfigPath    string
-	recorderContainer string
+	dirs               string
+	server             string
+	workers            int
+	rateMB             int
+	dayRateMB          int
+	nightRateMB        int
+	reportMinutes      int
+	scanningInterval   int
+	webPort            int
+	liveConfigPath     string
+	recorderContainer  string
+	recorderConfigPath string
 
 	dashboardUsername = "admin"
 	dashboardPassword = "admin"
@@ -159,6 +160,7 @@ func main() {
 	flag.IntVar(&webPort, "web-port", 8080, "Web API 端口")
 	flag.StringVar(&liveConfigPath, "live-config", "/home/live/DouyinLiveRecorder/config/URL_config.ini", "录制配置文件路径")
 	flag.StringVar(&recorderContainer, "recorder-container", "douyinliverecorder-app-1", "录制引擎Docker容器名")
+	flag.StringVar(&recorderConfigPath, "recorder-config", "", "录制引擎主配置文件(config.ini)路径")
 	flag.Parse()
 
 	if dirs == "" {
@@ -181,6 +183,7 @@ func main() {
 	appConfig.RemotePass = "LilKmxNF"
 	appConfig.LiveConfigPath = liveConfigPath
 	appConfig.RecorderContainer = recorderContainer
+	appConfig.RecorderConfigPath = recorderConfigPath
 	appConfigMu.Unlock()
 
 	addLog("info", "系统初始化完成，启动中...", "")
@@ -195,17 +198,15 @@ func main() {
 	appConfigMu.RUnlock()
 	currentDynamicInterval := baseInterval
 
-	// 系统启动时的首次自动执行
 	runningMu.RLock()
 	if running {
 		_ = login()
 		activeCount := runOnce("auto", currentDynamicInterval)
 		if activeCount > 0 {
-			// 公式: 新间隔 = 基础间隔 / (活跃数量 + 1)
 			currentDynamicInterval = baseInterval / (activeCount + 1)
 			if currentDynamicInterval < 3 {
 				currentDynamicInterval = 3
-			} // 最低3分钟触底
+			}
 			log.Printf("[SCAN][DYNAMIC] 🔥 开机检测到 %d 个文件正在录制，下次扫描已动态提速至 %d 分钟后", activeCount, currentDynamicInterval)
 		}
 	}
@@ -218,7 +219,6 @@ func main() {
 
 		if isRunning {
 			select {
-			// 1. 到达动态计算的时间后自动扫描
 			case <-time.After(time.Duration(currentDynamicInterval) * time.Minute):
 				_ = login()
 
@@ -228,11 +228,10 @@ func main() {
 
 				activeCount := runOnce("auto", currentDynamicInterval)
 
-				// 核心逻辑：按录制数量动态除算扫描间隔
 				if activeCount > 0 {
 					newInterval := baseInterval / (activeCount + 1)
 					if newInterval < 3 {
-						newInterval = 3 // 极端下限保护
+						newInterval = 3
 					}
 					if newInterval != currentDynamicInterval {
 						log.Printf("[SCAN][DYNAMIC] 🔥 当前有 %d 个主播处于录制写入状态，按比例调整下次扫描为 %d 分钟后", activeCount, newInterval)
@@ -245,7 +244,6 @@ func main() {
 					currentDynamicInterval = baseInterval
 				}
 
-			// 2. 收到用户强制中断/重扫信号
 			case reason := <-triggerScanCh:
 				_ = login()
 				log.Printf("[SYSTEM] ⚡ 收到指令打断，执行扫描 (触发源: %s)", reason)
@@ -294,7 +292,6 @@ func queueStatusLoop() {
 	}
 }
 
-// ⭐ 返回 activeRecordingCount 供主循环计算调频比例
 func runOnce(triggerReason string, currentDynamicInterval int) int {
 	appConfigMu.RLock()
 	currentWorkers := appConfig.Workers
@@ -316,7 +313,6 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 
 	log.Printf("[SCAN][START] 🔍 启动目录探测，并发Workers:[%d] 目标路径:[%s]", currentWorkers, strings.Join(currentDirs, " | "))
 
-	// 告知前端本次执行是按什么间隔来的
 	broadcastWS("scanStarted", map[string]interface{}{
 		"time":     time.Now().UnixMilli(),
 		"dirs":     currentDirs,
@@ -396,7 +392,6 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 				return nil
 			}
 
-			// 如果文件在过去 2 分钟内被修改过，算作“正在录制的主播”，并跳过上传
 			if time.Since(info.ModTime()) < 2*time.Minute {
 				atomic.AddInt32(&activeRecordingCount, 1)
 				return nil
@@ -834,13 +829,11 @@ func recordSuccess(remote, name string, size int64) {
 	}
 }
 
-// ⭐ 修复：邮件倒计时持久化（修改配置不会导致重置）
 func reportLoop() {
 	appConfigMu.RLock()
 	intervalMinutes := appConfig.EmailInterval
 	appConfigMu.RUnlock()
 
-	// 设定绝对锚点时间
 	nextReportTime := time.Now().Add(time.Duration(intervalMinutes) * time.Minute)
 
 	for {
@@ -859,9 +852,7 @@ func reportLoop() {
 
 		select {
 		case <-time.After(sleepDuration):
-			// 睡醒后由外层循环的 <=0 逻辑捕获触发
 		case <-triggerReportCh:
-			// 点击了配置保存触发
 			log.Printf("[SYSTEM] 📧 配置发生变更，但这不会打断原有的邮件倒计时，邮件仍将在 %v 后发送", time.Until(nextReportTime).Truncate(time.Second))
 		}
 	}

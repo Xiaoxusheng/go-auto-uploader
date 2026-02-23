@@ -161,16 +161,6 @@
             border-bottom: 1px solid var(--glass-border) !important;
         }
 
-        @keyframes pulse-red {
-            0% { box-shadow: 0 0 0 0 rgba(245, 63, 63, 0.7); }
-            70% { box-shadow: 0 0 0 6px rgba(245, 63, 63, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(245, 63, 63, 0); }
-        }
-        .recording-badge {
-            animation: pulse-red 2s infinite;
-            border-radius: 4px;
-        }
-
         @media screen and (max-width: 768px) {
             .main-container { padding: 12px; }
             .stat-value { font-size: 22px; }
@@ -202,7 +192,7 @@
                 </a-button>
             </a-form>
             <div class="footer-copyright" style="margin-top: 20px; padding: 0;">
-                &copy; 2026 2.22 Lei. <br>
+                &copy; 2026 Lei. <br>
                 <a href="https://github.com/Xiaoxusheng/go-auto-uploader" target="_blank">
                     <icon-github></icon-github> go-auto-uploader
                 </a>
@@ -499,9 +489,14 @@
                         <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
                             <a-input v-model="newStreamer.url" placeholder="在此输入直播间链接 (例如: https://live.douyin.com/...)" style="width: 350px;" size="medium"><template #prefix><icon-link/></template></a-input>
                             <a-input v-model="newStreamer.name" placeholder="主播名称 (留空自动抓取)" style="width: 180px;" size="medium"><template #prefix><icon-user/></template></a-input>
+
                             <a-button type="primary" status="success" @click="addStreamer" size="medium">
-                                <template #icon><icon-plus/></template> 添加到名单
+                                <template #icon><icon-plus/></template> 添加单条
                             </a-button>
+                            <a-button type="primary" status="warning" @click="showBatchAddModal = true" size="medium">
+                                <template #icon><icon-copy/></template> 批量导入
+                            </a-button>
+
                             <div style="flex: 1;"></div>
                             <div style="display: flex; gap: 16px; font-size: 13px;">
                                 <span><icon-menu /> 总计: <b>{{ streamers.length }}</b></span>
@@ -529,7 +524,7 @@
                                                 {{ record.name }}
                                             </span>
                                             <span v-else style="color: var(--color-text-4); font-size: 13px;">
-                                                <icon-sync spin /> ⏳ 等待引擎抓取...
+                                                <icon-sync spin /> ⏳ 等待抓取...
                                             </span>
                                         </template>
                                     </a-table-column>
@@ -542,23 +537,20 @@
                                         </template>
                                     </a-table-column>
 
-                                    <a-table-column title="当前状态" :width="120" align="center">
+                                    <a-table-column title="录制状态" :width="120" align="center">
                                         <template #cell="{ record }">
-                                            <a-tag v-if="activeRecordingStreamers.includes(record.name) && record.active" color="red" size="small" class="recording-badge">
-                                                <template #icon>
-                                                    <icon-record style="animation: flash-warning 1s infinite;"/>
-                                                </template>
-                                                正在录制
-                                            </a-tag>
-                                            <span v-else style="color: var(--color-text-4); font-size: 12px;">--</span>
+                                            <a-badge v-if="activeRecordingStreamers.includes(record.name) && record.active" status="processing" color="red" text="正在录制"></a-badge>
+                                            <a-badge v-else status="normal" text="未在录制"></a-badge>
                                         </template>
                                     </a-table-column>
 
                                     <a-table-column title="监听状态" data-index="active" :width="120" align="center">
                                         <template #cell="{ record }">
                                             <div style="display: flex; align-items: center; justify-content: center; gap: 8px;">
-                                                <a-badge :status="record.active ? 'success' : 'normal'" :text="record.active ? '监控中' : '已忽略'"></a-badge>
                                                 <a-switch v-model="record.active" size="small" @change="saveStreamers(false)"></a-switch>
+                                                <span :style="{ color: record.active ? 'var(--color-success-light-4)' : 'var(--color-text-4)', fontSize: '13px' }">
+                                                    {{ record.active ? '监控中' : '已忽略' }}
+                                                </span>
                                             </div>
                                         </template>
                                     </a-table-column>
@@ -573,6 +565,39 @@
                                 </template>
                             </a-table>
                         </div>
+                    </a-card>
+                </a-tab-pane>
+
+                <a-tab-pane key="cookies">
+                    <template #title><icon-idcard></icon-idcard> Cookie 管理</template>
+                    <a-card class="apple-glass hover-effect" bordered style="max-width: 1000px;">
+                        <a-form layout="vertical" :model="cookiesForm" @submit="saveCookies">
+                            <a-alert type="info" style="margin-bottom: 20px;">
+                                设置前，请确保在【系统参数设置】中配置了正确的 <b>录制引擎主配置文件 (config.ini)</b> 的物理路径。保存后需去录制管理页重启引擎容器生效。
+                            </a-alert>
+
+                            <a-form-item label="抖音 Cookie">
+                                <a-textarea v-model="cookiesForm.douyin" :auto-size="{minRows: 4, maxRows: 8}" placeholder="在此填入抖音 Cookie (包含 sessionid_ss 等凭证)"></a-textarea>
+                            </a-form-item>
+
+                            <a-form-item label="快手 Cookie">
+                                <a-textarea v-model="cookiesForm.kuaishou" :auto-size="{minRows: 3, maxRows: 6}" placeholder="在此填入快手 Cookie"></a-textarea>
+                            </a-form-item>
+
+                            <a-form-item label="Sooplive Cookie">
+                                <a-textarea v-model="cookiesForm.sooplive" :auto-size="{minRows: 3, maxRows: 6}" placeholder="在此填入 Sooplive Cookie"></a-textarea>
+                            </a-form-item>
+
+                            <a-divider style="margin: 12px 0 24px 0"></a-divider>
+                            <a-form-item style="margin-bottom: 0;">
+                                <a-button type="primary" html-type="submit" size="medium" :loading="cookiesLoading" style="border-radius: 8px;">
+                                    <template #icon><icon-save></icon-save></template> 安全写入至配置文件
+                                </a-button>
+                                <a-button type="outline" size="medium" style="margin-left: 12px; border-radius: 8px;" @click="fetchCookies" :loading="cookiesLoading">
+                                    <template #icon><icon-refresh></icon-refresh></template> 从文件重新读取
+                                </a-button>
+                            </a-form-item>
+                        </a-form>
                     </a-card>
                 </a-tab-pane>
 
@@ -635,8 +660,21 @@
 
                             <a-row :gutter="24">
                                 <a-col :xs="24" :sm="12">
-                                    <a-form-item field="liveConfigPath" label="直播录制配置文件物理路径 (URL_config.ini)">
+                                    <a-form-item field="liveConfigPath" label="直播录制名单路径 (URL_config.ini)">
                                         <a-input v-model="configForm.liveConfigPath" size="small"><template #prefix><icon-file></icon-file></template></a-input>
+                                    </a-form-item>
+                                </a-col>
+                                <a-col :xs="24" :sm="12">
+                                    <a-form-item field="recorderConfigPath" label="录制引擎主配置文件 (config.ini)">
+                                        <a-input v-model="configForm.recorderConfigPath" size="small" placeholder="/app/config.ini"><template #prefix><icon-file></icon-file></template></a-input>
+                                    </a-form-item>
+                                </a-col>
+                            </a-row>
+
+                            <a-row :gutter="24">
+                                <a-col :xs="24" :sm="12">
+                                    <a-form-item field="remoteServer" label="远端服务器 API 地址">
+                                        <a-input v-model="configForm.remoteServer" size="small" placeholder="例如: https://wustwust.cn:8081"><template #prefix><icon-link></icon-link></template></a-input>
                                     </a-form-item>
                                 </a-col>
                                 <a-col :xs="24" :sm="12">
@@ -645,17 +683,13 @@
                                     </a-form-item>
                                 </a-col>
                             </a-row>
-
-                            <a-form-item field="remoteServer" label="远端服务器 API 地址">
-                                <a-input v-model="configForm.remoteServer" size="small" placeholder="例如: https://wustwust.cn:8081"><template #prefix><icon-link></icon-link></template></a-input>
-                            </a-form-item>
                             <a-row :gutter="24">
                                 <a-col :xs="24" :sm="12"><a-form-item field="remoteUser" label="远端认证账号"><a-input v-model="configForm.remoteUser" size="small"><template #prefix><icon-user></icon-user></template></a-input></a-form-item></a-col>
                                 <a-col :xs="24" :sm="12"><a-form-item field="remotePass" label="远端认证密码"><a-input-password v-model="configForm.remotePass" size="small"><template #prefix><icon-lock></icon-lock></template></a-input-password></a-form-item></a-col>
                             </a-row>
                             <a-row :gutter="24">
                                 <a-col :xs="24" :sm="12"><a-form-item field="workers" label="核心并发数 (Workers)"><a-input-number v-model="configForm.workers" :min="1" :max="20" size="small"><template #prefix><icon-layers></icon-layers></template></a-input-number></a-form-item></a-col>
-                                <a-col :xs="24" :sm="12"><a-form-item field="scanInterval" label="目录扫描间隔上限 (分钟)"><a-input-number v-model="configForm.scanInterval" :min="1" size="small"><template #prefix><icon-clock-circle></icon-clock-circle></template></a-input-number></a-form-item></a-col>
+                                <a-col :xs="24" :sm="12"><a-form-item field="scanInterval" label="目录扫描间隔 (分钟)"><a-input-number v-model="configForm.scanInterval" :min="1" size="small"><template #prefix><icon-clock-circle></icon-clock-circle></template></a-input-number></a-form-item></a-col>
                             </a-row>
                             <a-row :gutter="24">
                                 <a-col :xs="24" :sm="12"><a-form-item field="dayRate" label="白天限速封顶 (MB/s)"><a-input-number v-model="configForm.dayRate" :min="0" size="small"><template #prefix><icon-sun></icon-sun></template></a-input-number></a-form-item></a-col>
@@ -683,7 +717,7 @@
         </main>
 
         <footer class="footer-copyright">
-            &copy; 2026 2.22 Lei. All Rights Reserved. <br>
+            &copy; 2026 Lei. All Rights Reserved. <br>
             <a href="https://github.com/Xiaoxusheng/go-auto-uploader" target="_blank" style="display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;">
                 <icon-github></icon-github> go-auto-uploader
             </a>
@@ -698,6 +732,14 @@
                 {{ recorderLogsContent }}
                 <div v-if="!recorderLogsContent" style="color: gray;">暂无日志输出...</div>
             </div>
+        </a-modal>
+
+        <a-modal v-model:visible="showBatchAddModal" title="批量导入主播名单" @ok="handleBatchAdd" @cancel="showBatchAddModal = false" :ok-loading="batchAddLoading">
+            <a-alert type="info" style="margin-bottom: 16px;">
+                请在下方输入框内粘贴主播信息，<b>每行一个</b>，单次导入上限受后端安全策略保护为 <b>50</b> 个。<br>
+                格式支持：<code>直播间链接</code> 或者 <code>直播间链接,主播名字</code>
+            </a-alert>
+            <a-textarea v-model="batchAddText" placeholder="示例:&#10;https://live.douyin.com/12345678&#10;https://live.douyin.com/87654321,张三" :auto-size="{minRows: 10, maxRows: 15}" style="font-family: monospace;"></a-textarea>
         </a-modal>
 
     </template>
@@ -772,7 +814,6 @@
 
             const liveTaskFilter = ref('uploading');
 
-            // ⭐ 移除了核心接口的 HTTP 短轮询计时器
             let pollingTimer = null;
             let logPollingTimer = null;
             let streamerPollingTimer = null;
@@ -798,6 +839,38 @@
             const showLogsModal = ref(false);
             const recorderLogsContent = ref('');
             const dockerLogsRef = ref(null);
+
+            const showBatchAddModal = ref(false);
+            const batchAddText = ref('');
+            const batchAddLoading = ref(false);
+
+            const cookiesForm = reactive({ douyin: '', kuaishou: '', sooplive: '' });
+            const cookiesLoading = ref(false);
+
+            const fetchCookies = async () => {
+                if (!configForm.value.recorderConfigPath) return;
+                cookiesLoading.value = true;
+                try {
+                    const res = await api.get('/cookies');
+                    Object.assign(cookiesForm, res.data);
+                } catch(e) {} finally {
+                    cookiesLoading.value = false;
+                }
+            };
+
+            const saveCookies = async () => {
+                if (!configForm.value.recorderConfigPath) {
+                    Message.warning('系统安全拦截：请先在【系统参数设置】中配置 config.ini 物理路径！');
+                    return;
+                }
+                cookiesLoading.value = true;
+                try {
+                    await api.put('/cookies', cookiesForm);
+                    Message.success('Cookie 凭证已安全追记至引擎配置文件！');
+                } catch(e) {} finally {
+                    cookiesLoading.value = false;
+                }
+            };
 
             const uploadingTasks = computed(() => liveTasks.value.filter(t => t.status === 'uploading' || t.status === 'waiting'));
             const completedTasks = computed(() => liveTasks.value.filter(t => t.status !== 'uploading' && t.status !== 'waiting'));
@@ -871,7 +944,6 @@
                 isLoggedIn.value = false; cleanUp();
             };
 
-            // 手动动作触发的 API 保留
             const fetchStatus = async () => { try { Object.assign(systemStatus, (await api.get('/status')).data); } catch (e) {} };
             const fetchQueue = async () => { try { Object.assign(queueStatus, (await api.get('/tasks/queue')).data); } catch (e) {} };
             const fetchLiveTasks = async () => { try { liveTasks.value = (await api.get('/tasks/live')).data || []; } catch (e) {} };
@@ -886,10 +958,15 @@
             };
 
             const controlRecorder = async (action) => {
+                if (!configForm.value.recorderContainer) {
+                    Message.error('请先在系统参数设置中配置 Docker 容器名');
+                    activeTab.value = 'settings';
+                    return;
+                }
                 recorderControlLoading.value = true;
                 try {
-                    await api.post(`/recorder/control?action=${action}`);
-                    Message.success('录制引擎操作已执行完毕');
+                    await api.post('/recorder/control', null, { params: { action } });
+                    Message.success('操作已成功执行');
                     fetchRecorderStatus();
                 } catch (e) {} finally {
                     recorderControlLoading.value = false;
@@ -956,6 +1033,53 @@
                 saveStreamers();
             };
 
+            const handleBatchAdd = async () => {
+                if (!batchAddText.value.trim()) {
+                    Message.warning('请输入要批量添加的主播内容');
+                    return false;
+                }
+
+                const lines = batchAddText.value.split('\n').map(l => l.trim()).filter(l => l);
+                if (lines.length > 50) {
+                    Message.error(`后端安全配置拦截：单次最多添加 50 个，您当前输入了 ${lines.length} 个`);
+                    return false;
+                }
+
+                const newEntries = [];
+                for (const line of lines) {
+                    let url = line;
+                    let name = '';
+
+                    const commaIndex = line.indexOf(',') > -1 ? line.indexOf(',') : line.indexOf('，');
+                    if (commaIndex > -1) {
+                        url = line.substring(0, commaIndex).trim();
+                        name = line.substring(commaIndex + 1).trim();
+                    }
+                    if (url) {
+                        newEntries.push({ url, name, active: true });
+                    }
+                }
+
+                if (newEntries.length === 0) {
+                    Message.warning('未能解析到有效的直播间链接，请检查格式');
+                    return false;
+                }
+
+                batchAddLoading.value = true;
+                try {
+                    await api.post('/streamers', newEntries);
+                    Message.success(`成功批量添加了 ${newEntries.length} 个主播记录`);
+                    batchAddText.value = '';
+                    showBatchAddModal.value = false;
+                    fetchStreamers();
+                    return true;
+                } catch (e) {
+                    return false;
+                } finally {
+                    batchAddLoading.value = false;
+                }
+            };
+
             const removeStreamer = (index) => {
                 streamers.value.splice(index, 1);
                 saveStreamers();
@@ -1001,24 +1125,18 @@
 
                         triggerWsPulse(msg.type);
 
-                        // ⭐ 新增：处理后端主动推送的系统状态和队列状态 (完全替代 HTTP 轮询)
-                        if (msg.type === 'systemStatus') {
-                            Object.assign(systemStatus, msg.payload);
-                            return;
-                        }
-                        if (msg.type === 'queueStatus') {
-                            Object.assign(queueStatus, msg.payload);
-                            return;
-                        }
-
                         if (msg.type === 'uploadProgress') {
                             const idx = liveTasks.value.findIndex(t => t.id === msg.payload.id);
                             if (idx > -1) {
                                 liveTasks.value[idx].uploaded = msg.payload.uploaded;
                                 liveTasks.value[idx].speed = msg.payload.speed;
                             } else fetchLiveTasks();
+                        } else if (msg.type === 'systemStatus') {
+                            Object.assign(systemStatus, msg.payload);
+                        } else if (msg.type === 'queueStatus') {
+                            Object.assign(queueStatus, msg.payload);
                         } else if (msg.type === 'taskDone') {
-                            fetchLiveTasks(); fetchHistory();
+                            fetchLiveTasks(); fetchQueue(); fetchHistory();
                         }
                         else if (msg.type === 'scanStarted') {
                             let titleText = '📡 系统扫描已启动';
@@ -1026,7 +1144,7 @@
 
                             if (msg.payload.trigger === 'auto') {
                                 titleText = '⏱️ 定时扫描执行中';
-                                contentText = `动态周期：距上次隔 ${msg.payload.interval} 分钟\n` + contentText;
+                                contentText = `定时周期：${msg.payload.interval} 分钟/次\n` + contentText;
                             } else if (msg.payload.trigger === 'start') {
                                 titleText = '▶️ 系统已恢复运行';
                             } else if (msg.payload.trigger === 'rescan') {
@@ -1046,10 +1164,11 @@
                         else if (msg.type === 'scanFinished') {
                             Notification.success({
                                 title: '✅ 扫描侦测完毕',
-                                content: `本轮深度比对完成，共发现并压入 ${msg.payload.added} 个新文件至队列中。`,
+                                content: `本轮深度比惊完成，共发现并压入 ${msg.payload.added} 个新文件至队列中。`,
                                 position: 'bottomRight',
                                 duration: 4000
                             });
+                            fetchStatus();
                         }
                     } catch (e) {}
                 };
@@ -1131,16 +1250,9 @@
 
                     let changes = [];
                     if (configForm.value.liveConfigPath !== originalConfigSnapshot.liveConfigPath) changes.push(`📄 录制名单路径已更新`);
+                    if (configForm.value.recorderConfigPath !== originalConfigSnapshot.recorderConfigPath) changes.push(`⚙️ 引擎配置 config.ini 路径已更新`);
                     if (configForm.value.recorderContainer !== originalConfigSnapshot.recorderContainer) changes.push(`💻 容器名已更新`);
                     if (configForm.value.remoteServer !== originalConfigSnapshot.remoteServer) changes.push(`🔗 API 地址已更新`);
-                    if (configForm.value.remoteUser !== originalConfigSnapshot.remoteUser) changes.push(`👤 认证账号已更新`);
-                    if (configForm.value.remotePass !== originalConfigSnapshot.remotePass) changes.push(`🔑 认证密码已更新`);
-
-                    if (configForm.value.workers !== originalConfigSnapshot.workers) changes.push(`🚀 并发数: ${originalConfigSnapshot.workers} ➜ ${configForm.value.workers}`);
-                    if (configForm.value.scanInterval !== originalConfigSnapshot.scanInterval) changes.push(`⏱️ 扫描间隔上限: ${originalConfigSnapshot.scanInterval} ➜ ${configForm.value.scanInterval} 分钟`);
-                    if (configForm.value.dayRate !== originalConfigSnapshot.dayRate) changes.push(`☀️ 白天限速: ${originalConfigSnapshot.dayRate} ➜ ${configForm.value.dayRate} MB/s`);
-                    if (configForm.value.nightRate !== originalConfigSnapshot.nightRate) changes.push(`🌙 夜晚限速: ${originalConfigSnapshot.nightRate} ➜ ${configForm.value.nightRate} MB/s`);
-                    if (configForm.value.emailInterval !== originalConfigSnapshot.emailInterval) changes.push(`📧 邮件间隔: ${originalConfigSnapshot.emailInterval} ➜ ${configForm.value.emailInterval} 分钟`);
 
                     const oldDirs = (originalConfigSnapshot.dirs || []).join(',');
                     const newDirs = (configForm.value.dirs || []).join(',');
@@ -1157,8 +1269,6 @@
                     });
 
                     originalConfigSnapshot = JSON.parse(JSON.stringify(configForm.value));
-
-                    // 手动保存后立即更新状态
                     fetchStatus();
                 } catch (e) {}
             };
@@ -1211,13 +1321,9 @@
             const getLogLevelColor = (level) => ({ 'info': '#00b42a', 'error': '#f53f3f', 'warn': '#ff7d00' }[level] || 'var(--color-text-3)');
 
             const initDashboard = () => {
-                // 首次打开快速填满界面，后续交给 WebSocket 下推
                 fetchStatus(); fetchQueue(); fetchLiveTasks(); fetchHistory(); fetchLogs(); fetchConfig();
                 connectWS();
-
                 if (pollingTimer) clearInterval(pollingTimer);
-
-                // ⭐ 重构：1000ms 极速时间跳动引擎，完全不产生 HTTP 网络请求
                 pollingTimer = setInterval(() => {
                     clientTime.value = Date.now();
                 }, 1000);
@@ -1245,6 +1351,10 @@
 
                 if (newTab === 'history') {
                     fetchHistory();
+                }
+
+                if (newTab === 'cookies') {
+                    fetchCookies();
                 }
 
                 if (newTab === 'streamers') {
@@ -1281,6 +1391,8 @@
                 configForm, configDirsString, fetchConfig, saveConfig,
                 streamers, newStreamer, activeStreamersCount, fetchStreamers, saveStreamers, addStreamer, removeStreamer,
                 activeRecordingStreamers,
+                showBatchAddModal, batchAddText, batchAddLoading, handleBatchAdd,
+                cookiesForm, cookiesLoading, fetchCookies, saveCookies,
                 recorderStatus, recorderControlLoading, showLogsModal, recorderLogsContent, dockerLogsRef, fetchRecorderStatus, controlRecorder, fetchRecorderLogs, openLogsModal,
                 formatSize, formatSpeed, calculatePercent, formatDuration, formatDurationSeconds, getElapsedTime, getStatusColor, getLogLevelColor, fetchLiveTasks, formatStatusText
             };
@@ -1292,4 +1404,3 @@
     app.mount('#app');
 </script>
 </body>
-</html>

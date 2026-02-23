@@ -76,22 +76,23 @@ type DirStatus struct {
 }
 
 type Config struct {
-	ScanInterval      int      `json:"scanInterval"`
-	Workers           int      `json:"workers"`
-	DayRate           int      `json:"dayRate"`
-	NightRate         int      `json:"nightRate"`
-	EmailInterval     int      `json:"emailInterval"`
-	Running           bool     `json:"running"`
-	AutoRetry         bool     `json:"autoRetry"`
-	MaxRetry          int      `json:"maxRetry"`
-	EnableLogs        bool     `json:"enableLogs"`
-	LogLevel          string   `json:"logLevel"`
-	Dirs              []string `json:"dirs"`
-	RemoteServer      string   `json:"remoteServer"`
-	RemoteUser        string   `json:"remoteUser"`
-	RemotePass        string   `json:"remotePass"`
-	LiveConfigPath    string   `json:"liveConfigPath"`
-	RecorderContainer string   `json:"recorderContainer"`
+	ScanInterval       int      `json:"scanInterval"`
+	Workers            int      `json:"workers"`
+	DayRate            int      `json:"dayRate"`
+	NightRate          int      `json:"nightRate"`
+	EmailInterval      int      `json:"emailInterval"`
+	Running            bool     `json:"running"`
+	AutoRetry          bool     `json:"autoRetry"`
+	MaxRetry           int      `json:"maxRetry"`
+	EnableLogs         bool     `json:"enableLogs"`
+	LogLevel           string   `json:"logLevel"`
+	Dirs               []string `json:"dirs"`
+	RemoteServer       string   `json:"remoteServer"`
+	RemoteUser         string   `json:"remoteUser"`
+	RemotePass         string   `json:"remotePass"`
+	LiveConfigPath     string   `json:"liveConfigPath"`
+	RecorderContainer  string   `json:"recorderContainer"`
+	RecorderConfigPath string   `json:"recorderConfigPath"` // ⭐ 修复：改为和前端字段对应的命名
 }
 
 type Streamer struct {
@@ -150,11 +151,13 @@ func StartWebServer(port int) {
 	mux.HandleFunc("/api/v1/recorder/control", handleRecorderControl)
 	mux.HandleFunc("/api/v1/recorder/logs", handleRecorderLogs)
 
+	mux.HandleFunc("/api/v1/cookies", handleCookies)
+
 	mux.HandleFunc("/ws/live", handleWebSocket)
 
 	go wsBroadcastLoop()
 	go logCollector()
-	go wsDashboardBroadcaster() // ⭐ 新增：启动基于 WebSocket 的仪表盘状态广播引擎
+	go wsDashboardBroadcaster()
 
 	addr := fmt.Sprintf(":%d", port)
 	log.Printf("[WEB] 控制台已就绪: http://127.0.0.1%s", addr)
@@ -191,7 +194,6 @@ func wsBroadcastLoop() {
 	}
 }
 
-// ⭐ 核心创新：每 3 秒通过 WebSocket 自动推流状态，替代前端的 HTTP 轮询
 func wsDashboardBroadcaster() {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
@@ -201,7 +203,6 @@ func wsDashboardBroadcaster() {
 		clientCount := len(wsClients)
 		wsMutex.Unlock()
 
-		// 只有当有前端页面打开时，才进行计算并推送，极致节省性能
 		if clientCount > 0 {
 			broadcastWS("systemStatus", buildStatusData())
 			broadcastWS("queueStatus", buildQueueData())
@@ -274,7 +275,6 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, nil)
 }
 
-// ⭐ 提取组装状态的数据工厂
 func buildStatusData() map[string]interface{} {
 	runningMu.RLock()
 	isRunning := running
@@ -332,12 +332,10 @@ func buildStatusData() map[string]interface{} {
 	}
 }
 
-// 保留 HTTP 接口兼容首次访问
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, buildStatusData())
 }
 
-// ⭐ 提取组装队列的数据工厂
 func buildQueueData() map[string]interface{} {
 	queueMu.RLock()
 	defer queueMu.RUnlock()
@@ -351,7 +349,6 @@ func buildQueueData() map[string]interface{} {
 	}
 }
 
-// 保留 HTTP 接口兼容首次访问
 func handleQueue(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, buildQueueData())
 }
@@ -572,6 +569,123 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
+}
+
+// ⭐ 修复：按照 INI 的格式安全解析并覆盖 Cookie 内容，不再整体覆盖摧毁文件
+func handleCookies(w http.ResponseWriter, r *http.Request) {
+	appConfigMu.RLock()
+	configPath := appConfig.RecorderConfigPath
+	appConfigMu.RUnlock()
+
+	if configPath == "" {
+		sendJSONError(w, http.StatusBadRequest, "尚未配置录制引擎主配置文件路径 (config.ini)")
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			// 文件如果读取失败，直接返回空内容结构体供前端渲染
+			sendJSONSuccess(w, map[string]string{"douyin": "", "kuaishou": "", "sooplive": ""})
+			return
+		}
+
+		res := map[string]string{"douyin": "", "kuaishou": "", "sooplive": ""}
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "douyin_cookie") {
+				parts := strings.SplitN(trimmed, "=", 2)
+				if len(parts) == 2 {
+					res["douyin"] = strings.TrimSpace(parts[1])
+				}
+			} else if strings.HasPrefix(trimmed, "kuaishou_cookie") {
+				parts := strings.SplitN(trimmed, "=", 2)
+				if len(parts) == 2 {
+					res["kuaishou"] = strings.TrimSpace(parts[1])
+				}
+			} else if strings.HasPrefix(trimmed, "sooplive_cookie") {
+				parts := strings.SplitN(trimmed, "=", 2)
+				if len(parts) == 2 {
+					res["sooplive"] = strings.TrimSpace(parts[1])
+				}
+			}
+		}
+
+		sendJSONSuccess(w, res)
+		return
+	}
+
+	if r.Method == http.MethodPut {
+		var req struct {
+			Douyin   string `json:"douyin"`
+			Kuaishou string `json:"kuaishou"`
+			Sooplive string `json:"sooplive"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sendJSONError(w, http.StatusBadRequest, "Invalid JSON body")
+			return
+		}
+
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			sendJSONError(w, http.StatusInternalServerError, "读取配置文件失败: "+err.Error())
+			return
+		}
+
+		lines := strings.Split(string(data), "\n")
+		douyinFound, kuaishouFound, soopliveFound := false, false, false
+
+		// 遍历替换已有的 cookie 键值对
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "douyin_cookie") {
+				lines[i] = "douyin_cookie=" + req.Douyin
+				douyinFound = true
+			} else if strings.HasPrefix(trimmed, "kuaishou_cookie") {
+				lines[i] = "kuaishou_cookie=" + req.Kuaishou
+				kuaishouFound = true
+			} else if strings.HasPrefix(trimmed, "sooplive_cookie") {
+				lines[i] = "sooplive_cookie=" + req.Sooplive
+				soopliveFound = true
+			}
+		}
+
+		// 帮助函数：如果找不到键值对，就插入在 [cookie] 节点之后
+		insertAfterCookie := func(key, val string) {
+			for i, line := range lines {
+				if strings.TrimSpace(line) == "[cookie]" {
+					lines = append(lines[:i+1], append([]string{key + "=" + val}, lines[i+1:]...)...)
+					return
+				}
+			}
+			// 如果连 [cookie] 节点都没有，就在文件最末尾补上
+			lines = append(lines, "", "[cookie]", key+"="+val)
+		}
+
+		if !douyinFound && req.Douyin != "" {
+			insertAfterCookie("douyin_cookie", req.Douyin)
+		}
+		if !kuaishouFound && req.Kuaishou != "" {
+			insertAfterCookie("kuaishou_cookie", req.Kuaishou)
+		}
+		if !soopliveFound && req.Sooplive != "" {
+			insertAfterCookie("sooplive_cookie", req.Sooplive)
+		}
+
+		err = os.WriteFile(configPath, []byte(strings.Join(lines, "\n")), 0644)
+		if err != nil {
+			log.Printf("[CONTROL][ERR] 无法写入 Cookie 配置文件 %s: %v", configPath, err)
+			sendJSONError(w, http.StatusInternalServerError, "保存 Cookie 失败: "+err.Error())
+			return
+		}
+
+		log.Printf("[CONTROL] 🍪 用户在网页端成功更新了 Cookie 至主配置文件 %s", configPath)
+		sendJSONSuccess(w, nil)
+		return
+	}
+
+	sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 }
 
 func handleStreamers(w http.ResponseWriter, r *http.Request) {
