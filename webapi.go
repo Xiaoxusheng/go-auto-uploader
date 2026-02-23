@@ -76,36 +76,28 @@ type DirStatus struct {
 }
 
 type Config struct {
-	ScanInterval       int      `json:"scanInterval"`
-	Workers            int      `json:"workers"`
-	DayRate            int      `json:"dayRate"`
-	NightRate          int      `json:"nightRate"`
-	EmailInterval      int      `json:"emailInterval"`
-	Running            bool     `json:"running"`
-	AutoRetry          bool     `json:"autoRetry"`
-	MaxRetry           int      `json:"maxRetry"`
-	EnableLogs         bool     `json:"enableLogs"`
-	LogLevel           string   `json:"logLevel"`
-	Dirs               []string `json:"dirs"`
-	RemoteServer       string   `json:"remoteServer"`
-	RemoteUser         string   `json:"remoteUser"`
-	RemotePass         string   `json:"remotePass"`
-	LiveConfigPath     string   `json:"liveConfigPath"`
-	RecorderConfigPath string   `json:"recorderConfigPath"` // ⭐ 新增：config.ini 的物理路径
-	RecorderContainer  string   `json:"recorderContainer"`
+	ScanInterval      int      `json:"scanInterval"`
+	Workers           int      `json:"workers"`
+	DayRate           int      `json:"dayRate"`
+	NightRate         int      `json:"nightRate"`
+	EmailInterval     int      `json:"emailInterval"`
+	Running           bool     `json:"running"`
+	AutoRetry         bool     `json:"autoRetry"`
+	MaxRetry          int      `json:"maxRetry"`
+	EnableLogs        bool     `json:"enableLogs"`
+	LogLevel          string   `json:"logLevel"`
+	Dirs              []string `json:"dirs"`
+	RemoteServer      string   `json:"remoteServer"`
+	RemoteUser        string   `json:"remoteUser"`
+	RemotePass        string   `json:"remotePass"`
+	LiveConfigPath    string   `json:"liveConfigPath"`
+	RecorderContainer string   `json:"recorderContainer"`
 }
 
 type Streamer struct {
 	URL    string `json:"url"`
 	Name   string `json:"name"`
 	Active bool   `json:"active"`
-}
-
-// ⭐ 新增：用于解析和接收前端 Cookie 的实体
-type CookiesConfig struct {
-	Douyin   string `json:"douyin"`
-	Kuaishou string `json:"kuaishou"`
-	Sooplive string `json:"sooplive"`
 }
 
 type LogEntry struct {
@@ -154,9 +146,6 @@ func StartWebServer(port int) {
 	mux.HandleFunc("/api/v1/streamers", handleStreamers)
 	mux.HandleFunc("/api/v1/streamers/active", handleActiveStreamers)
 
-	// ⭐ 新增：Cookie 操作路由
-	mux.HandleFunc("/api/v1/cookies", handleCookies)
-
 	mux.HandleFunc("/api/v1/recorder/status", handleRecorderStatus)
 	mux.HandleFunc("/api/v1/recorder/control", handleRecorderControl)
 	mux.HandleFunc("/api/v1/recorder/logs", handleRecorderLogs)
@@ -165,6 +154,7 @@ func StartWebServer(port int) {
 
 	go wsBroadcastLoop()
 	go logCollector()
+	go wsDashboardBroadcaster() // ⭐ 新增：启动基于 WebSocket 的仪表盘状态广播引擎
 
 	addr := fmt.Sprintf(":%d", port)
 	log.Printf("[WEB] 控制台已就绪: http://127.0.0.1%s", addr)
@@ -184,10 +174,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, err := io.WriteString(w, indexHTML)
-	if err != nil {
-		log.Printf("[WEB][ERR] 写入 index.html 失败: %v", err)
-	}
+	io.WriteString(w, indexHTML)
 }
 
 func wsBroadcastLoop() {
@@ -204,6 +191,24 @@ func wsBroadcastLoop() {
 	}
 }
 
+// ⭐ 核心创新：每 3 秒通过 WebSocket 自动推流状态，替代前端的 HTTP 轮询
+func wsDashboardBroadcaster() {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		wsMutex.Lock()
+		clientCount := len(wsClients)
+		wsMutex.Unlock()
+
+		// 只有当有前端页面打开时，才进行计算并推送，极致节省性能
+		if clientCount > 0 {
+			broadcastWS("systemStatus", buildStatusData())
+			broadcastWS("queueStatus", buildQueueData())
+		}
+	}
+}
+
 func broadcastWS(msgType string, payload interface{}) {
 	select {
 	case wsBroadcast <- WSMessage{Type: msgType, Payload: payload}:
@@ -214,7 +219,6 @@ func broadcastWS(msgType string, payload interface{}) {
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[WS][ERR] 协议升级失败: %v", err)
 		return
 	}
 	defer conn.Close()
@@ -232,13 +236,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 		if msg.Type == "ping" {
 			wsMutex.Lock()
-			err := conn.WriteJSON(WSMessage{Type: "pong", Payload: msg.Payload})
+			_ = conn.WriteJSON(WSMessage{Type: "pong", Payload: msg.Payload})
 			wsMutex.Unlock()
-
-			if err != nil {
-				log.Printf("[WS][ERR] 发送 pong 失败，连接可能已断开: %v", err)
-				break
-			}
 		}
 	}
 
@@ -252,29 +251,18 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		sendJSONError(w, http.StatusBadRequest, "无法读取请求数据")
-		return
-	}
-
+	body, _ := io.ReadAll(r.Body)
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		OTP      string `json:"otp"`
 	}
-
-	if err := json.Unmarshal(body, &req); err != nil {
-		sendJSONError(w, http.StatusBadRequest, "请求数据格式非法 (JSON)")
-		return
-	}
+	json.Unmarshal(body, &req)
 
 	if req.Username != dashboardUsername || req.Password != dashboardPassword {
 		sendJSONError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
-
 	expiry := time.Now().Add(24 * time.Hour).UnixMilli()
 	if token == "" {
 		token = "test-token-" + strconv.FormatInt(time.Now().Unix(), 10)
@@ -286,7 +274,8 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, nil)
 }
 
-func handleStatus(w http.ResponseWriter, r *http.Request) {
+// ⭐ 提取组装状态的数据工厂
+func buildStatusData() map[string]interface{} {
 	runningMu.RLock()
 	isRunning := running
 	runningMu.RUnlock()
@@ -330,7 +319,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	dirStatusesMu.RUnlock()
 
-	sendJSONSuccess(w, map[string]interface{}{
+	return map[string]interface{}{
 		"running":          isRunning,
 		"tokenValid":       token != "",
 		"workers":          currentWorkers,
@@ -340,7 +329,31 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		"dayRate":          currentDayRate,
 		"nightRate":        currentNightRate,
 		"uptime":           int64(time.Since(startTime).Seconds()),
-	})
+	}
+}
+
+// 保留 HTTP 接口兼容首次访问
+func handleStatus(w http.ResponseWriter, r *http.Request) {
+	sendJSONSuccess(w, buildStatusData())
+}
+
+// ⭐ 提取组装队列的数据工厂
+func buildQueueData() map[string]interface{} {
+	queueMu.RLock()
+	defer queueMu.RUnlock()
+
+	return map[string]interface{}{
+		"waiting":   atomic.LoadInt64(&queueCount),
+		"uploading": len(queueUploading),
+		"success":   len(queueSuccess),
+		"failed":    len(queueFail),
+		"retrying":  len(queueRetrying),
+	}
+}
+
+// 保留 HTTP 接口兼容首次访问
+func handleQueue(w http.ResponseWriter, r *http.Request) {
+	sendJSONSuccess(w, buildQueueData())
 }
 
 func handleLiveTasks(w http.ResponseWriter, r *http.Request) {
@@ -430,19 +443,6 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sendJSONSuccess(w, map[string]interface{}{"items": items, "total": total})
-}
-
-func handleQueue(w http.ResponseWriter, r *http.Request) {
-	queueMu.RLock()
-	queueData := map[string]interface{}{
-		"waiting":   atomic.LoadInt64(&queueCount),
-		"uploading": len(queueUploading),
-		"success":   len(queueSuccess),
-		"failed":    len(queueFail),
-		"retrying":  len(queueRetrying),
-	}
-	queueMu.RUnlock()
-	sendJSONSuccess(w, queueData)
 }
 
 func handleControlStart(w http.ResponseWriter, r *http.Request) {
@@ -574,127 +574,6 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ⭐ 新增：处理 Cookie 提取与写入的核心接口
-func handleCookies(w http.ResponseWriter, r *http.Request) {
-	appConfigMu.RLock()
-	configPath := appConfig.RecorderConfigPath
-	appConfigMu.RUnlock()
-
-	if configPath == "" {
-		sendJSONError(w, http.StatusBadRequest, "请先在系统设置中配置 config.ini 的物理路径")
-		return
-	}
-
-	if r.Method == http.MethodGet {
-		data, err := os.ReadFile(configPath)
-		if err != nil {
-			sendJSONError(w, http.StatusInternalServerError, "无法读取 config.ini 配置文件: "+err.Error())
-			return
-		}
-
-		cookies := CookiesConfig{}
-		lines := strings.Split(string(data), "\n")
-		inCookieSection := false
-
-		for _, line := range lines {
-			cleanLine := strings.TrimRight(line, "\r")
-			trimmed := strings.TrimSpace(cleanLine)
-			trimmed = strings.TrimPrefix(trimmed, "\ufeff")
-
-			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-				inCookieSection = (trimmed == "[Cookie]")
-				continue
-			}
-
-			if inCookieSection && strings.Contains(trimmed, "=") {
-				parts := strings.SplitN(trimmed, "=", 2)
-				if len(parts) == 2 {
-					k := strings.TrimSpace(parts[0])
-					v := strings.TrimSpace(parts[1])
-
-					// 兼容两种可能存在的抖音 Cookie 键名
-					if k == "抖音cookie" || k == "抖音cookie(录制抖音必须要有)" {
-						if cookies.Douyin == "" {
-							cookies.Douyin = v
-						}
-					} else if k == "快手cookie" {
-						cookies.Kuaishou = v
-					} else if k == "sooplive_cookie" {
-						cookies.Sooplive = v
-					}
-				}
-			}
-		}
-		sendJSONSuccess(w, cookies)
-		return
-	}
-
-	if r.Method == http.MethodPut {
-		var req CookiesConfig
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, http.StatusBadRequest, "非法的请求数据")
-			return
-		}
-
-		data, err := os.ReadFile(configPath)
-		if err != nil {
-			sendJSONError(w, http.StatusInternalServerError, "无法读取 config.ini 配置文件: "+err.Error())
-			return
-		}
-
-		lines := strings.Split(string(data), "\n")
-		var newLines []string
-		inCookieSection := false
-
-		for _, line := range lines {
-			cleanLine := strings.TrimRight(line, "\r")
-			trimmed := strings.TrimSpace(cleanLine)
-			trimmed = strings.TrimPrefix(trimmed, "\ufeff")
-
-			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-				inCookieSection = (trimmed == "[Cookie]")
-				newLines = append(newLines, cleanLine) // 原样保留节点声明
-				continue
-			}
-
-			// 如果当前在 Cookie 节点下，且包含了我们关心的键名，则进行安全替换
-			if inCookieSection && strings.Contains(trimmed, "=") {
-				parts := strings.SplitN(trimmed, "=", 2)
-				if len(parts) == 2 {
-					k := strings.TrimSpace(parts[0])
-
-					if k == "抖音cookie" || k == "抖音cookie(录制抖音必须要有)" {
-						newLines = append(newLines, k+" = "+req.Douyin)
-						continue
-					} else if k == "快手cookie" {
-						newLines = append(newLines, k+" = "+req.Kuaishou)
-						continue
-					} else if k == "sooplive_cookie" {
-						newLines = append(newLines, k+" = "+req.Sooplive)
-						continue
-					}
-				}
-			}
-			// 不在 Cookie 节点或是其他不关心的键，原样保留
-			newLines = append(newLines, cleanLine)
-		}
-
-		err = os.WriteFile(configPath, []byte(strings.Join(newLines, "\n")), 0644)
-		if err != nil {
-			sendJSONError(w, http.StatusInternalServerError, "保存 Cookie 至文件失败: "+err.Error())
-			return
-		}
-
-		log.Printf("[CONTROL] 🍪 用户动态更新了录制引擎的 Cookie 凭证 (抖音/快手/Sooplive)")
-		sendJSONSuccess(w, nil)
-		return
-	}
-
-	sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
-}
-
-const MaxBatchStreamers = 50
-
 func handleStreamers(w http.ResponseWriter, r *http.Request) {
 	appConfigMu.RLock()
 	configPath := appConfig.LiveConfigPath
@@ -749,58 +628,6 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.Method == http.MethodPost {
-		var req []Streamer
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, http.StatusBadRequest, "Invalid JSON body")
-			return
-		}
-
-		if len(req) > MaxBatchStreamers {
-			sendJSONError(w, http.StatusBadRequest, fmt.Sprintf("【后端拦截】出于系统安全与性能考虑，单次批量添加上限被配置为 %d 个", MaxBatchStreamers))
-			return
-		}
-
-		if len(req) == 0 {
-			sendJSONSuccess(w, nil)
-			return
-		}
-
-		var sb strings.Builder
-		data, err := os.ReadFile(configPath)
-		if err == nil && len(data) > 0 {
-			sb.WriteString(string(data))
-			if !strings.HasSuffix(string(data), "\n") {
-				sb.WriteString("\n")
-			}
-		}
-
-		for _, s := range req {
-			cleanURL := strings.ReplaceAll(s.URL, "\ufeff", "")
-			cleanName := strings.ReplaceAll(s.Name, "\ufeff", "")
-
-			if !s.Active {
-				sb.WriteString("#")
-			}
-			sb.WriteString(cleanURL)
-			if cleanName != "" && cleanName != "未命名" && cleanName != "⏳ 等待自动获取..." && !strings.Contains(cleanName, "等待引擎抓取") {
-				sb.WriteString(",主播: " + cleanName)
-			}
-			sb.WriteString("\n")
-		}
-
-		err = os.WriteFile(configPath, []byte(sb.String()), 0644)
-		if err != nil {
-			log.Printf("[CONTROL][ERR] 无法追加写入录制配置文件 %s: %v", configPath, err)
-			sendJSONError(w, http.StatusInternalServerError, "保存批量配置失败: "+err.Error())
-			return
-		}
-
-		log.Printf("[CONTROL] 🎥 用户触发批量添加，共追加写入了 %d 条记录", len(req))
-		sendJSONSuccess(w, nil)
-		return
-	}
-
 	if r.Method == http.MethodPut {
 		var req []Streamer
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -829,7 +656,7 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 		err := os.WriteFile(configPath, []byte(sb.String()), 0644)
 		if err != nil {
 			log.Printf("[CONTROL][ERR] 无法写入录制配置文件 %s: %v", configPath, err)
-			sendJSONError(w, http.StatusInternalServerError, "保存配置文件失败: "+err.Error())
+			sendJSONError(w, http.StatusInternalServerError, "保存配置文件失败")
 			return
 		}
 
@@ -854,7 +681,7 @@ func handleActiveStreamers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}
@@ -874,10 +701,6 @@ func handleActiveStreamers(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		})
-
-		if err != nil {
-			log.Printf("[SCAN][ERR] 侦测活跃录像文件时，遍历目录发生异常 [%s]: %v", dir, err)
-		}
 	}
 
 	var result []string
@@ -893,24 +716,9 @@ func handleRecorderStatus(w http.ResponseWriter, r *http.Request) {
 	container := appConfig.RecorderContainer
 	appConfigMu.RUnlock()
 
-	if container == "" {
-		sendJSONSuccess(w, "未配置")
-		return
-	}
-
-	out, err := exec.Command("docker", "container", "inspect", "-f", "{{.State.Status}}", container).CombinedOutput()
+	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", container).CombinedOutput()
 	if err != nil {
-		errMsg := strings.TrimSpace(string(out))
-		if errMsg == "" {
-			errMsg = err.Error()
-		}
-
-		if strings.Contains(errMsg, "No such container") {
-			sendJSONError(w, http.StatusInternalServerError, "未找到该容器，您填写的可能是镜像名，请填写真实的容器名")
-			return
-		}
-
-		sendJSONError(w, http.StatusInternalServerError, "获取失败: "+errMsg)
+		sendJSONError(w, http.StatusInternalServerError, "无法获取状态或容器不存在")
 		return
 	}
 	status := strings.TrimSpace(string(out))
@@ -928,22 +736,12 @@ func handleRecorderControl(w http.ResponseWriter, r *http.Request) {
 	container := appConfig.RecorderContainer
 	appConfigMu.RUnlock()
 
-	if container == "" {
-		sendJSONError(w, http.StatusBadRequest, "尚未配置 Docker 容器名，请在设置中填写")
-		return
-	}
-
 	log.Printf("[DOCKER] 用户请求执行容器控制: docker %s %s", action, container)
-
 	out, err := exec.Command("docker", action, container).CombinedOutput()
 
 	if err != nil {
 		log.Printf("[DOCKER][ERR] 执行失败: %s", string(out))
-		errMsg := strings.TrimSpace(string(out))
-		if errMsg == "" {
-			errMsg = err.Error()
-		}
-		sendJSONError(w, http.StatusInternalServerError, "操作失败: "+errMsg)
+		sendJSONError(w, http.StatusInternalServerError, "操作失败: "+string(out))
 		return
 	}
 
@@ -967,7 +765,6 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	level := query.Get("level")
 	keyword := query.Get("keyword")
-
 	page, _ := strconv.Atoi(query.Get("page"))
 	limit, _ := strconv.Atoi(query.Get("limit"))
 
@@ -1056,15 +853,11 @@ func logCollector() {
 
 func sendJSONSuccess(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(APIResponse{Code: 200, Message: "success", Data: data}); err != nil {
-		log.Printf("[WEB][ERR] 返回 JSON 响应失败: %v", err)
-	}
+	json.NewEncoder(w).Encode(APIResponse{Code: 200, Message: "success", Data: data})
 }
 
 func sendJSONError(w http.ResponseWriter, statusCode int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(APIResponse{Code: statusCode, Message: message}); err != nil {
-		log.Printf("[WEB][ERR] 返回 JSON 错误响应失败: %v", err)
-	}
+	json.NewEncoder(w).Encode(APIResponse{Code: statusCode, Message: message})
 }

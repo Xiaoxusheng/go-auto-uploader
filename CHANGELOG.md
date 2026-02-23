@@ -1,5 +1,6 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
 
+---
 ### [v1.3.1] - 最新更新
 ## 🚀 最新特性 (Features)
 
@@ -28,7 +29,6 @@
 
 * **高并发反射探针 (WS Reflector)**：重构了 `handleWebSocket` 路由，加入了 `sync.Mutex` 互斥锁，支持无损、并发地处理并即刻原路弹回前端发送的 `ping` 消息。
 
----
 
 ## 🐞 修复与优化 (Bug Fixes & Optimizations)
 
@@ -36,8 +36,7 @@
 * **修复并发状态显示脱节**：修复了控制台定期打印 `[QUEUE][STATUS]` 时，并发线程数永远显示启动时命令行的初始值的问题。现已改为动态加锁读取 `appConfig.Workers`，确保修改并发数后日志显示立即同步。
 * **代码层级解耦**：清理了废弃的静态变量限制，统一由内存中的 `appConfigMu.RLock()` 统筹全权接管全局参数，使得并发、限速、扫描周期的“热更新”能力真正做到滴水不漏。
 
-
-## 📝 迭代更新日志 (Changelog)
+---
 
 ### [v1.3.2] - 最新更新
 
@@ -74,7 +73,6 @@
 
 ---
 
-## 📝 迭代更新日志 (Changelog)
 
 ### [v1.5.2] - 最新更新 (Live Radar & Smart Polling)
 
@@ -101,8 +99,46 @@
 * **优雅的命名交接 (Smart Naming)**：针对 `douyin-live-recorder` 的特性进行了底层适配。如果在面板添加主播时不填名字，后端将只写入链接，把获取真实主播名称的工作交还给引擎，并在前端显示 `⏳ 等待引擎抓取...` 动画，抓取成功后前端会在 3 秒内自动轮询变更为真实姓名。
 * **反刷屏进度控制台 (Anti-Spam Logs)**：重构了后端的上传进度打印逻辑。从原来的每秒疯狂输出，改为了智能的“10% 步长阶梯式打印”，完美解决了后台控制台和前端日志面板被几万条进度日志卡死的问题。
 
+---
+### [v1.6.0] - 最新更新 (Extreme Performance & Full-Duplex)
 
-## 📜 文档与规范 (Documentation)
+🌟 核心特性 (New Features)
+全双工 WebSocket 广播引擎 (WS Broadcast Engine)：彻底终结了原先的高频 HTTP 短轮询（Polling）机制。后端新增独立的 wsDashboardBroadcaster 驻留协程，在有前端页面连接时，每 3 秒自动将全局“系统状态”与“队列数据”打包并通过 WebSocket 主动下推到所有客户端。
+
+零网络开销时钟 (Zero-Overhead Clock)：将前端面板的本地“计时器跳动”引擎重构为纯粹的 1000ms 刻度驱动，完全剥离了原本捆绑的 HTTP 请求。这使得服务器后端 CPU 和高频网络 I/O 压力呈断崖式下降，面板操控体验实现了无感丝滑。
+
+🎨 界面与交互优化 (UI/UX)
+视觉风格统一 (Unified Glass UI)：去除了“录制引擎控制台”卡片左侧突兀的彩色边条，使所有控制面版严格对齐 Apple Glass 毛玻璃设计语言。
+
+纯净胶囊开关 (Capsule Switch)：移除了表格中导致开关变为硬朗方形的 type="round" 强制属性，恢复了 Arco Design 原生灵动的全圆角胶囊形态，并内嵌了直观的对勾与叉号标识。
+
+🐞 修复与优化 (Bug Fixes & Optimizations)
+API 跨域与寻址修复 (CORS & BaseURL Fix)：修复了在触发 Docker 控制指令（如查看状态、启停容器）时，因将硬编码 IP 写死导致前端抛出 404 Not Found 和 CORS 跨域拦截的严重 Bug。现已全部收束规范为基于 Axios baseURL 的相对路由请求。
+
+核心依赖补全 (Import Fix)：解决了上一版由于遗漏引入标准包 path/filepath，导致后端在编译“直播录制雷达”底层文件比对模块时抛出 undefined: filepath 的致命语法错误。
+
+
+好的！这是一份整理好的 v1.6.1 的专属更新日志段落。
+
+我为你把这次更新中关于 **WebSocket 全双工接管高频接口** 的重大架构调整清晰地总结了出来，你可以直接将它追加到你的 `README.md` 的迭代日志最后。
+
+---
+
+### [v1.6.1] - 最新更新 (Full-Duplex WS & API Refactoring)
+
+#### 🌟 核心特性 (New Features)
+
+* **全栈 WebSocket 双工通信接管 (Full-Duplex Takeover)**：完成了前后端通信架构的深度重构。彻底废弃了原有的 HTTP 轮询 (`setInterval`) 机制，将最高频、最消耗性能的两个大盘数据接口全面转移至 WebSocket 协议：
+* `/api/v1/status` (系统状态、目录监控)
+* `/api/v1/tasks/queue` (排队进度、饼图数据)
+
+
+* **智能推流引擎 (Smart Broadcast Engine)**：后端新增独立的 `wsDashboardBroadcaster` 驻留协程。它能够智能感知前端面板的打开状态，仅在客户端在线时，每隔 3 秒自动将系统状态与队列数据打包下推，极大地降低了服务器的高频并发处理压力与无用的 HTTP 握手开销，实现了**零网络开销时钟**。
+* **分级数据传输策略 (Tiered Data Strategy)**：确立了全新的 API 职责边界：
+* **毫秒级/高频跳动数据**（上传进度、任务结算、探针延迟、系统大盘）：由 WebSocket 全权承载推流。
+* **按需点击/重型查询数据**（历史翻页、日志拉取、Docker 容器控制与名单保存）：保留标准的 RESTful HTTP 接口，避免阻塞 WS 实时信道，保证核心上传任务流不受干扰。
+
+## 📜 文档与规范 q(Documentation)
 
 * **标准化开源库主页**：起草了带有特性说明、启动参数表、API 规范以及带占位符的 6 图展示位的标准企业级 `README.md`。
 * **开源协议合规**：引入了极度宽松友好的 `MIT License` 声明，为项目的后续传播与二次开发打下基础。
