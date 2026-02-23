@@ -523,8 +523,8 @@
                                             <span v-if="record.name" :style="{ color: record.active ? 'var(--color-text-1)' : 'var(--color-text-3)', fontWeight: record.active ? '500' : 'normal' }">
                                                 {{ record.name }}
                                             </span>
-                                            <span v-else style="color: var(--color-text-4); font-size: 13px;">
-                                                <icon-sync spin /> ⏳ 等待抓取...
+                                            <span v-else style="color: var(--color-text-4); font-size: 13px; display: inline-flex; align-items: center; gap: 4px;">
+                                                <icon-sync spin /> <span>等待引擎抓取...</span>
                                             </span>
                                         </template>
                                     </a-table-column>
@@ -611,7 +611,7 @@
                                 <a-option value="warn">Warn</a-option>
                             </a-select>
                             <a-input-search v-model="logQuery.keyword" placeholder="日志关键词搜索..." size="small" style="width: 200px" @search="logQuery.page=1; fetchLogs()" @keyup.enter="logQuery.page=1; fetchLogs()"></a-input-search>
-                            <a-button size="small" type="primary" @click="logQuery.page=1; fetchLogs()"><template #icon><icon-refresh></icon-refresh></template> 立即刷新</a-button>
+                            <a-button size="small" type="primary" @click="logQuery.page=1; fetchLogs()"><template #icon><icon-refresh></icon-refresh></template> 手动拉取历史记录</a-button>
                         </a-space>
 
                         <a-space size="small" wrap>
@@ -628,7 +628,7 @@
                     </div>
 
                     <div class="apple-glass log-container" ref="logContainerRef" style="height: 420px; margin-bottom: 12px;">
-                        <div v-for="(log, index) in logData.items" :key="index" style="margin-bottom: 6px; border-bottom: 1px dashed rgba(128,128,128,0.15); padding-bottom: 6px;">
+                        <div v-for="(log, index) in logData.items" :key="log.time + index" style="margin-bottom: 6px; border-bottom: 1px dashed rgba(128,128,128,0.15); padding-bottom: 6px;">
                             <span style="color: var(--color-text-3);">[{{ log.time }}]</span>
                             <span :style="{ color: getLogLevelColor(log.level), display: 'inline-block', width: '55px', fontWeight: 'bold' }">[{{ log.level.toUpperCase() }}]</span>
                             <span style="color: var(--color-text-1);">{{ log.message }}</span>
@@ -815,8 +815,6 @@
             const liveTaskFilter = ref('uploading');
 
             let pollingTimer = null;
-            let logPollingTimer = null;
-            let streamerPollingTimer = null;
             let ws = null;
 
             const loginForm = reactive({ username: 'admin', password: 'admin', otp: '' });
@@ -1012,8 +1010,7 @@
                     if (showMsg) Message.success('录制名单配置已热更新并保存到文件');
                 } catch (e) {
                 } finally {
-                    const res = await api.get('/streamers');
-                    streamers.value = res.data || [];
+                    // 放开锁，让 WebSocket 可以接管后续的名单刷新
                     setTimeout(() => { isSavingStreamers.value = false; }, 500);
                 }
             };
@@ -1071,7 +1068,6 @@
                     Message.success(`成功批量添加了 ${newEntries.length} 个主播记录`);
                     batchAddText.value = '';
                     showBatchAddModal.value = false;
-                    fetchStreamers();
                     return true;
                 } catch (e) {
                     return false;
@@ -1125,7 +1121,21 @@
 
                         triggerWsPulse(msg.type);
 
-                        if (msg.type === 'uploadProgress') {
+                        if (msg.type === 'recorderStatus') {
+                            recorderStatus.value = msg.payload;
+                        } else if (msg.type === 'activeStreamers') {
+                            activeRecordingStreamers.value = msg.payload || [];
+                        } else if (msg.type === 'streamersData') {
+                            // ⭐ 核心修复：接收后端定时推送的主播名单
+                            // 只有在用户没有正在操作保存时，才热更新列表
+                            if (!isSavingStreamers.value) {
+                                const newStr = JSON.stringify(msg.payload);
+                                if (window.lastStreamersStr !== newStr) {
+                                    streamers.value = msg.payload;
+                                    window.lastStreamersStr = newStr; // 缓存比对，防止 Vue 无意义的重渲染导致画面闪烁
+                                }
+                            }
+                        } else if (msg.type === 'uploadProgress') {
                             const idx = liveTasks.value.findIndex(t => t.id === msg.payload.id);
                             if (idx > -1) {
                                 liveTasks.value[idx].uploaded = msg.payload.uploaded;
@@ -1137,8 +1147,18 @@
                             Object.assign(queueStatus, msg.payload);
                         } else if (msg.type === 'taskDone') {
                             fetchLiveTasks(); fetchQueue(); fetchHistory();
-                        }
-                        else if (msg.type === 'scanStarted') {
+                        } else if (msg.type === 'newLog') {
+                            // ⭐ 将新的日志 push 追加到底部，保留原汁原味
+                            const log = msg.payload;
+                            if (logQuery.page === 1 && !logQuery.keyword && (!logQuery.level || logQuery.level === log.level)) {
+                                logData.items.push(log); // 拼在数组末尾（也就是 UI 最底部）
+                                logData.total++;
+                                // 超过单页上限时，剔除最老的一条（也就是数组最前面的）
+                                if (logData.items.length > logQuery.limit) {
+                                    logData.items.shift();
+                                }
+                            }
+                        } else if (msg.type === 'scanStarted') {
                             let titleText = '📡 系统扫描已启动';
                             let contentText = `当前并发：${msg.payload.workers} 个线程\n扫描目标：共 ${msg.payload.dirs.length} 个目录`;
 
@@ -1160,8 +1180,7 @@
                                 duration: 4000,
                                 style: { whiteSpace: 'pre-wrap', lineHeight: '1.6' }
                             });
-                        }
-                        else if (msg.type === 'scanFinished') {
+                        } else if (msg.type === 'scanFinished') {
                             Notification.success({
                                 title: '✅ 扫描侦测完毕',
                                 content: `本轮深度比惊完成，共发现并压入 ${msg.payload.added} 个新文件至队列中。`,
@@ -1331,8 +1350,6 @@
 
             const cleanUp = () => {
                 if (pollingTimer) clearInterval(pollingTimer);
-                if (logPollingTimer) clearInterval(logPollingTimer);
-                if (streamerPollingTimer) clearInterval(streamerPollingTimer);
                 if (pingTimer) clearInterval(pingTimer);
                 if (ws) { ws.onclose = null; ws.close(); }
                 if (chartInstance) { chartInstance.dispose(); chartInstance = null; }
@@ -1344,9 +1361,6 @@
             watch(activeTab, (newTab) => {
                 if (newTab === 'logs') {
                     fetchLogs();
-                    if (!logPollingTimer) logPollingTimer = setInterval(fetchLogs, 4000);
-                } else if (logPollingTimer) {
-                    clearInterval(logPollingTimer); logPollingTimer = null;
                 }
 
                 if (newTab === 'history') {
@@ -1358,28 +1372,21 @@
                 }
 
                 if (newTab === 'streamers') {
+                    // 仅在此页面首次点开时主动拉取一次，之后全由 WebSocket 在后台静默推送到前端
                     fetchRecorderStatus();
                     fetchStreamers();
                     fetchActiveStreamers();
-                    if (!streamerPollingTimer) {
-                        streamerPollingTimer = setInterval(() => {
-                            fetchRecorderStatus();
-                            fetchStreamers();
-                            fetchActiveStreamers();
-                        }, 3000);
-                    }
-                } else if (streamerPollingTimer) {
-                    clearInterval(streamerPollingTimer); streamerPollingTimer = null;
                 }
             });
 
+            // 恢复原汁原味的自动向下滚动机制
             watch(() => logData.items, () => {
                 nextTick(() => {
                     if (logContainerRef.value) {
                         logContainerRef.value.scrollTop = logContainerRef.value.scrollHeight;
                     }
                 });
-            });
+            }, { deep: true });
 
             return {
                 isDarkMode, toggleTheme, openGitHub,
@@ -1404,3 +1411,4 @@
     app.mount('#app');
 </script>
 </body>
+</html>

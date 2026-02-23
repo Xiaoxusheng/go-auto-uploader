@@ -92,7 +92,7 @@ type Config struct {
 	RemotePass         string   `json:"remotePass"`
 	LiveConfigPath     string   `json:"liveConfigPath"`
 	RecorderContainer  string   `json:"recorderContainer"`
-	RecorderConfigPath string   `json:"recorderConfigPath"` // ⭐ 修复：改为和前端字段对应的命名
+	RecorderConfigPath string   `json:"recorderConfigPath"`
 }
 
 type Streamer struct {
@@ -206,6 +206,13 @@ func wsDashboardBroadcaster() {
 		if clientCount > 0 {
 			broadcastWS("systemStatus", buildStatusData())
 			broadcastWS("queueStatus", buildQueueData())
+
+			broadcastWS("recorderStatus", getRecorderStatus())
+			broadcastWS("activeStreamers", getActiveStreamers())
+
+			// ⭐ 核心修复：将物理文件的主播数据也加入到每 3 秒一次的 WS 自动广播队列中！
+			// 这样即使后台 Python 引擎悄悄更新了名字写入了文件，前端也会在最多 3 秒内自动感知识别并刷新显示！
+			broadcastWS("streamersData", getStreamersData())
 		}
 	}
 }
@@ -571,7 +578,6 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ⭐ 修复：按照 INI 的格式安全解析并覆盖 Cookie 内容，不再整体覆盖摧毁文件
 func handleCookies(w http.ResponseWriter, r *http.Request) {
 	appConfigMu.RLock()
 	configPath := appConfig.RecorderConfigPath
@@ -585,7 +591,6 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		data, err := os.ReadFile(configPath)
 		if err != nil {
-			// 文件如果读取失败，直接返回空内容结构体供前端渲染
 			sendJSONSuccess(w, map[string]string{"douyin": "", "kuaishou": "", "sooplive": ""})
 			return
 		}
@@ -636,7 +641,6 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 		lines := strings.Split(string(data), "\n")
 		douyinFound, kuaishouFound, soopliveFound := false, false, false
 
-		// 遍历替换已有的 cookie 键值对
 		for i, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "douyin_cookie") {
@@ -651,7 +655,6 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// 帮助函数：如果找不到键值对，就插入在 [cookie] 节点之后
 		insertAfterCookie := func(key, val string) {
 			for i, line := range lines {
 				if strings.TrimSpace(line) == "[cookie]" {
@@ -659,7 +662,6 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			// 如果连 [cookie] 节点都没有，就在文件最末尾补上
 			lines = append(lines, "", "[cookie]", key+"="+val)
 		}
 
@@ -688,61 +690,73 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 	sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 }
 
-func handleStreamers(w http.ResponseWriter, r *http.Request) {
+// ⭐ 修复：提取读取物理文件获取主播信息的逻辑，方便复用和推送
+func getStreamersData() []Streamer {
 	appConfigMu.RLock()
 	configPath := appConfig.LiveConfigPath
 	appConfigMu.RUnlock()
 
-	if r.Method == http.MethodGet {
-		data, err := os.ReadFile(configPath)
-		if err != nil {
-			sendJSONSuccess(w, []Streamer{})
-			return
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return []Streamer{}
+	}
+
+	content := string(data)
+	content = strings.TrimPrefix(content, "\ufeff")
+
+	lines := strings.Split(content, "\n")
+	var streamers []Streamer
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "\ufeff")
+
+		if line == "" {
+			continue
 		}
 
-		content := string(data)
-		content = strings.TrimPrefix(content, "\ufeff")
-
-		lines := strings.Split(content, "\n")
-		var streamers []Streamer
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
+		active := true
+		if strings.HasPrefix(line, "#") {
+			active = false
+			line = strings.TrimPrefix(line, "#")
 			line = strings.TrimPrefix(line, "\ufeff")
-
-			if line == "" {
-				continue
-			}
-
-			active := true
-			if strings.HasPrefix(line, "#") {
-				active = false
-				line = strings.TrimPrefix(line, "#")
-				line = strings.TrimPrefix(line, "\ufeff")
-			}
-
-			parts := strings.SplitN(line, ",", 2)
-			url := strings.TrimSpace(parts[0])
-			url = strings.ReplaceAll(url, "\ufeff", "")
-
-			name := ""
-			if len(parts) > 1 {
-				name = strings.TrimSpace(parts[1])
-				name = strings.TrimPrefix(name, "主播: ")
-				name = strings.TrimPrefix(name, "主播:")
-				name = strings.ReplaceAll(name, "\ufeff", "")
-			}
-
-			if name == "未命名" || name == "⏳ 等待自动获取..." {
-				name = ""
-			}
-
-			streamers = append(streamers, Streamer{URL: url, Name: name, Active: active})
 		}
-		sendJSONSuccess(w, streamers)
+
+		parts := strings.SplitN(line, ",", 2)
+		url := strings.TrimSpace(parts[0])
+		url = strings.ReplaceAll(url, "\ufeff", "")
+
+		name := ""
+		if len(parts) > 1 {
+			name = strings.TrimSpace(parts[1])
+			name = strings.TrimPrefix(name, "主播: ")
+			name = strings.TrimPrefix(name, "主播:")
+			name = strings.ReplaceAll(name, "\ufeff", "")
+		}
+
+		if name == "未命名" || name == "⏳ 等待自动获取..." {
+			name = ""
+		}
+
+		streamers = append(streamers, Streamer{URL: url, Name: name, Active: active})
+	}
+
+	if streamers == nil {
+		streamers = []Streamer{}
+	}
+	return streamers
+}
+
+func handleStreamers(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		sendJSONSuccess(w, getStreamersData())
 		return
 	}
 
-	if r.Method == http.MethodPut {
+	if r.Method == http.MethodPut || r.Method == http.MethodPost {
+		appConfigMu.RLock()
+		configPath := appConfig.LiveConfigPath
+		appConfigMu.RUnlock()
+
 		var req []Streamer
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			sendJSONError(w, http.StatusBadRequest, "Invalid JSON body")
@@ -775,6 +789,9 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 		}
 
 		log.Printf("[CONTROL] 🎥 用户更新了直播监控名单，共 %d 条记录已写入物理文件", len(req))
+
+		// 写入完毕后立刻推一把更新
+		broadcastWS("streamersData", getStreamersData())
 		sendJSONSuccess(w, nil)
 		return
 	}
@@ -782,7 +799,26 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 	sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 }
 
-func handleActiveStreamers(w http.ResponseWriter, r *http.Request) {
+func getRecorderStatus() string {
+	appConfigMu.RLock()
+	container := appConfig.RecorderContainer
+	appConfigMu.RUnlock()
+
+	if container == "" {
+		return "未配置"
+	}
+	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", container).CombinedOutput()
+	if err != nil {
+		return "离线/异常"
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func handleRecorderStatus(w http.ResponseWriter, r *http.Request) {
+	sendJSONSuccess(w, getRecorderStatus())
+}
+
+func getActiveStreamers() []string {
 	appConfigMu.RLock()
 	configuredDirs := appConfig.Dirs
 	appConfigMu.RUnlock()
@@ -799,7 +835,6 @@ func handleActiveStreamers(w http.ResponseWriter, r *http.Request) {
 			if err != nil || info.IsDir() {
 				return nil
 			}
-
 			if time.Since(info.ModTime()) < 3*time.Minute {
 				rel, err := filepath.Rel(dir, path)
 				if err == nil {
@@ -821,22 +856,11 @@ func handleActiveStreamers(w http.ResponseWriter, r *http.Request) {
 	for k := range activeMap {
 		result = append(result, k)
 	}
-
-	sendJSONSuccess(w, result)
+	return result
 }
 
-func handleRecorderStatus(w http.ResponseWriter, r *http.Request) {
-	appConfigMu.RLock()
-	container := appConfig.RecorderContainer
-	appConfigMu.RUnlock()
-
-	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", container).CombinedOutput()
-	if err != nil {
-		sendJSONError(w, http.StatusInternalServerError, "无法获取状态或容器不存在")
-		return
-	}
-	status := strings.TrimSpace(string(out))
-	sendJSONSuccess(w, status)
+func handleActiveStreamers(w http.ResponseWriter, r *http.Request) {
+	sendJSONSuccess(w, getActiveStreamers())
 }
 
 func handleRecorderControl(w http.ResponseWriter, r *http.Request) {
@@ -954,6 +978,7 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[CONTROL] 📥 用户导出了 %d 条系统日志\n", len(filtered))
 }
 
+// ⭐ 加回了新日志的 WebSocket 广播
 func logCollector() {
 	for entry := range logChan {
 		logsMu.Lock()
@@ -962,6 +987,8 @@ func logCollector() {
 			logs = logs[1:]
 		}
 		logsMu.Unlock()
+
+		broadcastWS("newLog", entry)
 	}
 }
 
