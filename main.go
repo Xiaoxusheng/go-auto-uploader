@@ -21,16 +21,17 @@ import (
 /* ================= 全局配置 ================= */
 
 var (
-	dirs             string
-	server           string
-	workers          int
-	rateMB           int
-	dayRateMB        int
-	nightRateMB      int
-	reportMinutes    int
-	scanningInterval int
-	webPort          int
-	liveConfigPath   string // ⭐ 新增：录制名单配置文件路径
+	dirs              string
+	server            string
+	workers           int
+	rateMB            int
+	dayRateMB         int
+	nightRateMB       int
+	reportMinutes     int
+	scanningInterval  int
+	webPort           int
+	liveConfigPath    string
+	recorderContainer string
 
 	dashboardUsername = "admin"
 	dashboardPassword = "admin"
@@ -51,7 +52,6 @@ var (
 	appConfigMu sync.RWMutex
 )
 
-// 实时任务管理
 var (
 	liveTasks   = make(map[string]*Task)
 	liveTasksMu sync.RWMutex
@@ -122,8 +122,6 @@ const (
 	mailTo       = "3096407768@qq.com"
 )
 
-/* ================= 日志拦截器 ================= */
-
 type logInterceptor struct {
 	original io.Writer
 }
@@ -149,8 +147,6 @@ func (l *logInterceptor) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-/* ================= main ================= */
-
 func main() {
 	flag.StringVar(&dirs, "dirs", "", "扫描目录(逗号分隔)")
 	flag.StringVar(&server, "server", "https://wustwust.cn:8081", "服务器")
@@ -161,8 +157,8 @@ func main() {
 	flag.IntVar(&scanningInterval, "scan-interval", 30, "默认30min扫描一次")
 	flag.IntVar(&reportMinutes, "report-minutes", 360, "邮件统计分钟")
 	flag.IntVar(&webPort, "web-port", 8080, "Web API 端口")
-	// ⭐ 默认预设为你给的物理路径
 	flag.StringVar(&liveConfigPath, "live-config", "/home/live/DouyinLiveRecorder/config/URL_config.ini", "录制配置文件路径")
+	flag.StringVar(&recorderContainer, "recorder-container", "douyinliverecorder-app-1", "录制引擎Docker容器名")
 	flag.Parse()
 
 	if dirs == "" {
@@ -183,7 +179,8 @@ func main() {
 	appConfig.RemoteServer = server
 	appConfig.RemoteUser = "admin"
 	appConfig.RemotePass = "LilKmxNF"
-	appConfig.LiveConfigPath = liveConfigPath // ⭐ 将路径存入全局配置
+	appConfig.LiveConfigPath = liveConfigPath
+	appConfig.RecorderContainer = recorderContainer
 	appConfigMu.Unlock()
 
 	addLog("info", "系统初始化完成，启动中...", "")
@@ -192,35 +189,83 @@ func main() {
 	go queueStatusLoop()
 	go reportLoop()
 
+	// ---------------- 智能动态调频核心引擎 ----------------
+	appConfigMu.RLock()
+	baseInterval := appConfig.ScanInterval
+	appConfigMu.RUnlock()
+	currentDynamicInterval := baseInterval
+
+	// 系统启动时的首次自动执行
+	runningMu.RLock()
+	if running {
+		_ = login()
+		activeCount := runOnce("auto", currentDynamicInterval)
+		if activeCount > 0 {
+			// 公式: 新间隔 = 基础间隔 / (活跃数量 + 1)
+			currentDynamicInterval = baseInterval / (activeCount + 1)
+			if currentDynamicInterval < 3 {
+				currentDynamicInterval = 3
+			} // 最低3分钟触底
+			log.Printf("[SCAN][DYNAMIC] 🔥 开机检测到 %d 个文件正在录制，下次扫描已动态提速至 %d 分钟后", activeCount, currentDynamicInterval)
+		}
+	}
+	runningMu.RUnlock()
+
 	for {
 		runningMu.RLock()
 		isRunning := running
 		runningMu.RUnlock()
 
 		if isRunning {
-			if err := login(); err != nil {
-				log.Println("[LOGIN][ERR]", err)
-				select {
-				case <-time.After(30 * time.Second):
-				case <-triggerScanCh:
-				}
-				continue
-			}
-			runOnce("auto")
-		}
-
-		appConfigMu.RLock()
-		interval := appConfig.ScanInterval
-		appConfigMu.RUnlock()
-
-		if isRunning {
 			select {
-			case <-time.After(time.Duration(interval) * time.Minute):
-				log.Println("[SYSTEM] ⏱️ 定时周期到达，执行扫描")
-				runOnce("auto")
+			// 1. 到达动态计算的时间后自动扫描
+			case <-time.After(time.Duration(currentDynamicInterval) * time.Minute):
+				_ = login()
+
+				appConfigMu.RLock()
+				baseInterval = appConfig.ScanInterval
+				appConfigMu.RUnlock()
+
+				activeCount := runOnce("auto", currentDynamicInterval)
+
+				// 核心逻辑：按录制数量动态除算扫描间隔
+				if activeCount > 0 {
+					newInterval := baseInterval / (activeCount + 1)
+					if newInterval < 3 {
+						newInterval = 3 // 极端下限保护
+					}
+					if newInterval != currentDynamicInterval {
+						log.Printf("[SCAN][DYNAMIC] 🔥 当前有 %d 个主播处于录制写入状态，按比例调整下次扫描为 %d 分钟后", activeCount, newInterval)
+					}
+					currentDynamicInterval = newInterval
+				} else {
+					if currentDynamicInterval != baseInterval {
+						log.Printf("[SCAN][DYNAMIC] 🟢 当前暂无录制任务，扫描间隔回归省电模式: %d 分钟", baseInterval)
+					}
+					currentDynamicInterval = baseInterval
+				}
+
+			// 2. 收到用户强制中断/重扫信号
 			case reason := <-triggerScanCh:
+				_ = login()
 				log.Printf("[SYSTEM] ⚡ 收到指令打断，执行扫描 (触发源: %s)", reason)
-				runOnce(reason)
+
+				appConfigMu.RLock()
+				baseInterval = appConfig.ScanInterval
+				appConfigMu.RUnlock()
+
+				activeCount := runOnce(reason, currentDynamicInterval)
+
+				if activeCount > 0 {
+					newInterval := baseInterval / (activeCount + 1)
+					if newInterval < 3 {
+						newInterval = 3
+					}
+					currentDynamicInterval = newInterval
+					log.Printf("[SCAN][DYNAMIC] 🔥 当前有 %d 个主播处于录制写入状态，下次扫描定为 %d 分钟后", activeCount, newInterval)
+				} else {
+					currentDynamicInterval = baseInterval
+				}
 			}
 		} else {
 			select {
@@ -231,8 +276,6 @@ func main() {
 		}
 	}
 }
-
-/* ================= 队列状态 ================= */
 
 func queueStatusLoop() {
 	start := time.Now()
@@ -251,14 +294,12 @@ func queueStatusLoop() {
 	}
 }
 
-/* ================= 扫描 & worker ================= */
-
-func runOnce(triggerReason string) {
+// ⭐ 返回 activeRecordingCount 供主循环计算调频比例
+func runOnce(triggerReason string, currentDynamicInterval int) int {
 	appConfigMu.RLock()
 	currentWorkers := appConfig.Workers
 	currentDirs := make([]string, len(appConfig.Dirs))
 	copy(currentDirs, appConfig.Dirs)
-	currentInterval := appConfig.ScanInterval
 	appConfigMu.RUnlock()
 
 	taskCh := make(chan string, currentWorkers*2)
@@ -270,15 +311,16 @@ func runOnce(triggerReason string) {
 
 	if !isRunning {
 		log.Println("[UPLOAD][PAUSED] 系统处于暂停状态，跳过本轮扫描")
-		return
+		return 0
 	}
 
 	log.Printf("[SCAN][START] 🔍 启动目录探测，并发Workers:[%d] 目标路径:[%s]", currentWorkers, strings.Join(currentDirs, " | "))
 
+	// 告知前端本次执行是按什么间隔来的
 	broadcastWS("scanStarted", map[string]interface{}{
 		"time":     time.Now().UnixMilli(),
 		"dirs":     currentDirs,
-		"interval": currentInterval,
+		"interval": currentDynamicInterval,
 		"workers":  currentWorkers,
 		"trigger":  triggerReason,
 	})
@@ -331,6 +373,7 @@ func runOnce(triggerReason string) {
 	dirStatusesMu.Unlock()
 
 	var newlyAddedFiles int32 = 0
+	var activeRecordingCount int32 = 0
 
 	for _, root := range currentDirs {
 		root = filepath.Clean(strings.TrimSpace(root))
@@ -353,7 +396,9 @@ func runOnce(triggerReason string) {
 				return nil
 			}
 
+			// 如果文件在过去 2 分钟内被修改过，算作“正在录制的主播”，并跳过上传
 			if time.Since(info.ModTime()) < 2*time.Minute {
+				atomic.AddInt32(&activeRecordingCount, 1)
 				return nil
 			}
 
@@ -377,12 +422,14 @@ func runOnce(triggerReason string) {
 
 	close(taskCh)
 	wg.Wait()
-	log.Println("[SCAN][END] 🏁 本轮目录扫描已全部处理完成")
+	log.Printf("[SCAN][END] 🏁 本轮扫描完毕。发现新文件: %d 个 | 仍在录制中文件: %d 个", newlyAddedFiles, activeRecordingCount)
 
 	broadcastWS("scanFinished", map[string]interface{}{
 		"time":  time.Now().UnixMilli(),
 		"added": newlyAddedFiles,
 	})
+
+	return int(activeRecordingCount)
 }
 
 func cleanupFailedTasksByPath(targetPath string) {
@@ -404,8 +451,6 @@ func cleanupFailedTasksByPath(targetPath string) {
 		queueFail = removeTask(queueFail, id)
 	}
 }
-
-/* ================= 文件处理 ================= */
 
 func handleFile(path string) {
 	info, err := os.Stat(path)
@@ -493,8 +538,6 @@ func handleFile(path string) {
 		dirStatusesMu.Unlock()
 	}
 }
-
-/* ================= 上传 ================= */
 
 func upload(local, remote string, size int64) bool {
 	f, err := os.Open(local)
@@ -633,8 +676,6 @@ func upload(local, remote string, size int64) bool {
 	}
 }
 
-/* ================= 历史记录 ================= */
-
 func addHistoryRecord(local, remote string, size int64, status string, duration float64, errorMsg string) {
 	record := HistoryRecord{
 		UploadTime: time.Now().Format("2006-01-02 15:04:05"),
@@ -663,8 +704,6 @@ func removeTask(tasks []string, taskID string) []string {
 	}
 	return tasks
 }
-
-/* ================= 动态速率流 ================= */
 
 type ProgressReader struct {
 	name        string
@@ -744,8 +783,6 @@ func currentRate() int {
 	return appConfig.NightRate
 }
 
-/* ================= 工具 ================= */
-
 func cleanFileName(name string) string {
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
@@ -797,17 +834,35 @@ func recordSuccess(remote, name string, size int64) {
 	}
 }
 
+// ⭐ 修复：邮件倒计时持久化（修改配置不会导致重置）
 func reportLoop() {
+	appConfigMu.RLock()
+	intervalMinutes := appConfig.EmailInterval
+	appConfigMu.RUnlock()
+
+	// 设定绝对锚点时间
+	nextReportTime := time.Now().Add(time.Duration(intervalMinutes) * time.Minute)
+
 	for {
-		appConfigMu.RLock()
-		interval := appConfig.EmailInterval
-		appConfigMu.RUnlock()
+		sleepDuration := time.Until(nextReportTime)
+
+		if sleepDuration <= 0 {
+			sendReport()
+
+			appConfigMu.RLock()
+			intervalMinutes = appConfig.EmailInterval
+			appConfigMu.RUnlock()
+
+			nextReportTime = time.Now().Add(time.Duration(intervalMinutes) * time.Minute)
+			continue
+		}
 
 		select {
-		case <-time.After(time.Duration(interval) * time.Minute):
-			sendReport()
+		case <-time.After(sleepDuration):
+			// 睡醒后由外层循环的 <=0 逻辑捕获触发
 		case <-triggerReportCh:
-			log.Println("[SYSTEM] 📧 邮件报送定时器已重置")
+			// 点击了配置保存触发
+			log.Printf("[SYSTEM] 📧 配置发生变更，但这不会打断原有的邮件倒计时，邮件仍将在 %v 后发送", time.Until(nextReportTime).Truncate(time.Second))
 		}
 	}
 }
