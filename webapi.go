@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ var (
 	//go:embed index.html
 	indexHTML string
 
+	// WebSocket 升级器配置，允许跨域
 	wsUpgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			return true
@@ -33,11 +35,9 @@ var (
 	wsMutex     sync.Mutex
 	wsBroadcast = make(chan WSMessage, 100)
 
-	running      = false
-	runningMu    sync.RWMutex
-	startTime    time.Time
-	todayStats   = TodayStats{Success: 0, Fail: 0}
-	todayStatsMu sync.RWMutex
+	running   = false
+	runningMu sync.RWMutex
+	startTime time.Time
 
 	dirStatuses   = make(map[string]*DirStatus)
 	dirStatusesMu sync.RWMutex
@@ -50,19 +50,6 @@ var (
 type WSMessage struct {
 	Type    string      `json:"type"`
 	Payload interface{} `json:"payload"`
-}
-
-type Queue struct {
-	Waiting   []*Task `json:"waiting"`
-	Uploading []*Task `json:"uploading"`
-	Success   []*Task `json:"success"`
-	Fail      []*Task `json:"fail"`
-	Retrying  []*Task `json:"retrying"`
-}
-
-type TodayStats struct {
-	Success int `json:"success"`
-	Fail    int `json:"fail"`
 }
 
 type DirStatus struct {
@@ -114,14 +101,29 @@ type APIResponse struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
+// 供图表使用的趋势数据结构
+type TrendPoint struct {
+	Date  string  `json:"date"`
+	Size  float64 `json:"size"`  // 单位 GB
+	Count int     `json:"count"` // 文件数量
+}
+
+type StreamerRank struct {
+	Name string  `json:"name"`
+	Size float64 `json:"size"` // 单位 GB
+}
+
 func StartWebServer(port int) {
 	runningMu.Lock()
+	// ⭐ 重启后从日志恢复成功任务计数
+	restoreQueueCounts()
 	running = true
 	startTime = time.Now()
 	runningMu.Unlock()
 
 	mux := http.NewServeMux()
 
+	// 核心路由与 API
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/v1/auth/login", handleLogin)
 	mux.HandleFunc("/api/v1/auth/logout", handleLogout)
@@ -130,6 +132,7 @@ func StartWebServer(port int) {
 	mux.HandleFunc("/api/v1/tasks/history", handleHistory)
 	mux.HandleFunc("/api/v1/tasks/queue", handleQueue)
 
+	// 远程操作与控制指令
 	mux.HandleFunc("/api/v1/control/start", handleControlStart)
 	mux.HandleFunc("/api/v1/control/pause", handleControlPause)
 	mux.HandleFunc("/api/v1/control/stop", handleControlStop)
@@ -144,15 +147,15 @@ func StartWebServer(port int) {
 	mux.HandleFunc("/api/v1/logs", handleLogs)
 	mux.HandleFunc("/api/v1/logs/download", handleLogsDownload)
 
+	// 录制引擎管理
 	mux.HandleFunc("/api/v1/streamers", handleStreamers)
 	mux.HandleFunc("/api/v1/streamers/active", handleActiveStreamers)
-
 	mux.HandleFunc("/api/v1/recorder/status", handleRecorderStatus)
 	mux.HandleFunc("/api/v1/recorder/control", handleRecorderControl)
 	mux.HandleFunc("/api/v1/recorder/logs", handleRecorderLogs)
-
 	mux.HandleFunc("/api/v1/cookies", handleCookies)
 
+	// WebSocket 信道
 	mux.HandleFunc("/ws/live", handleWebSocket)
 
 	go wsBroadcastLoop()
@@ -164,6 +167,17 @@ func StartWebServer(port int) {
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("[WEB] Server error: %v", err)
 	}
+}
+
+// ⭐ 新增：向前端实时推送系统弹窗告警
+// level 可选值: "info", "success", "warning", "error"
+func SendAlert(level string, title string, message string) {
+	broadcastWS("systemAlert", map[string]interface{}{
+		"level":   level,
+		"title":   title,
+		"message": message,
+		"time":    time.Now().Format("15:04:05"),
+	})
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -180,6 +194,66 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, indexHTML)
 }
 
+// 统计聚合计算函数：提取出逻辑，供 WebSocket 定时调用
+func buildStatsTrendData() map[string]interface{} {
+	data, err := os.ReadFile(successLogFile)
+	if err != nil {
+		return map[string]interface{}{"trend": []TrendPoint{}, "rank": []StreamerRank{}}
+	}
+
+	var list []UploadRecord
+	json.Unmarshal(data, &list)
+
+	// 初始化最近 7 天的空数据架子
+	trendMap := make(map[string]*TrendPoint)
+	now := time.Now()
+	for i := 0; i < 7; i++ {
+		d := now.AddDate(0, 0, -i).Format("01-02")
+		trendMap[d] = &TrendPoint{Date: d, Size: 0, Count: 0}
+	}
+
+	rankMap := make(map[string]int64)
+
+	// 遍历日志聚合并累加数据
+	for _, rec := range list {
+		day := rec.Time.Format("01-02")
+		if tp, ok := trendMap[day]; ok {
+			tp.Size += float64(rec.Size) / 1024 / 1024 / 1024 // 转换为 GB
+			tp.Count++
+		}
+		rankMap[rec.Streamer] += rec.Size
+	}
+
+	// 将 Map 转换为有序 Slice，供 ECharts X 轴使用
+	trendResult := make([]TrendPoint, 0)
+	for i := 6; i >= 0; i-- {
+		d := now.AddDate(0, 0, -i).Format("01-02")
+		trendResult = append(trendResult, *trendMap[d])
+	}
+
+	// 计算排行榜
+	rankResult := make([]StreamerRank, 0)
+	for name, size := range rankMap {
+		rankResult = append(rankResult, StreamerRank{
+			Name: name,
+			Size: float64(size) / 1024 / 1024 / 1024,
+		})
+	}
+
+	sort.Slice(rankResult, func(i, j int) bool {
+		return rankResult[i].Size > rankResult[j].Size
+	})
+	if len(rankResult) > 5 {
+		rankResult = rankResult[:5]
+	}
+
+	return map[string]interface{}{
+		"trend": trendResult,
+		"rank":  rankResult,
+	}
+}
+
+// WebSocket 消息推送协程
 func wsBroadcastLoop() {
 	for {
 		msg := <-wsBroadcast
@@ -194,8 +268,9 @@ func wsBroadcastLoop() {
 	}
 }
 
+// 定时向前端广播实时状态指标
 func wsDashboardBroadcaster() {
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(2 * time.Second) // 频率保持为 2 秒
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -206,6 +281,24 @@ func wsDashboardBroadcaster() {
 		if clientCount > 0 {
 			broadcastWS("systemStatus", buildStatusData())
 			broadcastWS("queueStatus", buildQueueData())
+
+			// 计算瞬时全站上传速率（供前端仪表盘）
+			var totalSpeed int64 = 0
+			liveTasksMu.RLock()
+			for _, task := range liveTasks {
+				if task.Status == "uploading" {
+					totalSpeed += task.Speed
+				}
+			}
+			liveTasksMu.RUnlock()
+
+			broadcastWS("trafficMetrics", map[string]interface{}{
+				"speed": totalSpeed, // 字节每秒
+				"time":  time.Now().UnixMilli(),
+			})
+
+			// 新增：每次也通过 WebSocket 将历史聚合趋势推送给大屏
+			broadcastWS("statsTrend", buildStatsTrendData())
 
 			broadcastWS("recorderStatus", getRecorderStatus())
 			broadcastWS("activeStreamers", getActiveStreamers())
@@ -238,7 +331,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			break
 		}
-
 		if msg.Type == "ping" {
 			wsMutex.Lock()
 			_ = conn.WriteJSON(WSMessage{Type: "pong", Payload: msg.Payload})
@@ -336,7 +428,7 @@ func buildStatusData() map[string]interface{} {
 		"dirs":             dirs,
 		"scanningInterval": currentScanInterval,
 		"dynamicInterval":  dynInterval,
-		"nextScanTime":     nextScan, // ⭐ 新增：倒计时时间锚点
+		"nextScanTime":     nextScan, // 倒计时锚点
 		"rate":             currentRate(),
 		"dayRate":          currentDayRate,
 		"nightRate":        currentNightRate,
@@ -503,7 +595,6 @@ func handleControlClearFailQueue(w http.ResponseWriter, r *http.Request) {
 	queueMu.Lock()
 	queueFail = make([]string, 0)
 	queueMu.Unlock()
-
 	log.Println("[CONTROL] 🧹 用户下发指令：已清空失败任务队列")
 	sendJSONSuccess(w, nil)
 }
@@ -515,7 +606,6 @@ func handleControlRetryFailQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	queueFail = make([]string, 0)
 	queueMu.Unlock()
-
 	log.Println("[CONTROL] 🔄 用户下发指令：失败任务已全部压入等待队列准备重试")
 	sendJSONSuccess(w, nil)
 }
@@ -524,7 +614,6 @@ func handleControlClearSuccessQueue(w http.ResponseWriter, r *http.Request) {
 	queueMu.Lock()
 	queueSuccess = make([]string, 0)
 	queueMu.Unlock()
-
 	log.Println("[CONTROL] 🧹 用户下发指令：已清空成功任务队列展示历史")
 	sendJSONSuccess(w, nil)
 }
@@ -947,6 +1036,24 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	result := filtered[start:end]
 	sendJSONSuccess(w, map[string]interface{}{"items": result, "total": total})
+}
+
+// ⭐ 恢复函数
+func restoreQueueCounts() {
+	data, err := os.ReadFile(successLogFile)
+	if err != nil {
+		return
+	}
+	var list []UploadRecord
+	json.Unmarshal(data, &list)
+
+	// 将历史成功记录的数量同步到 queueSuccess
+	queueMu.Lock()
+	// 假设我们只恢复成功计数，因为等待和上传中的任务在重启后会重新扫描生成
+	for i := 0; i < len(list); i++ {
+		queueSuccess = append(queueSuccess, fmt.Sprintf("hist-%d", i))
+	}
+	queueMu.Unlock()
 }
 
 func handleLogsDownload(w http.ResponseWriter, r *http.Request) {

@@ -178,6 +178,8 @@
 
             header.nav-glass { flex-wrap: wrap; padding: 12px 16px !important; }
             .nav-title { width: 100%; justify-content: space-between; margin-bottom: 8px; font-size: 15px !important;}
+
+            .hidden-xs { display: none !important; }
         }
     </style>
 </head>
@@ -262,6 +264,55 @@
                         </a-button>
                     </div>
 
+                    <a-row :gutter="[16, 16]" style="margin-bottom: 16px;">
+                        <a-col :xs="24" :lg="16">
+                            <a-card class="apple-glass hover-effect" bordered style="height: 380px;">
+                                <template #title>
+                                    <div style="display:flex; justify-content: space-between; align-items:center;">
+                                        <div style="display:flex; align-items:center; gap:8px;">
+                                            <icon-common style="color: #165DFF"></icon-common>
+                                            <span>全站流量与文件增长趋势 (近7日)</span>
+                                        </div>
+                                        <div style="font-size: 13px; color: var(--color-text-3); display: flex; align-items: center; gap: 6px;">
+                                            <icon-swap style="color: #165DFF;"></icon-swap> 瞬时网络上行:
+                                            <span style="color: #165DFF; font-weight: bold; font-family: monospace; font-size: 15px;">
+                                                {{ formatSpeed(trafficMetrics.speed) }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </template>
+                                <div id="trendChart" style="height: 300px; width: 100%;"></div>
+                            </a-card>
+                        </a-col>
+
+                        <a-col :xs="24" :lg="8">
+                            <a-card class="apple-glass hover-effect" bordered style="height: 380px;">
+                                <template #title>
+                                    <div style="display:flex; align-items:center; gap:8px;">
+                                        <icon-fire style="color: #F53F3F"></icon-fire>
+                                        <span>硬盘空间消耗排行 (TOP 5)</span>
+                                    </div>
+                                </template>
+                                <div style="padding: 10px 0;">
+                                    <div v-for="(item, idx) in statsData.rank" :key="idx" style="margin-bottom: 20px;">
+                                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px;">
+                                            <span style="font-weight: 500;">{{ idx + 1 }}. {{ item.name }}</span>
+                                            <span style="color: var(--color-text-3);">{{ item.size.toFixed(2) }} GB</span>
+                                        </div>
+                                        <a-progress
+                                                :percent="calculateRankPercent(item.size)"
+                                                :color="idx === 0 ? '#F53F3F' : '#165DFF'"
+                                                size="medium" :show-text="false" style="height: 8px;"
+                                        ></a-progress>
+                                    </div>
+                                    <div v-if="!statsData.rank || statsData.rank.length === 0" style="text-align: center; color: var(--color-text-4); margin-top: 80px;">
+                                        <icon-empty style="font-size: 40px;"></icon-empty><p>暂无上传数据记录</p>
+                                    </div>
+                                </div>
+                            </a-card>
+                        </a-col>
+                    </a-row>
+
                     <a-row :gutter="[16, 16]">
                         <a-col :xs="24" :md="16">
                             <a-row :gutter="[16, 16]">
@@ -318,7 +369,7 @@
                                     <a-card class="apple-glass" hoverable bordered style="height: 100%; display: flex; flex-direction: column;">
                                         <div style="display: flex; justify-content: space-between; align-items: center;">
                                             <div>
-                                                <div class="stat-label"><icon-swap></icon-swap> WebSocket 实时信道</div>
+                                                <div class="stat-label"><icon-live-broadcast></icon-live-broadcast> WebSocket 实时信道</div>
                                                 <div style="margin-top: 8px; display: flex; align-items: center; font-size: 15px; font-weight: 500;">
                                                     <span class="status-indicator" :class="'status-dot-' + wsStatus"></span>
                                                     <span v-if="wsStatus === 'connected'" style="color: #00B42A; letter-spacing: 0.5px;">双向通道已连接</span>
@@ -502,54 +553,67 @@
                     <template #title><icon-video-camera></icon-video-camera> 录制名单管理</template>
 
                     <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-                            <div style="display: flex; align-items: center; gap: 12px;">
+                        <div class="action-bar" style="justify-content: space-between; align-items: center; margin-bottom: 0;">
+                            <div style="display: flex; align-items: center; gap: 12px; min-width: 200px;">
                                 <div style="font-size: 15px; font-weight: 500;">
-                                    <icon-computer /> 录制引擎容器 (Docker)
+                                    <icon-computer /> 录制引擎容器
                                 </div>
-                                <a-badge v-if="recorderStatus === 'running'" status="success" text="🟢 Running (运行中)"></a-badge>
-                                <a-badge v-else-if="recorderStatus === 'exited'" status="danger" text="🔴 Exited (已停止)"></a-badge>
-                                <a-badge v-else status="warning" :text="'🟠 ' + recorderStatus"></a-badge>
+                                <a-badge v-if="recorderStatus === 'running'" status="success" text="🟢 Running"></a-badge>
+                                <a-badge v-else-if="recorderStatus === 'exited'" status="danger" text="🔴 Exited"></a-badge>
+                                <a-badge v-else status="warning" :text="recorderStatus"></a-badge>
                             </div>
-                            <a-space size="small">
-                                <a-button type="primary" status="success" size="small" @click="controlRecorder('start')" :disabled="recorderStatus === 'running' || recorderControlLoading">启动引擎</a-button>
-                                <a-button type="primary" status="warning" size="small" @click="controlRecorder('restart')" :loading="recorderControlLoading">重启引擎 (使配置生效)</a-button>
-                                <a-button type="outline" status="danger" size="small" @click="controlRecorder('stop')" :disabled="recorderStatus !== 'running' || recorderControlLoading">停止录制</a-button>
-                                <a-button type="secondary" size="small" @click="openLogsModal"><template #icon><icon-code/></template> 实时引擎日志</a-button>
+
+                            <a-space size="small" wrap>
+                                <a-button type="primary" status="success" size="small" @click="controlRecorder('start')" :disabled="recorderStatus === 'running' || recorderControlLoading">启动</a-button>
+                                <a-button type="primary" status="warning" size="small" @click="controlRecorder('restart')" :loading="recorderControlLoading">重启生效</a-button>
+                                <a-button type="outline" status="danger" size="small" @click="controlRecorder('stop')" :disabled="recorderStatus !== 'running' || recorderControlLoading">停止</a-button>
+                                <a-button type="secondary" size="small" @click="openLogsModal"><template #icon><icon-code/></template> 实时日志</a-button>
                             </a-space>
                         </div>
                     </a-card>
 
                     <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
                         <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-                            <a-input v-model="newStreamer.url" placeholder="在此输入直播间链接 (例如: https://live.douyin.com/...)" style="width: 350px;" size="medium"><template #prefix><icon-link/></template></a-input>
-                            <a-input v-model="newStreamer.name" placeholder="主播名称 (留空自动抓取)" style="width: 180px;" size="medium"><template #prefix><icon-user/></template></a-input>
+                            <a-input-search
+                                    ref="streamerSearchRef"
+                                    v-model="streamerSearchQuery"
+                                    placeholder="搜索主播或链接 (Ctrl+X)"
+                                    style="width: 220px;"
+                                    size="medium"
+                                    allow-clear>
+                                <template #prefix><icon-search/></template>
+                            </a-input-search>
+
+                            <a-divider direction="vertical" style="height: 24px; margin: 0;"></a-divider>
+
+                            <a-input v-model="newStreamer.url" placeholder="直播间链接 (http...)" style="flex: 1; min-width: 200px;" size="medium"><template #prefix><icon-link/></template></a-input>
+                            <a-input v-model="newStreamer.name" placeholder="主播名 (可选)" style="width: 140px;" size="medium"><template #prefix><icon-user/></template></a-input>
 
                             <a-button type="primary" status="success" @click="addStreamer" size="medium">
-                                <template #icon><icon-plus/></template> 添加单条
+                                <template #icon><icon-plus/></template> <span class="hidden-xs">添加</span>
                             </a-button>
                             <a-button type="primary" status="warning" @click="showBatchAddModal = true" size="medium">
-                                <template #icon><icon-copy/></template> 批量导入
+                                <template #icon><icon-copy/></template> <span class="hidden-xs">批量</span>
                             </a-button>
+                        </div>
 
-                            <div style="flex: 1;"></div>
-                            <div style="display: flex; gap: 16px; font-size: 13px;">
-                                <span><icon-menu /> 总计: <b>{{ streamers.length }}</b></span>
-                                <span style="color: #00B42A"><icon-play-circle /> 监控中: <b>{{ activeStreamersCount }}</b></span>
-                                <span style="color: var(--color-text-3)"><icon-minus-circle /> 已忽略: <b>{{ streamers.length - activeStreamersCount }}</b></span>
-                            </div>
+                        <div style="margin-top: 12px; display: flex; gap: 16px; font-size: 13px; color: var(--color-text-3); justify-content: flex-end;">
+                            <span><icon-menu /> 总计: <b>{{ streamers.length }}</b></span>
+                            <span style="color: #00B42A"><icon-play-circle /> 监控中: <b>{{ activeStreamersCount }}</b></span>
+                            <span v-if="streamerSearchQuery">🔍 搜索结果: <b>{{ filteredStreamers.length }}</b></span>
                         </div>
                     </a-card>
 
                     <a-card class="apple-glass hover-effect" bordered>
                         <div style="overflow-x: auto;">
-                            <a-table :data="streamers" size="small" :pagination="{ pageSize: 20 }"
+                            <a-table :data="filteredStreamers" size="small" :pagination="{ pageSize: 20 }"
                                      style="min-height: 450px;"
                                      bordered stripe hoverable column-resizable>
                                 <template #empty>
                                     <div style="padding: 100px 0; color: var(--color-text-3); text-align: center;">
                                         <icon-user-group style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-user-group>
-                                        <div>当前配置文件中没有主播记录</div>
+                                        <div v-if="streamerSearchQuery">未搜索到匹配的主播 "{{ streamerSearchQuery }}"</div>
+                                        <div v-else>当前配置文件中没有主播记录</div>
                                     </div>
                                 </template>
                                 <template #columns>
@@ -818,7 +882,10 @@
             const toggleTheme = () => {
                 isDarkMode.value = !isDarkMode.value;
                 applyTheme();
-                renderChart();
+                setTimeout(() => {
+                    renderChart();
+                    renderTrendChart();
+                }, 100);
             };
 
             const applyTheme = () => {
@@ -855,6 +922,14 @@
             const systemStatus = reactive({ running: false, uptime: 0, workers: 0, rate: 0, dirs: [], dynamicInterval: 0, nextScanTime: 0, scanningInterval: 0 });
             const queueStatus = reactive({ waiting: 0, uploading: 0, success: 0, failed: 0, retrying: 0 });
 
+            // 实时瞬时流量数据
+            const trafficMetrics = reactive({ speed: 0, time: 0 });
+
+            // 历史趋势与排行榜数据
+            const statsData = reactive({ trend: [], rank: [] });
+            let trendChartInstance = null;
+            window.lastStatsStr = '';
+
             const liveTasks = ref([]);
             const clientTime = ref(Date.now());
 
@@ -862,6 +937,30 @@
             const newStreamer = reactive({ url: '', name: '' });
             const activeStreamersCount = computed(() => streamers.value.filter(s => s.active).length);
             const isSavingStreamers = ref(false);
+
+            const streamerSearchQuery = ref('');
+            const streamerSearchRef = ref(null);
+
+            const filteredStreamers = computed(() => {
+                if (!streamerSearchQuery.value) return streamers.value;
+                const lower = streamerSearchQuery.value.trim().toLowerCase();
+                return streamers.value.filter(s =>
+                    (s.name && s.name.toLowerCase().includes(lower)) ||
+                    (s.url && s.url.toLowerCase().includes(lower))
+                );
+            });
+
+            const handleGlobalKeydown = (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
+                    if (activeTab.value === 'streamers') {
+                        e.preventDefault();
+                        if (streamerSearchRef.value) {
+                            streamerSearchRef.value.focus();
+                            Message.info('已激活搜索框');
+                        }
+                    }
+                }
+            };
 
             const activeRecordingStreamers = ref([]);
 
@@ -878,7 +977,6 @@
             const cookiesForm = reactive({ douyin: '', kuaishou: '', sooplive: '' });
             const cookiesLoading = ref(false);
 
-            // 核心逻辑：智能雷达倒计时计算
             const radarState = computed(() => {
                 const next = systemStatus.nextScanTime;
 
@@ -887,20 +985,17 @@
                 }
 
                 if (next === -1) {
-                    // 修改点 3 对应的 JS 返回值修改
                     return { status: 'scanning', text: '正在同步目录状态...', color: '#165DFF' };
                 }
 
                 const diffSeconds = Math.floor((next - clientTime.value) / 1000);
                 if (diffSeconds < 0) {
-                    // 同步修改准备状态的文案
                     return { status: 'scanning', text: '准备执行扫描...', color: '#165DFF' };
                 }
 
                 const m = Math.floor(diffSeconds / 60).toString().padStart(2, '0');
                 const s = (diffSeconds % 60).toString().padStart(2, '0');
 
-                // 仅剩 1 分钟时变红警告
                 const isUrgent = diffSeconds <= 60;
 
                 return {
@@ -909,6 +1004,12 @@
                     color: isUrgent ? '#F53F3F' : 'var(--color-text-1)'
                 };
             });
+
+            const calculateRankPercent = (size) => {
+                if (!statsData.rank || statsData.rank.length === 0 || size === 0) return 0;
+                const max = statsData.rank[0].size;
+                return Number((size / max).toFixed(2));
+            };
 
             const fetchCookies = async () => {
                 if (!configForm.value.recorderConfigPath) return;
@@ -953,6 +1054,7 @@
             let originalConfigSnapshot = {};
 
             let chartInstance = null;
+
             const renderChart = () => {
                 if (activeTab.value !== 'overview') return;
                 nextTick(() => {
@@ -960,15 +1062,24 @@
                     if (!dom) return;
                     if (!chartInstance) chartInstance = echarts.init(dom);
 
+                    const total = queueStatus.waiting + queueStatus.uploading + queueStatus.success + queueStatus.failed;
+
+                    if (total === 0) {
+                        chartInstance.setOption({
+                            title: { text: '暂无任务数据', left: 'center', top: 'center', textStyle: { color: '#999', fontSize: 14 } },
+                            series: []
+                        });
+                        return;
+                    }
                     const option = {
                         backgroundColor: 'transparent',
                         tooltip: { trigger: 'item', formatter: '{b}状态: {c} 个文件 ({d}%)' },
-                        legend: { bottom: '0%', left: 'center', textStyle: { color: isDarkMode.value ? '#E5E6EB' : '#1D2129' }, itemGap: 12 },
+                        legend: { bottom: '4%', left: 'center', textStyle: { color: isDarkMode.value ? '#E5E6EB' : '#1D2129' }, itemGap: 12 },
                         color: ['#F5A623', '#165DFF', '#00B42A', '#F53F3F'],
                         series: [{
                             type: 'pie',
-                            radius: ['45%', '70%'],
-                            center: ['50%', '42%'],
+                            radius: ['40%', '65%'],
+                            center: ['50%', '40%'],
                             avoidLabelOverlap: true,
                             itemStyle: { borderRadius: 6, borderColor: isDarkMode.value ? '#232324' : '#ffffff', borderWidth: 2 },
                             label: { show: false, position: 'center' },
@@ -986,9 +1097,90 @@
                 });
             };
 
+            const renderTrendChart = () => {
+                const dom = document.getElementById('trendChart');
+                if (!dom) return;
+                if (!trendChartInstance) trendChartInstance = echarts.init(dom);
+
+                const isDark = document.body.getAttribute('arco-theme') === 'dark';
+                const textColor = isDark ? 'rgba(255,255,255,0.7)' : '#4E5969';
+                const splitLineColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)';
+
+                const option = {
+                    grid: { top: '15%', left: '3%', right: '4%', bottom: '8%', containLabel: true },
+                    tooltip: {
+                        trigger: 'axis',
+                        backgroundColor: isDark ? '#232324' : '#fff',
+                        borderColor: 'rgba(0,0,0,0.1)',
+                        textStyle: { color: isDark ? '#fff' : '#000' }
+                    },
+                    legend: {
+                        data: ['上传流量 (GB)', '文件数量 (个)'],
+                        textStyle: { color: textColor },
+                        top: '0%',
+                        right: 10
+                    },
+                    xAxis: {
+                        type: 'category',
+                        data: (statsData.trend || []).map(i => i.date),
+                        axisLine: { lineStyle: { color: splitLineColor } },
+                        axisLabel: { color: textColor }
+                    },
+                    yAxis: [
+                        {
+                            type: 'value', name: 'GB',
+                            splitLine: { lineStyle: { color: splitLineColor } },
+                            axisLabel: { color: textColor }
+                        },
+                        {
+                            type: 'value', name: '个', position: 'right',
+                            splitLine: { show: false },
+                            axisLabel: { color: textColor }
+                        }
+                    ],
+                    series: [
+                        {
+                            name: '上传流量 (GB)',
+                            type: 'line',
+                            smooth: true,
+                            yAxisIndex: 0,
+                            data: (statsData.trend || []).map(i => i.size.toFixed(2)),
+                            areaStyle: {
+                                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                    { offset: 0, color: 'rgba(22, 93, 255, 0.4)' },
+                                    { offset: 1, color: 'rgba(22, 93, 255, 0)' }
+                                ])
+                            },
+                            itemStyle: { color: '#165DFF' },
+                            lineStyle: { width: 3 }
+                        },
+                        {
+                            name: '文件数量 (个)',
+                            type: 'line',
+                            smooth: true,
+                            yAxisIndex: 1,
+                            data: (statsData.trend || []).map(i => i.count),
+                            itemStyle: { color: '#FF7D00' },
+                            lineStyle: { width: 3, type: 'dashed' }
+                        }
+                    ]
+                };
+                trendChartInstance.setOption(option);
+            };
+
             watch(queueStatus, renderChart, { deep: true });
-            watch(activeTab, (val) => { if (val === 'overview') { setTimeout(renderChart, 200); }});
-            window.addEventListener('resize', () => { if(chartInstance) chartInstance.resize(); });
+            watch(activeTab, (val) => {
+                if (val === 'overview') {
+                    setTimeout(() => {
+                        renderChart();
+                        renderTrendChart();
+                    }, 200);
+                }
+            });
+            window.addEventListener('resize', () => {
+                if(chartInstance) chartInstance.resize();
+                if(trendChartInstance) trendChartInstance.resize();
+            });
 
             const handleLogin = async () => {
                 loginLoading.value = true;
@@ -1186,7 +1378,37 @@
 
                         triggerWsPulse(msg.type);
 
-                        if (msg.type === 'recorderStatus') {
+                        // ⭐ 新增：处理后端发送过来的实时强提醒告警弹窗
+                        if (msg.type === 'systemAlert') {
+                            const payload = msg.payload;
+                            Notification[payload.level || 'error']({
+                                title: payload.title,
+                                // 把触发时间合并到文字内容里，去掉灰色的 footer 区域，样式更贴近原生纯净版
+                                content: payload.message + `\n\n触发时间: ${payload.time}`,
+                                duration: 0, // 0 表示不会自动关闭，强制用户处理
+                                closable: true,
+                                position: 'bottomRight', // ⭐ 统一改到右下角弹出
+                                style: {
+                                    whiteSpace: 'pre-wrap',
+                                    wordBreak: 'break-all',
+                                    lineHeight: '1.6' // 增加一点行高，看起来更舒适
+                                }
+                            });
+                        } else if (msg.type === 'trafficMetrics') {
+                            trafficMetrics.speed = msg.payload.speed;
+                            trafficMetrics.time = msg.payload.time;
+                        } else if (msg.type === 'statsTrend') {
+                            const newStr = JSON.stringify(msg.payload);
+                            if (window.lastStatsStr !== newStr) {
+                                window.lastStatsStr = newStr;
+                                statsData.trend = msg.payload.trend || [];
+                                statsData.rank = msg.payload.rank || [];
+
+                                if (activeTab.value === 'overview' && statsData.trend.length > 0) {
+                                    nextTick(() => renderTrendChart());
+                                }
+                            }
+                        } else if (msg.type === 'recorderStatus') {
                             recorderStatus.value = msg.payload;
                         } else if (msg.type === 'activeStreamers') {
                             activeRecordingStreamers.value = msg.payload || [];
@@ -1429,10 +1651,18 @@
                 if (pingTimer) clearInterval(pingTimer);
                 if (ws) { ws.onclose = null; ws.close(); }
                 if (chartInstance) { chartInstance.dispose(); chartInstance = null; }
+                if (trendChartInstance) { trendChartInstance.dispose(); trendChartInstance = null; }
             };
 
-            onMounted(() => { autoSetThemeByTime(); if (isLoggedIn.value) initDashboard(); });
-            onUnmounted(cleanUp);
+            onMounted(() => {
+                autoSetThemeByTime();
+                if (isLoggedIn.value) initDashboard();
+                window.addEventListener('keydown', handleGlobalKeydown);
+            });
+            onUnmounted(() => {
+                cleanUp();
+                window.removeEventListener('keydown', handleGlobalKeydown);
+            });
 
             watch(activeTab, (newTab) => {
                 if (newTab === 'logs') fetchLogs();
@@ -1465,9 +1695,11 @@
                 activeRecordingStreamers,
                 showBatchAddModal, batchAddText, batchAddLoading, handleBatchAdd,
                 cookiesForm, cookiesLoading, fetchCookies, saveCookies,
-                radarState, // 抛出雷达数据计算属性给视图渲染
+                radarState,
                 recorderStatus, recorderControlLoading, showLogsModal, recorderLogsContent, dockerLogsRef, fetchRecorderStatus, controlRecorder, fetchRecorderLogs, openLogsModal,
-                formatSize, formatSpeed, calculatePercent, formatDuration, formatDurationSeconds, getElapsedTime, getStatusColor, getLogLevelColor, fetchLiveTasks, formatStatusText
+                formatSize, formatSpeed, calculatePercent, formatDuration, formatDurationSeconds, getElapsedTime, getStatusColor, getLogLevelColor, fetchLiveTasks, formatStatusText,
+                streamerSearchQuery, streamerSearchRef, filteredStreamers,
+                trafficMetrics, statsData, calculateRankPercent
             };
         }
     });

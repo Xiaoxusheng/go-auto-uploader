@@ -21,18 +21,18 @@ import (
 /* ================= 全局配置 ================= */
 
 var (
-	dirs               string
-	server             string
-	workers            int
-	rateMB             int
-	dayRateMB          int
-	nightRateMB        int
-	reportMinutes      int
-	scanningInterval   int
-	webPort            int
-	liveConfigPath     string
-	recorderContainer  string
-	recorderConfigPath string
+	dirs               string // 扫描目录
+	server             string // 远端服务器地址
+	workers            int    // 并发 Worker 数量
+	rateMB             int    // 手动限速
+	dayRateMB          int    // 白天限速
+	nightRateMB        int    // 夜晚限速
+	reportMinutes      int    // 邮件报告间隔
+	scanningInterval   int    // 扫描间隔
+	webPort            int    // Web 端口
+	liveConfigPath     string // 录制配置路径
+	recorderContainer  string // Docker 容器名
+	recorderConfigPath string // 主配置路径
 
 	dashboardUsername = "admin"
 	dashboardPassword = "admin"
@@ -42,21 +42,23 @@ var (
 
 	httpCli = &http.Client{Timeout: 0}
 
-	hashFile = "uploaded_hash.db"
+	hashFile = "uploaded_hash.db" // 已经上传的文件哈希记录（秒传用）
 
-	queueCount   int64
-	activeWorker int64
+	queueCount   int64 // 等待队列数量
+	activeWorker int64 // 当前活跃的 Worker 数量
 
-	// ⭐ 新增：暴露给前端的动态扫描周期与倒计时时间戳
+	// 暴露给前端的动态扫描周期与倒计时时间戳
 	currentDynamicIntervalGlobal int64
 	nextScanTimeGlobal           int64
 )
 
+// 动态应用配置
 var (
 	appConfig   Config
 	appConfigMu sync.RWMutex
 )
 
+// 任务队列和历史记录状态
 var (
 	liveTasks   = make(map[string]*Task)
 	liveTasksMu sync.RWMutex
@@ -73,10 +75,11 @@ var (
 )
 
 var (
-	triggerScanCh   = make(chan string, 1)
-	triggerReportCh = make(chan struct{}, 1)
+	triggerScanCh   = make(chan string, 1)   // 触发强制扫描的通道
+	triggerReportCh = make(chan struct{}, 1) // 触发报告重置的通道
 )
 
+// 触发目录扫描
 func triggerScan(reason string) {
 	select {
 	case triggerScanCh <- reason:
@@ -84,6 +87,7 @@ func triggerScan(reason string) {
 	}
 }
 
+// 触发报告发送通道重置
 func triggerReportReset() {
 	select {
 	case triggerReportCh <- struct{}{}:
@@ -91,6 +95,7 @@ func triggerReportReset() {
 	}
 }
 
+// Task 定义了单个上传任务的属性
 type Task struct {
 	ID         string
 	Name       string
@@ -107,6 +112,7 @@ type Task struct {
 	Error      string
 }
 
+// HistoryRecord 定义了历史上传记录
 type HistoryRecord struct {
 	UploadTime string `json:"uploadTime"`
 	Name       string `json:"name"`
@@ -119,14 +125,16 @@ type HistoryRecord struct {
 }
 
 const (
-	safeBaseDir    = "/_safe_uploads"
-	successLogFile = "upload_success.json"
+	safeBaseDir    = "/_safe_uploads"      // 远端安全目录
+	successLogFile = "upload_success.json" // 本地成功日志，用于图表统计
 
+	// 邮件相关配置
 	mailFrom     = "2673893724@qq.com"
 	mailAuthCode = "koeekvlajhtsdije"
 	mailTo       = "3096407768@qq.com"
 )
 
+// logInterceptor 拦截标准日志并同步给前端 WebSocket
 type logInterceptor struct {
 	original io.Writer
 }
@@ -153,6 +161,7 @@ func (l *logInterceptor) Write(p []byte) (n int, err error) {
 }
 
 func main() {
+	// 解析命令行参数
 	flag.StringVar(&dirs, "dirs", "", "扫描目录(逗号分隔)")
 	flag.StringVar(&server, "server", "https://wustwust.cn:8081", "服务器")
 	flag.IntVar(&workers, "workers", 3, "并发")
@@ -174,6 +183,7 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	log.SetOutput(&logInterceptor{original: os.Stdout})
 
+	// 初始化系统参数
 	appConfigMu.Lock()
 	appConfig.ScanInterval = scanningInterval
 	appConfig.Workers = workers
@@ -192,6 +202,7 @@ func main() {
 
 	addLog("info", "系统初始化完成，启动中...", "")
 
+	// 启动 WebAPI 服务器与后台常驻任务
 	go StartWebServer(webPort)
 	go queueStatusLoop()
 	go reportLoop()
@@ -204,9 +215,10 @@ func main() {
 
 	runningMu.RLock()
 	if running {
-		_ = login()
+		_ = login() // 获取远端 token
 		activeCount := runOnce("auto", currentDynamicInterval)
 		if activeCount > 0 {
+			// 如果有正在录制的文件，动态加快扫描频率
 			currentDynamicInterval = baseInterval / (activeCount + 1)
 			if currentDynamicInterval < 3 {
 				currentDynamicInterval = 3
@@ -217,13 +229,14 @@ func main() {
 	}
 	runningMu.RUnlock()
 
+	// 主扫描轮询
 	for {
 		runningMu.RLock()
 		isRunning := running
 		runningMu.RUnlock()
 
 		if isRunning {
-			// ⭐ 每次进入休眠前，精确计算并暴露下一次唤醒的时间戳
+			// 每次进入休眠前，精确计算并暴露下一次唤醒的时间戳给前端雷达
 			targetTime := time.Now().Add(time.Duration(currentDynamicInterval) * time.Minute)
 			atomic.StoreInt64(&nextScanTimeGlobal, targetTime.UnixMilli())
 
@@ -255,6 +268,7 @@ func main() {
 				}
 
 			case reason := <-triggerScanCh:
+				// 手动或系统触发扫描
 				_ = login()
 				log.Printf("[SYSTEM] ⚡ 收到指令打断，执行扫描 (触发源: %s)", reason)
 
@@ -271,7 +285,6 @@ func main() {
 					}
 					currentDynamicInterval = newInterval
 					atomic.StoreInt64(&currentDynamicIntervalGlobal, int64(currentDynamicInterval))
-					log.Printf("[SCAN][DYNAMIC] 🔥 当前有 %d 个主播处于录制写入状态，下次扫描定为 %d 分钟后", activeCount, newInterval)
 				} else {
 					currentDynamicInterval = baseInterval
 					atomic.StoreInt64(&currentDynamicIntervalGlobal, int64(currentDynamicInterval))
@@ -289,6 +302,7 @@ func main() {
 	}
 }
 
+// 打印队列状态日志
 func queueStatusLoop() {
 	start := time.Now()
 	ticker := time.NewTicker(10 * time.Second)
@@ -306,9 +320,9 @@ func queueStatusLoop() {
 	}
 }
 
+// 执行单次扫描与任务分发
 func runOnce(triggerReason string, currentDynamicInterval int) int {
-	// ⭐ 开始扫描时，将倒计时标记为 -1，通知前端显示“正在扫描中”
-	atomic.StoreInt64(&nextScanTimeGlobal, -1)
+	atomic.StoreInt64(&nextScanTimeGlobal, -1) // -1 表示前端显示"正在扫描中"
 
 	appConfigMu.RLock()
 	currentWorkers := appConfig.Workers
@@ -330,6 +344,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 
 	log.Printf("[SCAN][START] 🔍 启动目录探测，并发Workers:[%d] 目标路径:[%s]", currentWorkers, strings.Join(currentDirs, " | "))
 
+	// 广播给前端扫描开始
 	broadcastWS("scanStarted", map[string]interface{}{
 		"time":     time.Now().UnixMilli(),
 		"dirs":     currentDirs,
@@ -338,6 +353,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 		"trigger":  triggerReason,
 	})
 
+	// 启动 Worker 池
 	for i := 0; i < currentWorkers; i++ {
 		wg.Add(1)
 		go func(id int) {
@@ -356,7 +372,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 				atomic.AddInt64(&activeWorker, 1)
 
 				start := time.Now()
-				handleFile(path)
+				handleFile(path) // 处理文件上传
 				log.Printf("[UPLOAD][DONE][W%d] 文件:%s 耗时:%s",
 					id, filepath.Base(path), time.Since(start).Truncate(time.Millisecond))
 
@@ -365,6 +381,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 		}(i + 1)
 	}
 
+	// 初始化目录统计状态
 	dirStatusesMu.Lock()
 	for _, root := range currentDirs {
 		root = filepath.Clean(strings.TrimSpace(root))
@@ -388,6 +405,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	var newlyAddedFiles int32 = 0
 	var activeRecordingCount int32 = 0
 
+	// 遍历并投递任务
 	for _, root := range currentDirs {
 		root = filepath.Clean(strings.TrimSpace(root))
 		if root == "." || root == "" {
@@ -409,6 +427,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 				return nil
 			}
 
+			// 忽略最后修改时间在 2 分钟内的文件（判定为正在写入）
 			if time.Since(info.ModTime()) < 2*time.Minute {
 				atomic.AddInt32(&activeRecordingCount, 1)
 				return nil
@@ -428,12 +447,14 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 			return nil
 		})
 		if err != nil && err.Error() != "scan canceled by user" {
+			// ⭐ 新增：严重扫描错误发出告警
+			SendAlert("warning", "目录扫描异常", "无法访问部分路径: "+err.Error())
 			addLog("error", "文件遍历失败", err.Error())
 		}
 	}
 
 	close(taskCh)
-	wg.Wait()
+	wg.Wait() // 等待所有 Worker 完成
 	log.Printf("[SCAN][END] 🏁 本轮扫描完毕。发现新文件: %d 个 | 仍在录制中文件: %d 个", newlyAddedFiles, activeRecordingCount)
 
 	broadcastWS("scanFinished", map[string]interface{}{
@@ -464,6 +485,7 @@ func cleanupFailedTasksByPath(targetPath string) {
 	}
 }
 
+// 处理单个文件的上传逻辑
 func handleFile(path string) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -487,6 +509,7 @@ func handleFile(path string) {
 	name := cleanFileName(filepath.Base(rel))
 	remote := filepath.ToSlash(filepath.Join(safeBaseDir, dir, name))
 
+	// 检测秒传机制 (Hash)
 	hash := fileHash(path)
 	if hashExists(hash) {
 		log.Println("[SKIP][HASH] 文件已存在于记录中:", path)
@@ -533,6 +556,7 @@ func handleFile(path string) {
 		return
 	}
 
+	// 开始执行远端上传
 	if upload(path, remote, info.Size()) {
 		saveHash(hash)
 		if err := os.Remove(path); err != nil {
@@ -552,6 +576,7 @@ func handleFile(path string) {
 	}
 }
 
+// 执行 HTTP PUT 上传
 func upload(local, remote string, size int64) bool {
 	f, err := os.Open(local)
 	if err != nil {
@@ -562,6 +587,7 @@ func upload(local, remote string, size int64) bool {
 
 	taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
 	startTime := time.Now()
+	// 使用带进度监控的 Reader
 	pr := NewProgressReaderWithID(filepath.Base(remote), f, size, taskID)
 
 	liveTasksMu.Lock()
@@ -609,6 +635,9 @@ func upload(local, remote string, size int64) bool {
 
 	if err != nil {
 		log.Printf("[UPLOAD][HTTP][ERR] %s -> %v", filepath.Base(local), err)
+
+		// ⭐ 新增：向网页推送严重网络错误告警
+		SendAlert("error", "上传连接失败", "无法连接远端服务器: "+err.Error())
 
 		liveTasksMu.Lock()
 		if task, exists := liveTasks[taskID]; exists {
@@ -669,6 +698,9 @@ func upload(local, remote string, size int64) bool {
 		log.Printf("[UPLOAD][REMOTE][ERR] 远端服务器拒绝或异常，状态码: %d 文件: %s", r.Code, filepath.Base(local))
 		errMsg := fmt.Sprintf("远端拒绝接收 (Code: %d)", r.Code)
 
+		// ⭐ 新增：如果状态码不是 200，说明 Token 过期或者服务器满载，推送红色告警
+		SendAlert("error", "上传遭拒绝", fmt.Sprintf("文件: %s\n原因: 远端返回 Code %d，可能 Token 已过期或配置错误。", filepath.Base(local), r.Code))
+
 		liveTasksMu.Lock()
 		if task, exists := liveTasks[taskID]; exists {
 			task.Status = "failed"
@@ -723,6 +755,7 @@ func removeTask(tasks []string, taskID string) []string {
 	return tasks
 }
 
+// ProgressReader 带速率限制和进度通知的流读取器
 type ProgressReader struct {
 	name        string
 	r           io.Reader
@@ -750,6 +783,7 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 	n, err := p.r.Read(b)
 	p.read += int64(n)
 
+	// 带宽限速逻辑
 	rateMB := currentRate()
 	if rateMB > 0 {
 		rate := int64(rateMB) * 1024 * 1024
@@ -759,6 +793,7 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 		}
 	}
 
+	// 每半秒更新一次进度并同步前端
 	if time.Since(p.last) > 500*time.Millisecond {
 		p.last = time.Now()
 		progress := int(float64(p.read) * 100 / float64(p.total))
@@ -790,6 +825,7 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 	return n, err
 }
 
+// 根据时间动态计算限速
 func currentRate() int {
 	appConfigMu.RLock()
 	defer appConfigMu.RUnlock()
@@ -801,6 +837,7 @@ func currentRate() int {
 	return appConfig.NightRate
 }
 
+// 剔除文件名中的非法字符
 func cleanFileName(name string) string {
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
@@ -833,6 +870,7 @@ type UploadRecord struct {
 	Size     int64
 }
 
+// 记录成功上传日志，用于大屏统计展示
 func recordSuccess(remote, name string, size int64) {
 	var list []UploadRecord
 	data, _ := os.ReadFile(successLogFile)
@@ -852,6 +890,7 @@ func recordSuccess(remote, name string, size int64) {
 	}
 }
 
+// 邮件发送循环
 func reportLoop() {
 	appConfigMu.RLock()
 	intervalMinutes := appConfig.EmailInterval
@@ -881,6 +920,7 @@ func reportLoop() {
 	}
 }
 
+// 汇总统计数据并发送 HTML 邮件
 func sendReport() {
 	data, _ := os.ReadFile(successLogFile)
 	var list []UploadRecord
@@ -946,8 +986,6 @@ func sendReport() {
 
 	log.Printf("[REPORT] 📤 正在发送本周期统计邮件，包含 %d 个文件记录", len(list))
 	sendQQMail("📦 上传成功报告", html.String())
-
-	_ = os.WriteFile(successLogFile, []byte("[]"), 0644)
 }
 
 func login() error {
