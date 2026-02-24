@@ -3,7 +3,6 @@ set -e
 
 APP_NAME="uploader"
 
-
 echo "🚀 Building binary..."
 
 # 当前系统编译
@@ -13,4 +12,5 @@ echo "✅ Build success!"
 echo "📦 Binary: ./$APP_NAME"
 echo "📏 Size:"
 ls -lh "./$APP_NAME"
+du -h "./$APP_NAME"
 
