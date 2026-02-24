@@ -14,7 +14,6 @@
     <link href="https://unpkg.com/@arco-design/web-vue/dist/arco.min.css" rel="stylesheet">
 
     <style>
-        /* 定义基础的 CSS 变量，用于明暗主题切换 */
         :root {
             --bg-base: #f0f2f5;
             --glass-bg: rgba(255, 255, 255, 0.75);
@@ -37,7 +36,6 @@
             color: var(--color-text-1); transition: background-color 0.3s ease;
         }
 
-        /* 统一的毛玻璃特效样式 */
         .apple-glass {
             background-color: var(--glass-bg) !important;
             backdrop-filter: saturate(180%) blur(20px);
@@ -62,23 +60,11 @@
             box-shadow: var(--hover-shadow);
         }
 
-        .fade-enter-active, .fade-leave-active {
-            transition: opacity 0.3s ease, transform 0.3s ease;
-        }
-        .fade-enter-from, .fade-leave-to {
-            opacity: 0;
-            transform: translateY(10px);
-        }
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease, transform 0.3s ease; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(10px); }
 
-        .status-indicator {
-            display: inline-block;
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            margin-right: 8px;
-        }
+        .status-indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
 
-        /* 呼吸灯动画 */
         @keyframes breathe {
             0% { transform: scale(0.85); box-shadow: 0 0 0 0 rgba(0, 180, 42, 0.7); }
             50% { transform: scale(1.1); box-shadow: 0 0 10px 4px rgba(0, 180, 42, 0.3); }
@@ -108,12 +94,7 @@
         .ws-icon-connecting { color: #165DFF !important; animation: pulse 1s infinite; }
         .ws-icon-disconnected { color: #F53F3F !important; opacity: 0.8 !important; }
 
-        .ws-data-flash {
-            color: #165DFF !important;
-            filter: drop-shadow(0 0 12px rgba(22, 93, 255, 0.9));
-            transform: scale(1.15) !important;
-            transition: all 0.05s ease-out !important;
-        }
+        .ws-data-flash { color: #165DFF !important; filter: drop-shadow(0 0 12px rgba(22, 93, 255, 0.9)); transform: scale(1.15) !important; transition: all 0.05s ease-out !important; }
 
         #app { min-height: 100vh; display: flex; flex-direction: column; }
         .main-container { padding: 24px; max-width: 1400px; margin: 0 auto; width: 100%; box-sizing: border-box; flex: 1; }
@@ -134,51 +115,24 @@
         .log-container { padding: 16px; height: 420px; overflow-y: auto; font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 13px; border-radius: 12px; scroll-behavior: smooth; border: 1px solid var(--glass-border); }
         .docker-logs { background: #1e1e1e; color: #a9b7c6; font-family: 'Consolas', monospace; padding: 16px; border-radius: 8px; white-space: pre-wrap; overflow-y: auto; height: 500px; font-size: 13px; }
 
-        .download-btn {
-            background-color: var(--color-primary-light-1);
-            color: var(--color-primary-6);
-            border: 1px solid var(--color-primary-light-3);
-        }
+        .download-btn { background-color: var(--color-primary-light-1); color: var(--color-primary-6); border: 1px solid var(--color-primary-light-3); }
+        .footer-copyright { text-align: center; padding: 16px 24px; font-size: 12px; color: var(--color-text-3); }
+        .footer-copyright a { color: var(--color-text-3); text-decoration: none; transition: color 0.3s; }
+        .footer-copyright a:hover { color: var(--color-primary-light-4); }
 
-        .footer-copyright {
-            text-align: center;
-            padding: 16px 24px;
-            font-size: 12px;
-            color: var(--color-text-3);
-        }
-        .footer-copyright a {
-            color: var(--color-text-3);
-            text-decoration: none;
-            transition: color 0.3s;
-        }
-        .footer-copyright a:hover {
-            color: var(--color-primary-light-4);
-        }
+        .arco-table-bordered .arco-table-container { border-left: 1px solid var(--glass-border) !important; border-top: 1px solid var(--glass-border) !important; }
+        .arco-table-bordered .arco-table-th, .arco-table-bordered .arco-table-td { border-right: 1px solid var(--glass-border) !important; border-bottom: 1px solid var(--glass-border) !important; }
 
-        .arco-table-bordered .arco-table-container {
-            border-left: 1px solid var(--glass-border) !important;
-            border-top: 1px solid var(--glass-border) !important;
-        }
-        .arco-table-bordered .arco-table-th, .arco-table-bordered .arco-table-td {
-            border-right: 1px solid var(--glass-border) !important;
-            border-bottom: 1px solid var(--glass-border) !important;
-        }
-
-        /* 移动端深度适配与按钮优化 */
         @media screen and (max-width: 768px) {
             .main-container { padding: 12px 8px; }
             .stat-value { font-size: 20px; }
-
             .action-bar { display: flex; flex-wrap: wrap; gap: 8px; }
             .action-bar .arco-btn { flex: 1 1 calc(50% - 8px); margin: 0; display: flex; justify-content: center; }
             .action-bar .arco-btn[status="danger"] { flex: 1 1 100%; }
-
             .login-box { width: 90%; padding: 24px; }
             .arco-tabs-nav-type-rounded .arco-tabs-tab { padding: 4px 12px; font-size: 13px; }
-
             header.nav-glass { flex-wrap: wrap; padding: 12px 16px !important; }
             .nav-title { width: 100%; justify-content: space-between; margin-bottom: 8px; font-size: 15px !important;}
-
             .hidden-xs { display: none !important; }
         }
     </style>
@@ -356,10 +310,10 @@
                                             <span style="color: var(--color-text-3)">频率: <b>{{ systemStatus.dynamicInterval || systemStatus.scanningInterval }}</b> 分/次</span>
 
                                             <span v-if="systemStatus.dynamicInterval < systemStatus.scanningInterval" style="color: #D22ECE; font-weight: bold; display: flex; align-items: center; gap: 4px;">
-                                                <icon-thunderbolt /> 狂暴模式
+                                                <icon-thunderbolt></icon-thunderbolt> 狂暴模式
                                             </span>
                                             <span v-else style="color: #00B42A; display: flex; align-items: center; gap: 4px;">
-                                                <icon-clock-circle /> 节能休眠
+                                                <icon-clock-circle></icon-clock-circle> 节能休眠
                                             </span>
                                         </div>
                                     </a-card>
@@ -379,13 +333,13 @@
                                             </div>
                                             <div style="position: relative; width: 40px; text-align: center;">
                                                 <icon-wifi style="font-size: 32px; color: var(--color-text-3); transition: all 0.4s ease;"
-                                                           :class="['ws-icon-' + wsStatus, { 'ws-data-flash': wsStats.pulse }]" />
+                                                           :class="['ws-icon-' + wsStatus, { 'ws-data-flash': wsStats.pulse }]"></icon-wifi>
                                             </div>
                                         </div>
 
                                         <div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--glass-border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                                             <span style="font-size: 12px; color: var(--color-text-3);">
-                                                <icon-dashboard /> 收发包: <b style="color: var(--color-text-1)">{{ wsStats.msgCount }}</b>
+                                                <icon-dashboard></icon-dashboard> 收发包: <b style="color: var(--color-text-1)">{{ wsStats.msgCount }}</b>
                                             </span>
 
                                             <span v-if="wsStatus === 'connected'"
@@ -460,7 +414,7 @@
                         <a-card v-if="liveTaskFilter === 'uploading'" class="apple-glass hover-effect" bordered key="uploading">
                             <template #title>
                                     <span style="color: var(--color-primary-light-4); display:flex; align-items:center; gap:6px;">
-                                        <icon-sync :spin="uploadingTasks.length > 0" /> 正在处理中的文件
+                                        <icon-sync :spin="uploadingTasks.length > 0"></icon-sync> 正在处理中的文件
                                     </span>
                             </template>
                             <div style="overflow-x: auto;">
@@ -488,7 +442,7 @@
                         <a-card v-else-if="liveTaskFilter === 'completed'" class="apple-glass hover-effect" bordered key="completed">
                             <template #title>
                                     <span style="color: var(--color-success-light-4); display:flex; align-items:center; gap:6px;">
-                                        <icon-check-circle-fill /> 近期已处理完成的文件
+                                        <icon-check-circle-fill></icon-check-circle-fill> 近期已处理完成的文件
                                     </span>
                             </template>
                             <div style="overflow-x: auto;">
@@ -556,7 +510,7 @@
                         <div class="action-bar" style="justify-content: space-between; align-items: center; margin-bottom: 0;">
                             <div style="display: flex; align-items: center; gap: 12px; min-width: 200px;">
                                 <div style="font-size: 15px; font-weight: 500;">
-                                    <icon-computer /> 录制引擎容器
+                                    <icon-computer></icon-computer> 录制引擎容器
                                 </div>
                                 <a-badge v-if="recorderStatus === 'running'" status="success" text="🟢 Running"></a-badge>
                                 <a-badge v-else-if="recorderStatus === 'exited'" status="danger" text="🔴 Exited"></a-badge>
@@ -567,7 +521,7 @@
                                 <a-button type="primary" status="success" size="small" @click="controlRecorder('start')" :disabled="recorderStatus === 'running' || recorderControlLoading">启动</a-button>
                                 <a-button type="primary" status="warning" size="small" @click="controlRecorder('restart')" :loading="recorderControlLoading">重启生效</a-button>
                                 <a-button type="outline" status="danger" size="small" @click="controlRecorder('stop')" :disabled="recorderStatus !== 'running' || recorderControlLoading">停止</a-button>
-                                <a-button type="secondary" size="small" @click="openLogsModal"><template #icon><icon-code/></template> 实时日志</a-button>
+                                <a-button type="secondary" size="small" @click="openLogsModal"><template #icon><icon-code></icon-code></template> 实时日志</a-button>
                             </a-space>
                         </div>
                     </a-card>
@@ -581,25 +535,26 @@
                                     style="width: 220px;"
                                     size="medium"
                                     allow-clear>
-                                <template #prefix><icon-search/></template>
+                                <template #prefix><icon-search></icon-search></template>
                             </a-input-search>
 
                             <a-divider direction="vertical" style="height: 24px; margin: 0;"></a-divider>
 
-                            <a-input v-model="newStreamer.url" placeholder="直播间链接 (http...)" style="flex: 1; min-width: 200px;" size="medium"><template #prefix><icon-link/></template></a-input>
-                            <a-input v-model="newStreamer.name" placeholder="主播名 (可选)" style="width: 140px;" size="medium"><template #prefix><icon-user/></template></a-input>
+                            <a-input v-model="newStreamer.url" placeholder="直播间链接 (http...)" style="flex: 1; min-width: 200px;" size="medium"><template #prefix><icon-link></icon-link></template></a-input>
+                            <a-input v-model="newStreamer.name" placeholder="主播名 (可选)" style="width: 140px;" size="medium"><template #prefix><icon-user></icon-user></template></a-input>
 
                             <a-button type="primary" status="success" @click="addStreamer" size="medium">
-                                <template #icon><icon-plus/></template> <span class="hidden-xs">添加</span>
+                                <template #icon><icon-plus></icon-plus></template> <span class="hidden-xs">添加</span>
                             </a-button>
                             <a-button type="primary" status="warning" @click="showBatchAddModal = true" size="medium">
-                                <template #icon><icon-copy/></template> <span class="hidden-xs">批量</span>
+                                <template #icon><icon-copy></icon-copy></template> <span class="hidden-xs">批量</span>
                             </a-button>
                         </div>
 
                         <div style="margin-top: 12px; display: flex; gap: 16px; font-size: 13px; color: var(--color-text-3); justify-content: flex-end;">
-                            <span><icon-menu /> 总计: <b>{{ streamers.length }}</b></span>
-                            <span style="color: #00B42A"><icon-play-circle /> 监控中: <b>{{ activeStreamersCount }}</b></span>
+                            <span><icon-menu></icon-menu> 总计: <b>{{ streamers.length }}</b></span>
+                            <span style="color: #00B42A"><icon-play-circle></icon-play-circle> 监控中: <b>{{ activeStreamersCount }}</b></span>
+                            <span style="color: #F53F3F"><icon-live-broadcast></icon-live-broadcast> 当前录制: <b>{{ onlineStreamersCount }}</b></span>
                             <span v-if="streamerSearchQuery">🔍 搜索结果: <b>{{ filteredStreamers.length }}</b></span>
                         </div>
                     </a-card>
@@ -623,7 +578,7 @@
                                                 {{ record.name }}
                                             </span>
                                             <span v-else style="color: var(--color-text-4); font-size: 13px; display: inline-flex; align-items: center; gap: 4px;">
-                                                <icon-sync spin /> <span>等待引擎抓取...</span>
+                                                <icon-sync spin></icon-sync> <span>等待引擎抓取...</span>
                                             </span>
                                         </template>
                                     </a-table-column>
@@ -655,10 +610,10 @@
                                     </a-table-column>
 
                                     <a-table-column title="操作" :width="100" align="center">
-                                        <template #cell="{ rowIndex }">
-                                            <a-popconfirm content="确定要删除此主播配置吗？" position="left" type="warning" @ok="removeStreamer(rowIndex)">
+                                        <template #cell="{ record }">
+                                            <a-popconfirm content="确定要删除此主播配置吗？" position="left" type="warning" @ok="removeStreamer(record)">
                                                 <a-button type="text" status="danger" size="mini">
-                                                    <template #icon><icon-delete/></template> 删除
+                                                    <template #icon><icon-delete></icon-delete></template> 删除
                                                 </a-button>
                                             </a-popconfirm>
                                         </template>
@@ -670,12 +625,21 @@
                 </a-tab-pane>
 
                 <a-tab-pane key="cookies">
-                    <template #title><icon-idcard></icon-idcard> Cookie 管理</template>
+                    <template #title><icon-settings></icon-settings> 引擎核心配置 (config.ini)</template>
                     <a-card class="apple-glass hover-effect" bordered style="max-width: 1000px;">
                         <a-form layout="vertical" :model="cookiesForm" @submit="saveCookies">
                             <a-alert type="info" style="margin-bottom: 20px;">
                                 设置前，请确保在【系统参数设置】中配置了正确的 <b>录制引擎主配置文件 (config.ini)</b> 的物理路径。保存后需去录制管理页重启引擎容器生效。
                             </a-alert>
+
+                            <a-form-item label="直播保存物理路径 (不填则使用引擎默认)">
+                                <a-input v-model="cookiesForm.liveSavePath" size="medium" placeholder="例如: /home/file/static/">
+                                    <template #prefix><icon-folder></icon-folder></template>
+                                </a-input>
+                                <template #help>该路径为录制引擎容器内部/宿主机的视频保存绝对路径。</template>
+                            </a-form-item>
+
+                            <a-divider style="margin: 20px 0;"><span style="color: var(--color-text-3); font-size: 12px;">Cookie 凭证配置</span></a-divider>
 
                             <a-form-item label="抖音 Cookie">
                                 <a-textarea v-model="cookiesForm.douyin" :auto-size="{minRows: 4, maxRows: 8}" placeholder="在此填入抖音 Cookie (包含 sessionid_ss 等凭证)"></a-textarea>
@@ -826,7 +790,7 @@
 
         <a-modal v-model:visible="showLogsModal" title="录制引擎实时日志输出" width="80%" :footer="false" draggable>
             <div class="action-bar" style="margin-bottom: 12px;">
-                <a-button type="primary" size="small" @click="fetchRecorderLogs"><template #icon><icon-refresh/></template> 刷新日志</a-button>
+                <a-button type="primary" size="small" @click="fetchRecorderLogs"><template #icon><icon-refresh></icon-refresh></template> 刷新日志</a-button>
                 <span style="color: var(--color-text-3); font-size: 13px; margin-left: 12px;">显示最后 100 行容器日志</span>
             </div>
             <div class="docker-logs" ref="dockerLogsRef">
@@ -922,10 +886,8 @@
             const systemStatus = reactive({ running: false, uptime: 0, workers: 0, rate: 0, dirs: [], dynamicInterval: 0, nextScanTime: 0, scanningInterval: 0 });
             const queueStatus = reactive({ waiting: 0, uploading: 0, success: 0, failed: 0, retrying: 0 });
 
-            // 实时瞬时流量数据
             const trafficMetrics = reactive({ speed: 0, time: 0 });
 
-            // 历史趋势与排行榜数据
             const statsData = reactive({ trend: [], rank: [] });
             let trendChartInstance = null;
             window.lastStatsStr = '';
@@ -940,14 +902,34 @@
 
             const streamerSearchQuery = ref('');
             const streamerSearchRef = ref(null);
+            const activeRecordingStreamers = ref([]);
+
+            const onlineStreamersCount = computed(() => {
+                return streamers.value.filter(s => activeRecordingStreamers.value.includes(s.name) && s.active).length;
+            });
 
             const filteredStreamers = computed(() => {
-                if (!streamerSearchQuery.value) return streamers.value;
-                const lower = streamerSearchQuery.value.trim().toLowerCase();
-                return streamers.value.filter(s =>
-                    (s.name && s.name.toLowerCase().includes(lower)) ||
-                    (s.url && s.url.toLowerCase().includes(lower))
-                );
+                let list = streamers.value;
+                if (streamerSearchQuery.value) {
+                    const lower = streamerSearchQuery.value.trim().toLowerCase();
+                    list = list.filter(s =>
+                        (s.name && s.name.toLowerCase().includes(lower)) ||
+                        (s.url && s.url.toLowerCase().includes(lower))
+                    );
+                }
+
+                return list.slice().sort((a, b) => {
+                    const aOnline = activeRecordingStreamers.value.includes(a.name) && a.active;
+                    const bOnline = activeRecordingStreamers.value.includes(b.name) && b.active;
+
+                    if (aOnline && !bOnline) return -1;
+                    if (!aOnline && bOnline) return 1;
+
+                    if (a.active && !b.active) return -1;
+                    if (!a.active && b.active) return 1;
+
+                    return 0;
+                });
             });
 
             const handleGlobalKeydown = (e) => {
@@ -962,8 +944,6 @@
                 }
             };
 
-            const activeRecordingStreamers = ref([]);
-
             const recorderStatus = ref('读取中...');
             const recorderControlLoading = ref(false);
             const showLogsModal = ref(false);
@@ -974,7 +954,8 @@
             const batchAddText = ref('');
             const batchAddLoading = ref(false);
 
-            const cookiesForm = reactive({ douyin: '', kuaishou: '', sooplive: '' });
+            // ⭐ 更新：绑定 liveSavePath 参数
+            const cookiesForm = reactive({ douyin: '', kuaishou: '', sooplive: '', liveSavePath: '' });
             const cookiesLoading = ref(false);
 
             const radarState = computed(() => {
@@ -1030,7 +1011,7 @@
                 cookiesLoading.value = true;
                 try {
                     await api.put('/cookies', cookiesForm);
-                    Message.success('Cookie 凭证已安全追记至引擎配置文件！');
+                    Message.success('录制引擎配置已安全追记至文件！');
                 } catch(e) {} finally {
                     cookiesLoading.value = false;
                 }
@@ -1332,10 +1313,13 @@
                 }
             };
 
-            const removeStreamer = (index) => {
-                streamers.value.splice(index, 1);
-                saveStreamers();
-                Message.success('已成功删除该主播记录');
+            const removeStreamer = (record) => {
+                const index = streamers.value.findIndex(s => s.url === record.url);
+                if (index > -1) {
+                    streamers.value.splice(index, 1);
+                    saveStreamers();
+                    Message.success('已成功删除该主播记录');
+                }
             };
 
             const triggerWsPulse = (eventType) => {
@@ -1378,20 +1362,18 @@
 
                         triggerWsPulse(msg.type);
 
-                        // ⭐ 新增：处理后端发送过来的实时强提醒告警弹窗
                         if (msg.type === 'systemAlert') {
                             const payload = msg.payload;
                             Notification[payload.level || 'error']({
                                 title: payload.title,
-                                // 把触发时间合并到文字内容里，去掉灰色的 footer 区域，样式更贴近原生纯净版
                                 content: payload.message + `\n\n触发时间: ${payload.time}`,
-                                duration: 0, // 0 表示不会自动关闭，强制用户处理
+                                duration: 0,
                                 closable: true,
-                                position: 'bottomRight', // ⭐ 统一改到右下角弹出
+                                position: 'bottomRight',
                                 style: {
                                     whiteSpace: 'pre-wrap',
                                     wordBreak: 'break-all',
-                                    lineHeight: '1.6' // 增加一点行高，看起来更舒适
+                                    lineHeight: '1.6'
                                 }
                             });
                         } else if (msg.type === 'trafficMetrics') {
@@ -1692,7 +1674,7 @@
                 logQuery, logData, logExportLimit, logContainerRef, fetchLogs, downloadLogs,
                 configForm, configDirsString, fetchConfig, saveConfig,
                 streamers, newStreamer, activeStreamersCount, fetchStreamers, saveStreamers, addStreamer, removeStreamer,
-                activeRecordingStreamers,
+                activeRecordingStreamers, onlineStreamersCount,
                 showBatchAddModal, batchAddText, batchAddLoading, handleBatchAdd,
                 cookiesForm, cookiesLoading, fetchCookies, saveCookies,
                 radarState,

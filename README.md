@@ -49,6 +49,32 @@
 
 ---
 
+## 📸 界面预览
+
+*以下为系统在实际运行中的界面截图：*
+
+<table border="1" cellpadding="1" cellspacing="1" style="width: 500px">
+    <tbody>
+        <tr>
+            <td><img src="img/2.png" alt="登录" width="1920" /></td>
+            <td><img src="img/2.png" alt="主页面" width="1920" /></td> 
+        </tr>
+        <tr>
+            <td><img src="img/3.png" alt="日志页面" width="1920" /></td>
+           <td><img src="img/4.png" alt="配置页面" width="1920" /></td>
+        </tr>
+     <tr>
+            <td><img src="img/5.png" alt="上传成功页面" width="1920" /></td>
+           <td><img src="img/6.png" alt="历史记录页面" width="1920" /></td>
+        </tr>
+     <tr>
+            <td><img src="img/7.png" alt="主播设置页面" width="1920" /></td>
+           <td><img src="img/8.png" alt="cookie设置页面" width="1920" /></td>
+        </tr>
+    </tbody>
+</table>
+---
+
 ## 📡 WebSocket 实时数据协议规范
 
 系统通过单路全双工 WebSocket (`/ws/live`) 向前端实时推送业务数据。所有消息均采用 JSON 格式，结构为 `{ "type": "类型", "payload": 载荷数据 }`。
