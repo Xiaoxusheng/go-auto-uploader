@@ -181,6 +181,7 @@ func main() {
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	// 启用日志拦截器，将日志传回网页
 	log.SetOutput(&logInterceptor{original: os.Stdout})
 
 	// 初始化系统参数
@@ -268,7 +269,7 @@ func main() {
 				}
 
 			case reason := <-triggerScanCh:
-				// 手动或系统触发扫描
+				// ⭐ 恢复了被删掉的打断日志
 				_ = login()
 				log.Printf("[SYSTEM] ⚡ 收到指令打断，执行扫描 (触发源: %s)", reason)
 
@@ -338,13 +339,15 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	runningMu.RUnlock()
 
 	if !isRunning {
+		// ⭐ 恢复了被删掉的暂停提示日志
 		log.Println("[UPLOAD][PAUSED] 系统处于暂停状态，跳过本轮扫描")
 		return 0
 	}
 
+	// ⭐ 恢复了被删掉的扫描启动日志
 	log.Printf("[SCAN][START] 🔍 启动目录探测，并发Workers:[%d] 目标路径:[%s]", currentWorkers, strings.Join(currentDirs, " | "))
 
-	// 广播给前端扫描开始
+	// 广播给前端
 	broadcastWS("scanStarted", map[string]interface{}{
 		"time":     time.Now().UnixMilli(),
 		"dirs":     currentDirs,
@@ -373,6 +376,8 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 
 				start := time.Now()
 				handleFile(path) // 处理文件上传
+
+				// ⭐ 恢复了被删掉的任务完成耗时日志
 				log.Printf("[UPLOAD][DONE][W%d] 文件:%s 耗时:%s",
 					id, filepath.Base(path), time.Since(start).Truncate(time.Millisecond))
 
@@ -447,7 +452,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 			return nil
 		})
 		if err != nil && err.Error() != "scan canceled by user" {
-			// ⭐ 新增：严重扫描错误发出告警
+			// 如果目录扫描报错，发送前端强提醒
 			SendAlert("warning", "目录扫描异常", "无法访问部分路径: "+err.Error())
 			addLog("error", "文件遍历失败", err.Error())
 		}
@@ -455,6 +460,8 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 
 	close(taskCh)
 	wg.Wait() // 等待所有 Worker 完成
+
+	// ⭐ 恢复了被删掉的扫描结束日志
 	log.Printf("[SCAN][END] 🏁 本轮扫描完毕。发现新文件: %d 个 | 仍在录制中文件: %d 个", newlyAddedFiles, activeRecordingCount)
 
 	broadcastWS("scanFinished", map[string]interface{}{
@@ -512,7 +519,8 @@ func handleFile(path string) {
 	// 检测秒传机制 (Hash)
 	hash := fileHash(path)
 	if hashExists(hash) {
-		log.Println("[SKIP][HASH] 文件已存在于记录中:", path)
+		// ⭐ 恢复了被删掉的秒传日志
+		log.Println("[SKIP][HASH] 文件已存在于记录中 (秒传触发):", path)
 
 		taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
 
@@ -587,7 +595,6 @@ func upload(local, remote string, size int64) bool {
 
 	taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
 	startTime := time.Now()
-	// 使用带进度监控的 Reader
 	pr := NewProgressReaderWithID(filepath.Base(remote), f, size, taskID)
 
 	liveTasksMu.Lock()
@@ -635,8 +642,7 @@ func upload(local, remote string, size int64) bool {
 
 	if err != nil {
 		log.Printf("[UPLOAD][HTTP][ERR] %s -> %v", filepath.Base(local), err)
-
-		// ⭐ 新增：向网页推送严重网络错误告警
+		// 发送通知
 		SendAlert("error", "上传连接失败", "无法连接远端服务器: "+err.Error())
 
 		liveTasksMu.Lock()
@@ -698,7 +704,7 @@ func upload(local, remote string, size int64) bool {
 		log.Printf("[UPLOAD][REMOTE][ERR] 远端服务器拒绝或异常，状态码: %d 文件: %s", r.Code, filepath.Base(local))
 		errMsg := fmt.Sprintf("远端拒绝接收 (Code: %d)", r.Code)
 
-		// ⭐ 新增：如果状态码不是 200，说明 Token 过期或者服务器满载，推送红色告警
+		// Token 失效发送通知
 		SendAlert("error", "上传遭拒绝", fmt.Sprintf("文件: %s\n原因: 远端返回 Code %d，可能 Token 已过期或配置错误。", filepath.Base(local), r.Code))
 
 		liveTasksMu.Lock()
@@ -837,7 +843,7 @@ func currentRate() int {
 	return appConfig.NightRate
 }
 
-// 剔除文件名中的非法字符
+// ⭐ 恢复了被删掉的完善版特殊字符清理逻辑
 func cleanFileName(name string) string {
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
@@ -920,7 +926,7 @@ func reportLoop() {
 	}
 }
 
-// 汇总统计数据并发送 HTML 邮件
+// ⭐ 恢复了完整的 HTML 邮件发送格式逻辑
 func sendReport() {
 	data, _ := os.ReadFile(successLogFile)
 	var list []UploadRecord
@@ -1086,6 +1092,7 @@ func sendQQMail(subject, body string) {
 	}
 }
 
+// ⭐ 这里是触发记录的地方，只要 enableLogs 开关打开就会投递进 WebSocket
 func addLog(level, message, errorMsg string) {
 	appConfigMu.RLock()
 	enabled := appConfig.EnableLogs
@@ -1096,7 +1103,7 @@ func addLog(level, message, errorMsg string) {
 	}
 
 	entry := &LogEntry{
-		Time:    time.Now().Format("2006-01-02 15:04:05"),
+		Time:    time.Now().Format(time.DateTime),
 		Level:   level,
 		Message: message,
 		Error:   errorMsg,

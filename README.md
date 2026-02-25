@@ -56,7 +56,7 @@
 <table border="1" cellpadding="1" cellspacing="1" style="width: 500px">
     <tbody>
         <tr>
-            <td><img src="img/2.png" alt="登录" width="1920" /></td>
+            <td><img src="img/1.png" alt="登录" width="1920" /></td>
             <td><img src="img/2.png" alt="主页面" width="1920" /></td> 
         </tr>
         <tr>
