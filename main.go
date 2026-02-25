@@ -124,14 +124,10 @@ type HistoryRecord struct {
 	ErrorMsg   string `json:"errorMsg"`
 }
 
+// 常量定义，已将邮箱硬编码参数剔除
 const (
 	safeBaseDir    = "/_safe_uploads"      // 远端安全目录
 	successLogFile = "upload_success.json" // 本地成功日志，用于图表统计
-
-	// 邮件相关配置
-	mailFrom     = "2673893724@qq.com"
-	mailAuthCode = "koeekvlajhtsdije"
-	mailTo       = "3096407768@qq.com"
 )
 
 // logInterceptor 拦截标准日志并同步给前端 WebSocket
@@ -160,6 +156,19 @@ func (l *logInterceptor) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
+// saveConfigToFile 将当前内存中的应用配置保存至 config.json
+func saveConfigToFile() {
+	appConfigMu.RLock()
+	defer appConfigMu.RUnlock()
+	// 使用带缩进的 json 格式，便于用户直接查看或修改文件内容
+	data, err := json.MarshalIndent(appConfig, "", "  ")
+	if err == nil {
+		os.WriteFile("config.json", data, 0644)
+	} else {
+		log.Printf("[CONFIG][ERR] 无法保存配置文件 config.json: %v", err)
+	}
+}
+
 func main() {
 	// 解析命令行参数
 	flag.StringVar(&dirs, "dirs", "", "扫描目录(逗号分隔)")
@@ -184,22 +193,37 @@ func main() {
 	// 启用日志拦截器，将日志传回网页
 	log.SetOutput(&logInterceptor{original: os.Stdout})
 
-	// 初始化系统参数
+	// 初始化系统参数：优先从 config.json 读取；如果文件不存在，则使用启动参数进行填充
 	appConfigMu.Lock()
-	appConfig.ScanInterval = scanningInterval
-	appConfig.Workers = workers
-	appConfig.DayRate = dayRateMB
-	appConfig.NightRate = nightRateMB
-	appConfig.EmailInterval = reportMinutes
-	appConfig.Dirs = strings.Split(dirs, ",")
-	appConfig.EnableLogs = true
-	appConfig.RemoteServer = server
-	appConfig.RemoteUser = "admin"
-	appConfig.RemotePass = "LilKmxNF"
-	appConfig.LiveConfigPath = liveConfigPath
-	appConfig.RecorderContainer = recorderContainer
-	appConfig.RecorderConfigPath = recorderConfigPath
+	data, err := os.ReadFile("config.json")
+	if err == nil {
+		// 成功读取到文件则反序列化覆盖
+		json.Unmarshal(data, &appConfig)
+	} else {
+		// 文件不存在，写入默认及命令行参数
+		appConfig.ScanInterval = scanningInterval
+		appConfig.Workers = workers
+		appConfig.DayRate = dayRateMB
+		appConfig.NightRate = nightRateMB
+		appConfig.EmailInterval = reportMinutes
+		appConfig.Dirs = strings.Split(dirs, ",")
+		appConfig.EnableLogs = true
+		appConfig.RemoteServer = server
+		appConfig.RemoteUser = "admin"
+		appConfig.RemotePass = "LilKmxNF"
+		appConfig.LiveConfigPath = liveConfigPath
+		appConfig.RecorderContainer = recorderContainer
+		appConfig.RecorderConfigPath = recorderConfigPath
+
+		// 写入默认的邮件配置参数（在此预设原有的硬编码值）
+		appConfig.MailFrom = "your_email@qq.com"
+		appConfig.MailAuthCode = "your_auth_code"
+		appConfig.MailTo = "receive_email@qq.com"
+	}
 	appConfigMu.Unlock()
+
+	// 在启动时尝试生成一次文件，确保 config.json 始终存在
+	saveConfigToFile()
 
 	addLog("info", "系统初始化完成，启动中...", "")
 
@@ -994,6 +1018,35 @@ func sendReport() {
 	sendQQMail("📦 上传成功报告", html.String())
 }
 
+// 修改后的邮件发送函数，通过读取配置来加载邮箱参数
+func sendQQMail(subject, body string) {
+	appConfigMu.RLock()
+	mailFrom := appConfig.MailFrom
+	mailAuthCode := appConfig.MailAuthCode
+	mailTo := appConfig.MailTo
+	appConfigMu.RUnlock()
+
+	// 增加对邮箱配置缺失的安全判断
+	if mailFrom == "" || mailAuthCode == "" || mailTo == "" {
+		log.Printf("[REPORT][MAIL] ⚠️ 邮件参数未配置或不完整，自动跳过邮件发送")
+		return
+	}
+
+	msg := []byte(
+		"To: " + mailTo + "\r\n" +
+			"From: " + mailFrom + "\r\n" +
+			"Subject: " + subject + "\r\n" +
+			"MIME-Version: 1.0\r\n" +
+			"Content-Type: text/html; charset=UTF-8\r\n\r\n" +
+			body,
+	)
+	auth := smtp.PlainAuth("", mailFrom, mailAuthCode, "smtp.qq.com")
+	err := smtp.SendMail("smtp.qq.com:587", auth, mailFrom, []string{mailTo}, msg)
+	if err != nil {
+		log.Printf("[REPORT][MAIL][ERR] 邮件发送失败: %v", err)
+	}
+}
+
 func login() error {
 	appConfigMu.RLock()
 	targetServer := appConfig.RemoteServer
@@ -1074,22 +1127,6 @@ func detectStreamer(remote string) string {
 		return parts[2]
 	}
 	return "未知"
-}
-
-func sendQQMail(subject, body string) {
-	msg := []byte(
-		"To: " + mailTo + "\r\n" +
-			"From: " + mailFrom + "\r\n" +
-			"Subject: " + subject + "\r\n" +
-			"MIME-Version: 1.0\r\n" +
-			"Content-Type: text/html; charset=UTF-8\r\n\r\n" +
-			body,
-	)
-	auth := smtp.PlainAuth("", mailFrom, mailAuthCode, "smtp.qq.com")
-	err := smtp.SendMail("smtp.qq.com:587", auth, mailFrom, []string{mailTo}, msg)
-	if err != nil {
-		log.Printf("[REPORT][MAIL][ERR] 发送失败: %v", err)
-	}
 }
 
 // ⭐ 这里是触发记录的地方，只要 enableLogs 开关打开就会投递进 WebSocket

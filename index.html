@@ -760,7 +760,16 @@
                                 <a-col :xs="24" :sm="12"><a-form-item field="dayRate" label="白天限速封顶 (MB/s)"><a-input-number v-model="configForm.dayRate" :min="0" size="small"><template #prefix><icon-sun></icon-sun></template></a-input-number></a-form-item></a-col>
                                 <a-col :xs="24" :sm="12"><a-form-item field="nightRate" label="夜晚限速封顶 (MB/s)"><a-input-number v-model="configForm.nightRate" :min="0" size="small"><template #prefix><icon-moon></icon-moon></template></a-input-number></a-form-item></a-col>
                             </a-row>
-                            <a-form-item field="emailInterval" label="邮件合并发送间隔 (分钟)"><a-input-number v-model="configForm.emailInterval" :min="10" size="small"><template #prefix><icon-email></icon-email></template></a-input-number></a-form-item>
+
+                            <a-divider style="margin: 12px 0;"><span style="color: var(--color-text-3); font-size: 12px;">邮件推送配置</span></a-divider>
+                            <a-row :gutter="24">
+                                <a-col :xs="24" :sm="8"><a-form-item field="mailFrom" label="发件邮箱帐号 (QQ)"><a-input v-model="configForm.mailFrom" size="small" placeholder="例: 123456@qq.com"><template #prefix><icon-email></icon-email></template></a-input></a-form-item></a-col>
+                                <a-col :xs="24" :sm="8"><a-form-item field="mailAuthCode" label="发件邮箱授权码"><a-input-password v-model="configForm.mailAuthCode" size="small" placeholder="例: abcdefghijklmnop"><template #prefix><icon-lock></icon-lock></template></a-input-password></a-form-item></a-col>
+                                <a-col :xs="24" :sm="8"><a-form-item field="mailTo" label="收件人邮箱"><a-input v-model="configForm.mailTo" size="small" placeholder="例: admin@wustwu.cn"><template #prefix><icon-user></icon-user></template></a-input></a-form-item></a-col>
+                            </a-row>
+                            <a-form-item field="emailInterval" label="邮件合并发送间隔 (分钟)"><a-input-number v-model="configForm.emailInterval" :min="10" size="small"><template #prefix><icon-clock-circle></icon-clock-circle></template></a-input-number></a-form-item>
+
+                            <a-divider style="margin: 12px 0;"><span style="color: var(--color-text-3); font-size: 12px;">本地监控配置</span></a-divider>
                             <a-form-item field="dirs" label="需被监听扫描的本地目录 (多目录用逗号 , 隔开)">
                                 <a-textarea v-model="configDirsString" :auto-size="{ minRows: 3 }" size="small" placeholder="例: D:\录像\, E:\LiveRecord\"></a-textarea>
                             </a-form-item>
@@ -1553,6 +1562,8 @@
                     if (configForm.value.recorderConfigPath !== originalConfigSnapshot.recorderConfigPath) changes.push(`⚙️ 引擎配置 config.ini 路径已更新`);
                     if (configForm.value.recorderContainer !== originalConfigSnapshot.recorderContainer) changes.push(`💻 容器名已更新`);
                     if (configForm.value.remoteServer !== originalConfigSnapshot.remoteServer) changes.push(`🔗 API 地址已更新`);
+                    // 追加：邮箱配置更新提醒
+                    if (configForm.value.mailFrom !== originalConfigSnapshot.mailFrom || configForm.value.mailTo !== originalConfigSnapshot.mailTo) changes.push(`📧 邮箱推送配置已更新`);
 
                     const oldDirs = (originalConfigSnapshot.dirs || []).join(',');
                     const newDirs = (configForm.value.dirs || []).join(',');

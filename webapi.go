@@ -62,6 +62,7 @@ type DirStatus struct {
 	LastScanTime  int64  `json:"lastScanTime"`
 }
 
+// Config 新增了邮件发送相关的三个动态配置字段
 type Config struct {
 	ScanInterval       int      `json:"scanInterval"`
 	Workers            int      `json:"workers"`
@@ -80,6 +81,10 @@ type Config struct {
 	LiveConfigPath     string   `json:"liveConfigPath"`
 	RecorderContainer  string   `json:"recorderContainer"`
 	RecorderConfigPath string   `json:"recorderConfigPath"`
+	// 新增配置项
+	MailFrom     string `json:"mailFrom"`
+	MailAuthCode string `json:"mailAuthCode"`
+	MailTo       string `json:"mailTo"`
 }
 
 type Streamer struct {
@@ -644,6 +649,7 @@ func handleDirsStatus(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, statuses)
 }
 
+// 修改了此处理逻辑，在触发 PUT 的时候将配置保存至 config.json 文件
 func handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -660,6 +666,9 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		appConfigMu.Lock()
 		appConfig = newConfig
 		appConfigMu.Unlock()
+
+		// 保存更新后的配置到本地 config.json 文件
+		saveConfigToFile()
 
 		log.Printf("[CONTROL] ⚙️ 用户保存了新配置，目标扫描目录已变更为: [%s]", strings.Join(newConfig.Dirs, " | "))
 
@@ -685,11 +694,12 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		data, err := os.ReadFile(configPath)
 		if err != nil {
-			sendJSONSuccess(w, map[string]string{"douyin": "", "kuaishou": "", "sooplive": ""})
+			sendJSONSuccess(w, map[string]string{"douyin": "", "kuaishou": "", "sooplive": "", "liveSavePath": ""})
 			return
 		}
 
-		res := map[string]string{"douyin": "", "kuaishou": "", "sooplive": ""}
+		// 增加 liveSavePath
+		res := map[string]string{"douyin": "", "kuaishou": "", "sooplive": "", "liveSavePath": ""}
 		lines := strings.Split(string(data), "\n")
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
@@ -708,6 +718,11 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 				if len(parts) == 2 {
 					res["sooplive"] = strings.TrimSpace(parts[1])
 				}
+			} else if strings.HasPrefix(trimmed, "live_path") { // 解析引擎的保存路径
+				parts := strings.SplitN(trimmed, "=", 2)
+				if len(parts) == 2 {
+					res["liveSavePath"] = strings.TrimSpace(parts[1])
+				}
 			}
 		}
 
@@ -717,9 +732,10 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodPut {
 		var req struct {
-			Douyin   string `json:"douyin"`
-			Kuaishou string `json:"kuaishou"`
-			Sooplive string `json:"sooplive"`
+			Douyin       string `json:"douyin"`
+			Kuaishou     string `json:"kuaishou"`
+			Sooplive     string `json:"sooplive"`
+			LiveSavePath string `json:"liveSavePath"` // 补充缺失的字段
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			sendJSONError(w, http.StatusBadRequest, "Invalid JSON body")
@@ -733,7 +749,7 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 		}
 
 		lines := strings.Split(string(data), "\n")
-		douyinFound, kuaishouFound, soopliveFound := false, false, false
+		douyinFound, kuaishouFound, soopliveFound, livePathFound := false, false, false, false
 
 		for i, line := range lines {
 			trimmed := strings.TrimSpace(line)
@@ -746,9 +762,13 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 			} else if strings.HasPrefix(trimmed, "sooplive_cookie") {
 				lines[i] = "sooplive_cookie=" + req.Sooplive
 				soopliveFound = true
+			} else if strings.HasPrefix(trimmed, "live_path") { // 覆写物理路径
+				lines[i] = "live_path=" + req.LiveSavePath
+				livePathFound = true
 			}
 		}
 
+		// 追加 Cookie 逻辑
 		insertAfterCookie := func(key, val string) {
 			for i, line := range lines {
 				if strings.TrimSpace(line) == "[cookie]" {
@@ -757,6 +777,18 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			lines = append(lines, "", "[cookie]", key+"="+val)
+		}
+
+		// 追加 Base 配置逻辑
+		insertAfterBase := func(key, val string) {
+			for i, line := range lines {
+				if strings.TrimSpace(line) == "[base]" {
+					lines = append(lines[:i+1], append([]string{key + "=" + val}, lines[i+1:]...)...)
+					return
+				}
+			}
+			// 如果连 [base] 节点都没有，直接插在最前面
+			lines = append([]string{"[base]", key + "=" + val, ""}, lines...)
 		}
 
 		if !douyinFound && req.Douyin != "" {
@@ -768,15 +800,18 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 		if !soopliveFound && req.Sooplive != "" {
 			insertAfterCookie("sooplive_cookie", req.Sooplive)
 		}
+		if !livePathFound && req.LiveSavePath != "" {
+			insertAfterBase("live_path", req.LiveSavePath) // 注入路径配置
+		}
 
 		err = os.WriteFile(configPath, []byte(strings.Join(lines, "\n")), 0644)
 		if err != nil {
-			log.Printf("[CONTROL][ERR] 无法写入 Cookie 配置文件 %s: %v", configPath, err)
-			sendJSONError(w, http.StatusInternalServerError, "保存 Cookie 失败: "+err.Error())
+			log.Printf("[CONTROL][ERR] 无法写入配置文件 %s: %v", configPath, err)
+			sendJSONError(w, http.StatusInternalServerError, "保存配置失败: "+err.Error())
 			return
 		}
 
-		log.Printf("[CONTROL] 🍪 用户在网页端成功更新了 Cookie 至主配置文件 %s", configPath)
+		log.Printf("[CONTROL] 🍪 用户在网页端成功更新了主配置文件 %s", configPath)
 		sendJSONSuccess(w, nil)
 		return
 	}
