@@ -62,7 +62,6 @@ type DirStatus struct {
 	LastScanTime  int64  `json:"lastScanTime"`
 }
 
-// Config 新增了邮件发送相关的三个动态配置字段
 type Config struct {
 	ScanInterval       int      `json:"scanInterval"`
 	Workers            int      `json:"workers"`
@@ -81,7 +80,7 @@ type Config struct {
 	LiveConfigPath     string   `json:"liveConfigPath"`
 	RecorderContainer  string   `json:"recorderContainer"`
 	RecorderConfigPath string   `json:"recorderConfigPath"`
-	// 新增配置项
+	// 新增的邮箱配置字段
 	MailFrom     string `json:"mailFrom"`
 	MailAuthCode string `json:"mailAuthCode"`
 	MailTo       string `json:"mailTo"`
@@ -694,13 +693,16 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		data, err := os.ReadFile(configPath)
 		if err != nil {
-			sendJSONSuccess(w, map[string]string{"douyin": "", "kuaishou": "", "sooplive": "", "liveSavePath": ""})
+			sendJSONSuccess(w, map[string]string{"douyin": "", "kuaishou": "", "sooplive": ""})
 			return
 		}
 
-		// 增加 liveSavePath
+		// 强行清理文件中的 BOM 隐藏字符，防止解析报错
+		content := string(data)
+		content = strings.ReplaceAll(content, "\ufeff", "")
+
 		res := map[string]string{"douyin": "", "kuaishou": "", "sooplive": "", "liveSavePath": ""}
-		lines := strings.Split(string(data), "\n")
+		lines := strings.Split(content, "\n")
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "douyin_cookie") {
@@ -735,7 +737,7 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 			Douyin       string `json:"douyin"`
 			Kuaishou     string `json:"kuaishou"`
 			Sooplive     string `json:"sooplive"`
-			LiveSavePath string `json:"liveSavePath"` // 补充缺失的字段
+			LiveSavePath string `json:"liveSavePath"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			sendJSONError(w, http.StatusBadRequest, "Invalid JSON body")
@@ -748,7 +750,11 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		lines := strings.Split(string(data), "\n")
+		// 检查原文件是否有 BOM，如果有则记录下来，然后全局清洗掉它
+		content := string(data)
+		content = strings.ReplaceAll(content, "\ufeff", "")
+
+		lines := strings.Split(content, "\n")
 		douyinFound, kuaishouFound, soopliveFound, livePathFound := false, false, false, false
 
 		for i, line := range lines {
@@ -806,12 +812,12 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 
 		err = os.WriteFile(configPath, []byte(strings.Join(lines, "\n")), 0644)
 		if err != nil {
-			log.Printf("[CONTROL][ERR] 无法写入配置文件 %s: %v", configPath, err)
-			sendJSONError(w, http.StatusInternalServerError, "保存配置失败: "+err.Error())
+			log.Printf("[CONTROL][ERR] 无法写入 Cookie 配置文件 %s: %v", configPath, err)
+			sendJSONError(w, http.StatusInternalServerError, "保存 Cookie 失败: "+err.Error())
 			return
 		}
 
-		log.Printf("[CONTROL] 🍪 用户在网页端成功更新了主配置文件 %s", configPath)
+		log.Printf("[CONTROL] 🍪 用户在网页端成功更新了 Cookie 至主配置文件 %s", configPath)
 		sendJSONSuccess(w, nil)
 		return
 	}
