@@ -14,7 +14,6 @@
     <link href="https://unpkg.com/@arco-design/web-vue/dist/arco.min.css" rel="stylesheet">
 
     <style>
-        /* 【适配修复】锁死整个屏幕的 X 轴，绝对禁止由于内部元素过宽导致的网页整体左右乱晃错位 */
         html, body {
             max-width: 100vw;
             overflow-x: hidden;
@@ -130,11 +129,9 @@
         .arco-table-bordered .arco-table-container { border-left: 1px solid var(--glass-border) !important; border-top: 1px solid var(--glass-border) !important; }
         .arco-table-bordered .arco-table-th, .arco-table-bordered .arco-table-td { border-right: 1px solid var(--glass-border) !important; border-bottom: 1px solid var(--glass-border) !important; }
 
-        /* 录制状态小圆点 */
         .builtin-status-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 6px; background-color: #c9cdd4; }
         .builtin-status-dot.is-recording { background-color: #00b42a; box-shadow: 0 0 6px rgba(0, 180, 42, 0.4); }
 
-        /* 图片下载按钮的悬浮与响应式样式 */
         .cover-download-btn {
             position: absolute; bottom: 4px; right: 4px; z-index: 10;
             background-color: rgba(0,0,0,0.6) !important; color: white !important;
@@ -148,14 +145,12 @@
             * { -webkit-tap-highlight-color: transparent; }
         }
 
-        /* ================= 苹果 Safari & 移动端深度防错位适配 ================= */
         @media screen and (max-width: 768px) {
             .main-container { padding: 12px 8px env(safe-area-inset-bottom) env(safe-area-inset-left) !important; width: 100vw; overflow: hidden; }
             .stat-value { font-size: 20px; }
             .login-box { width: 90%; padding: 24px; }
             .arco-tabs-nav-type-rounded .arco-tabs-tab { padding: 4px 12px; font-size: 13px; }
 
-            /* 防止输入框聚焦时苹果自动放大页面 */
             .arco-input, .arco-textarea, .arco-select-view-value { font-size: 16px !important; }
 
             header.nav-glass {
@@ -169,7 +164,6 @@
             header.nav-glass .arco-space { width: 100%; justify-content: space-between; }
             .hidden-xs { display: none !important; }
 
-            /* 强制组件不准突破屏幕最大宽度 */
             .arco-card, .arco-tabs, .arco-table-container, .arco-row, .arco-col, .arco-card-body, .arco-tabs-content { min-width: 0 !important; max-width: 100%; }
             .arco-card-body { padding: 12px !important; }
             .arco-card { height: auto !important; min-height: 120px; }
@@ -178,7 +172,6 @@
             .action-bar .arco-btn, .action-bar .arco-radio-group { flex: 1 1 calc(50% - 8px); margin: 0; display: flex; justify-content: center; }
             .action-bar .arco-btn[status="danger"], .action-bar .arco-select { flex: 1 1 100%; }
 
-            /* 搜索栏全面流式折叠 */
             .search-control-bar { display: flex; flex-direction: column !important; align-items: stretch !important; gap: 10px !important; width: 100%; }
             .search-control-bar > * { width: 100% !important; min-width: 0 !important; margin: 0 !important; box-sizing: border-box; }
 
@@ -530,7 +523,8 @@
                     <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
                         <div class="search-control-bar" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
                             <a-input-search
-                                    v-model="builtinSearchQuery"
+                                    @input="val => builtinSearchQuery = val || ''"
+                                    @clear="builtinSearchQuery = ''"
                                     placeholder="搜索主播或链接"
                                     style="width: 220px;"
                                     size="medium"
@@ -712,7 +706,8 @@
                         <div class="search-control-bar" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
                             <a-input-search
                                     ref="streamerSearchRef"
-                                    v-model="streamerSearchQuery"
+                                    @input="val => streamerSearchQuery = val || ''"
+                                    @clear="streamerSearchQuery = ''"
                                     placeholder="搜索主播或链接"
                                     style="width: 220px;"
                                     size="medium"
@@ -808,7 +803,7 @@
                 <a-tab-pane key="history">
                     <template #title><icon-history></icon-history> 历史<span class="hidden-xs">记录</span></template>
                     <div class="search-control-bar action-bar">
-                        <a-input-search v-model="historyQuery.filename" placeholder="搜索文件名" size="small" style="width: 250px" @search="fetchHistory" @keyup.enter="fetchHistory"></a-input-search>
+                        <a-input-search @input="val => historyQuery.filename = val || ''" @clear="historyQuery.filename = ''; fetchHistory()" placeholder="搜索文件名" size="small" style="width: 250px" @search="fetchHistory" @keyup.enter="fetchHistory" allow-clear></a-input-search>
 
                         <a-select v-model="historyQuery.status" placeholder="全部状态" size="small" style="width: 120px" allow-clear @change="fetchHistory">
                             <a-option value="success">成功</a-option>
@@ -848,7 +843,7 @@
                                 <a-option value="error">Error</a-option>
                                 <a-option value="warn">Warn</a-option>
                             </a-select>
-                            <a-input-search v-model="logQuery.keyword" placeholder="日志关键词搜索..." size="small" style="width: 200px" @search="logQuery.page=1; fetchLogs()" @keyup.enter="logQuery.page=1; fetchLogs()"></a-input-search>
+                            <a-input-search @input="val => logQuery.keyword = val || ''" @clear="logQuery.keyword = ''; logQuery.page=1; fetchLogs()" placeholder="日志关键词搜索..." size="small" style="width: 200px" @search="logQuery.page=1; fetchLogs()" @keyup.enter="logQuery.page=1; fetchLogs()" allow-clear></a-input-search>
                             <a-button size="small" type="primary" @click="logQuery.page=1; fetchLogs()"><template #icon><icon-refresh></icon-refresh></template> <span class="hidden-xs">手动拉取历史记录</span><span v-if="isMobile">拉取</span></a-button>
                         </div>
 
@@ -1187,25 +1182,37 @@
                 return streamers.value.filter(s => activeRecordingStreamers.value.includes(s.name) && s.active).length;
             });
 
+            // ⭐ 增加极度变态的强力容错：强制转String，且添加Try Catch包裹，失败时返回原列表而非空白
             const filteredStreamers = computed(() => {
-                let list = streamers.value;
-                if (streamerSearchQuery.value) {
-                    const lower = streamerSearchQuery.value.trim().toLowerCase();
-                    list = list.filter(s =>
-                        (s.name && s.name.toLowerCase().includes(lower)) ||
-                        (s.url && s.url.toLowerCase().includes(lower))
-                    );
-                }
+                try {
+                    let list = [...(streamers.value || [])];
+                    if (streamerSearchQuery.value) {
+                        const lower = String(streamerSearchQuery.value || '').trim().toLowerCase();
+                        if (lower) {
+                            list = list.filter(s =>
+                                (s && s.name && String(s.name).toLowerCase().includes(lower)) ||
+                                (s && s.url && String(s.url).toLowerCase().includes(lower))
+                            );
+                        }
+                    }
 
-                return list.slice().sort((a, b) => {
-                    const aOnline = activeRecordingStreamers.value.includes(a.name) && a.active;
-                    const bOnline = activeRecordingStreamers.value.includes(b.name) && b.active;
-                    if (aOnline && !bOnline) return -1;
-                    if (!aOnline && bOnline) return 1;
-                    if (a.active && !b.active) return -1;
-                    if (!a.active && b.active) return 1;
-                    return 0;
-                });
+                    // 确保 activeRecordingStreamers 是数组，防止 includes 报错
+                    const activeList = Array.isArray(activeRecordingStreamers.value) ? activeRecordingStreamers.value : [];
+
+                    return list.sort((a, b) => {
+                        const aOnline = a && a.name && activeList.includes(a.name) && a.active;
+                        const bOnline = b && b.name && activeList.includes(b.name) && b.active;
+                        if (aOnline && !bOnline) return -1;
+                        if (!aOnline && bOnline) return 1;
+                        if (a && b && a.active && !b.active) return -1;
+                        if (a && b && !a.active && b.active) return 1;
+                        return 0;
+                    });
+                } catch (e) {
+                    console.error("外部引擎搜索/排序错误:", e);
+                    // ⭐️ 绝对不能返回 []，否则页面直接白板！返回最原始的安全数据
+                    return streamers.value || [];
+                }
             });
 
             const builtinSearchQuery = ref('');
@@ -1223,22 +1230,30 @@
             const builtinSaving = ref(false);
             const builtinSavingCookies = ref(false);
 
+            // ⭐ 内置引擎搜索容错
             const sortedBuiltinTasks = computed(() => {
-                let list = [...builtinTasks.value];
-                if (builtinSearchQuery.value) {
-                    const q = builtinSearchQuery.value.toLowerCase().trim();
-                    list = list.filter(t => {
-                        const nameMatch = t.anchor_name && t.anchor_name.toLowerCase().includes(q);
-                        const roomMatch = t.room_id && t.room_id.toLowerCase().includes(q);
-                        return nameMatch || roomMatch;
+                try {
+                    let list = [...(builtinTasks.value || [])];
+                    if (builtinSearchQuery.value) {
+                        const q = String(builtinSearchQuery.value || '').trim().toLowerCase();
+                        if (q) {
+                            list = list.filter(t => {
+                                const nameMatch = t && t.anchor_name ? String(t.anchor_name).toLowerCase().includes(q) : false;
+                                const roomMatch = t && t.room_id ? String(t.room_id).toLowerCase().includes(q) : false;
+                                return nameMatch || roomMatch;
+                            });
+                        }
+                    }
+                    list.sort((a, b) => {
+                        const isARecording = (a && a.status === '录制中') ? 1 : 0;
+                        const isBRecording = (b && b.status === '录制中') ? 1 : 0;
+                        return isBRecording - isARecording;
                     });
+                    return list;
+                } catch (e) {
+                    console.error("内置引擎搜索/排序错误:", e);
+                    return builtinTasks.value || []; // ⭐️ 防止报错导致白板
                 }
-                list.sort((a, b) => {
-                    const isARecording = a.status === '录制中' ? 1 : 0;
-                    const isBRecording = b.status === '录制中' ? 1 : 0;
-                    return isBRecording - isARecording;
-                });
-                return list;
             });
 
             const paginatedBuiltinTasks = computed(() => {
@@ -1744,8 +1759,9 @@
             const formatDurationSeconds = (sec) => { if (!sec && sec !== 0) return '-'; if (sec === 0) return '< 1s'; const m = Math.floor(sec / 60); const s = sec % 60; return m > 0 ? `${m}m ${s}s` : `${s}s`; };
             const formatDuration = (seconds) => { const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60); return `${h}h ${m}m`; };
             const getElapsedTime = (startTime) => { if (!startTime) return '0s'; return formatDurationSeconds(Math.floor((clientTime.value - startTime) / 1000)); };
-            const formatStatusText = (status) => { if (!status) return '未知'; const lower = status.toLowerCase(); if (lower.includes('success(秒传)')) return '成功 (秒传)'; if (lower.includes('success')) return '成功'; if (lower.includes('fail')) return '失败'; if (lower === 'uploading') return '处理中'; if (lower === 'waiting') return '等待中'; return status; };
-            const getStatusColor = (status) => { if (status.includes('success')) return 'green'; if (status.includes('fail')) return 'red'; if (status === 'uploading') return 'arcoblue'; return 'orange'; };
+            // ⭐ 增加类型转换保护，防止 status.toLowerCase 抛错
+            const formatStatusText = (status) => { if (!status) return '未知'; const lower = String(status).toLowerCase(); if (lower.includes('success(秒传)')) return '成功 (秒传)'; if (lower.includes('success')) return '成功'; if (lower.includes('fail')) return '失败'; if (lower === 'uploading') return '处理中'; if (lower === 'waiting') return '等待中'; return status; };
+            const getStatusColor = (status) => { if (!status) return 'gray'; const str = String(status).toLowerCase(); if (str.includes('success')) return 'green'; if (str.includes('fail')) return 'red'; if (str === 'uploading') return 'arcoblue'; return 'orange'; };
             const getLogLevelColor = (level) => ({ 'info': '#00b42a', 'error': '#f53f3f', 'warn': '#ff7d00' }[level] || 'var(--color-text-3)');
 
             const initDashboard = () => {
