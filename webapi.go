@@ -31,8 +31,9 @@ var (
 		},
 	}
 
-	wsClients   = make(map[*websocket.Conn]bool)
-	wsMutex     sync.Mutex
+	// ⭐ 修复点1：将 WebSocket 客户端名单改为存储自定义的客户端结构体
+	wsClients   = make(map[*WSClient]bool)
+	wsMutex     sync.RWMutex // 改用读写锁，提升并发性能
 	wsBroadcast = make(chan WSMessage, 100)
 
 	running   = false
@@ -46,6 +47,12 @@ var (
 	logsMu  sync.RWMutex
 	logChan = make(chan *LogEntry, 1000)
 )
+
+// ⭐ 修复点2：为每个独立的 WebSocket 连接分配专属的锁，防止 I/O 阻塞引发全局假死
+type WSClient struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
 
 type WSMessage struct {
 	Type    string      `json:"type"`
@@ -80,10 +87,9 @@ type Config struct {
 	LiveConfigPath     string   `json:"liveConfigPath"`
 	RecorderContainer  string   `json:"recorderContainer"`
 	RecorderConfigPath string   `json:"recorderConfigPath"`
-	// 新增的邮箱配置字段
-	MailFrom     string `json:"mailFrom"`
-	MailAuthCode string `json:"mailAuthCode"`
-	MailTo       string `json:"mailTo"`
+	MailFrom           string   `json:"mailFrom"`
+	MailAuthCode       string   `json:"mailAuthCode"`
+	MailTo             string   `json:"mailTo"`
 }
 
 type Streamer struct {
@@ -105,21 +111,19 @@ type APIResponse struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-// 供图表使用的趋势数据结构
 type TrendPoint struct {
 	Date  string  `json:"date"`
-	Size  float64 `json:"size"`  // 单位 GB
-	Count int     `json:"count"` // 文件数量
+	Size  float64 `json:"size"`
+	Count int     `json:"count"`
 }
 
 type StreamerRank struct {
 	Name string  `json:"name"`
-	Size float64 `json:"size"` // 单位 GB
+	Size float64 `json:"size"`
 }
 
 func StartWebServer(port int) {
 	runningMu.Lock()
-	// ⭐ 重启后从日志恢复成功任务计数
 	restoreQueueCounts()
 	running = true
 	startTime = time.Now()
@@ -127,7 +131,6 @@ func StartWebServer(port int) {
 
 	mux := http.NewServeMux()
 
-	// 核心路由与 API
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/v1/auth/login", handleLogin)
 	mux.HandleFunc("/api/v1/auth/logout", handleLogout)
@@ -136,7 +139,6 @@ func StartWebServer(port int) {
 	mux.HandleFunc("/api/v1/tasks/history", handleHistory)
 	mux.HandleFunc("/api/v1/tasks/queue", handleQueue)
 
-	// 远程操作与控制指令
 	mux.HandleFunc("/api/v1/control/start", handleControlStart)
 	mux.HandleFunc("/api/v1/control/pause", handleControlPause)
 	mux.HandleFunc("/api/v1/control/stop", handleControlStop)
@@ -151,7 +153,6 @@ func StartWebServer(port int) {
 	mux.HandleFunc("/api/v1/logs", handleLogs)
 	mux.HandleFunc("/api/v1/logs/download", handleLogsDownload)
 
-	// 录制引擎管理
 	mux.HandleFunc("/api/v1/streamers", handleStreamers)
 	mux.HandleFunc("/api/v1/streamers/active", handleActiveStreamers)
 	mux.HandleFunc("/api/v1/recorder/status", handleRecorderStatus)
@@ -159,7 +160,8 @@ func StartWebServer(port int) {
 	mux.HandleFunc("/api/v1/recorder/logs", handleRecorderLogs)
 	mux.HandleFunc("/api/v1/cookies", handleCookies)
 
-	// WebSocket 信道
+	InitBuiltinRecorder(mux)
+
 	mux.HandleFunc("/ws/live", handleWebSocket)
 
 	go wsBroadcastLoop()
@@ -173,8 +175,6 @@ func StartWebServer(port int) {
 	}
 }
 
-// ⭐ 新增：向前端实时推送系统弹窗告警
-// level 可选值: "info", "success", "warning", "error"
 func SendAlert(level string, title string, message string) {
 	broadcastWS("systemAlert", map[string]interface{}{
 		"level":   level,
@@ -198,7 +198,6 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, indexHTML)
 }
 
-// 统计聚合计算函数：提取出逻辑，供 WebSocket 定时调用
 func buildStatsTrendData() map[string]interface{} {
 	data, err := os.ReadFile(successLogFile)
 	if err != nil {
@@ -208,7 +207,6 @@ func buildStatsTrendData() map[string]interface{} {
 	var list []UploadRecord
 	json.Unmarshal(data, &list)
 
-	// 初始化最近 7 天的空数据架子
 	trendMap := make(map[string]*TrendPoint)
 	now := time.Now()
 	for i := 0; i < 7; i++ {
@@ -218,24 +216,21 @@ func buildStatsTrendData() map[string]interface{} {
 
 	rankMap := make(map[string]int64)
 
-	// 遍历日志聚合并累加数据
 	for _, rec := range list {
 		day := rec.Time.Format("01-02")
 		if tp, ok := trendMap[day]; ok {
-			tp.Size += float64(rec.Size) / 1024 / 1024 / 1024 // 转换为 GB
+			tp.Size += float64(rec.Size) / 1024 / 1024 / 1024
 			tp.Count++
 		}
 		rankMap[rec.Streamer] += rec.Size
 	}
 
-	// 将 Map 转换为有序 Slice，供 ECharts X 轴使用
 	trendResult := make([]TrendPoint, 0)
 	for i := 6; i >= 0; i-- {
 		d := now.AddDate(0, 0, -i).Format("01-02")
 		trendResult = append(trendResult, *trendMap[d])
 	}
 
-	// 计算排行榜
 	rankResult := make([]StreamerRank, 0)
 	for name, size := range rankMap {
 		rankResult = append(rankResult, StreamerRank{
@@ -257,36 +252,49 @@ func buildStatsTrendData() map[string]interface{} {
 	}
 }
 
-// WebSocket 消息推送协程
+// ⭐ 修复点3：将写操作彻底与全局锁解耦
 func wsBroadcastLoop() {
 	for {
 		msg := <-wsBroadcast
-		wsMutex.Lock()
+
+		// 第一步：用极短的读锁获取当前在线客户端的一份快照（避免阻塞新客户端接入）
+		wsMutex.RLock()
+		clientsCopy := make([]*WSClient, 0, len(wsClients))
 		for client := range wsClients {
-			if err := client.WriteJSON(msg); err != nil {
-				client.Close()
+			clientsCopy = append(clientsCopy, client)
+		}
+		wsMutex.RUnlock()
+
+		// 第二步：拿着快照，挨个去发消息，并且只锁每个连接自己的小锁
+		for _, client := range clientsCopy {
+			client.mu.Lock()
+			err := client.conn.WriteJSON(msg)
+			client.mu.Unlock()
+
+			// 如果因为网页刷新导致连接断开，发生报错，独立地清理掉它，不会影响其他存活的页面
+			if err != nil {
+				client.conn.Close()
+				wsMutex.Lock()
 				delete(wsClients, client)
+				wsMutex.Unlock()
 			}
 		}
-		wsMutex.Unlock()
 	}
 }
 
-// 定时向前端广播实时状态指标
 func wsDashboardBroadcaster() {
-	ticker := time.NewTicker(2 * time.Second) // 频率保持为 2 秒
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		wsMutex.Lock()
+		wsMutex.RLock()
 		clientCount := len(wsClients)
-		wsMutex.Unlock()
+		wsMutex.RUnlock()
 
 		if clientCount > 0 {
 			broadcastWS("systemStatus", buildStatusData())
 			broadcastWS("queueStatus", buildQueueData())
 
-			// 计算瞬时全站上传速率（供前端仪表盘）
 			var totalSpeed int64 = 0
 			liveTasksMu.RLock()
 			for _, task := range liveTasks {
@@ -297,16 +305,17 @@ func wsDashboardBroadcaster() {
 			liveTasksMu.RUnlock()
 
 			broadcastWS("trafficMetrics", map[string]interface{}{
-				"speed": totalSpeed, // 字节每秒
+				"speed": totalSpeed,
 				"time":  time.Now().UnixMilli(),
 			})
 
-			// 新增：每次也通过 WebSocket 将历史聚合趋势推送给大屏
 			broadcastWS("statsTrend", buildStatsTrendData())
 
 			broadcastWS("recorderStatus", getRecorderStatus())
 			broadcastWS("activeStreamers", getActiveStreamers())
 			broadcastWS("streamersData", getStreamersData())
+
+			broadcastWS("builtinTasks", GetBuiltinRecorderTasks())
 		}
 	}
 }
@@ -318,33 +327,41 @@ func broadcastWS(msgType string, payload interface{}) {
 	}
 }
 
+// ⭐ 修复点4：独立的 WSClient 声明周期管理
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+
+	// 初始化附带专属小锁的客户端对象
+	client := &WSClient{conn: conn}
 
 	wsMutex.Lock()
-	wsClients[conn] = true
+	wsClients[client] = true
 	wsMutex.Unlock()
+
+	// 确保不论发生什么异常，最终清理现场
+	defer func() {
+		client.conn.Close()
+		wsMutex.Lock()
+		delete(wsClients, client)
+		wsMutex.Unlock()
+	}()
 
 	for {
 		var msg WSMessage
-		err := conn.ReadJSON(&msg)
+		err := client.conn.ReadJSON(&msg)
 		if err != nil {
 			break
 		}
+		// 客户端 Ping 心跳保活回复也同样只锁自己的小锁
 		if msg.Type == "ping" {
-			wsMutex.Lock()
-			_ = conn.WriteJSON(WSMessage{Type: "pong", Payload: msg.Payload})
-			wsMutex.Unlock()
+			client.mu.Lock()
+			_ = client.conn.WriteJSON(WSMessage{Type: "pong", Payload: msg.Payload})
+			client.mu.Unlock()
 		}
 	}
-
-	wsMutex.Lock()
-	delete(wsClients, conn)
-	wsMutex.Unlock()
 }
 
 func handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -432,7 +449,7 @@ func buildStatusData() map[string]interface{} {
 		"dirs":             dirs,
 		"scanningInterval": currentScanInterval,
 		"dynamicInterval":  dynInterval,
-		"nextScanTime":     nextScan, // 倒计时锚点
+		"nextScanTime":     nextScan,
 		"rate":             currentRate(),
 		"dayRate":          currentDayRate,
 		"nightRate":        currentNightRate,
@@ -648,7 +665,6 @@ func handleDirsStatus(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, statuses)
 }
 
-// 修改了此处理逻辑，在触发 PUT 的时候将配置保存至 config.json 文件
 func handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -666,7 +682,6 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		appConfig = newConfig
 		appConfigMu.Unlock()
 
-		// 保存更新后的配置到本地 config.json 文件
 		saveConfigToFile()
 
 		log.Printf("[CONTROL] ⚙️ 用户保存了新配置，目标扫描目录已变更为: [%s]", strings.Join(newConfig.Dirs, " | "))
@@ -693,16 +708,12 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		data, err := os.ReadFile(configPath)
 		if err != nil {
-			sendJSONSuccess(w, map[string]string{"douyin": "", "kuaishou": "", "sooplive": ""})
+			sendJSONSuccess(w, map[string]string{"douyin": "", "kuaishou": "", "sooplive": "", "liveSavePath": ""})
 			return
 		}
 
-		// 强行清理文件中的 BOM 隐藏字符，防止解析报错
-		content := string(data)
-		content = strings.ReplaceAll(content, "\ufeff", "")
-
 		res := map[string]string{"douyin": "", "kuaishou": "", "sooplive": "", "liveSavePath": ""}
-		lines := strings.Split(content, "\n")
+		lines := strings.Split(string(data), "\n")
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "douyin_cookie") {
@@ -720,7 +731,7 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 				if len(parts) == 2 {
 					res["sooplive"] = strings.TrimSpace(parts[1])
 				}
-			} else if strings.HasPrefix(trimmed, "live_path") { // 解析引擎的保存路径
+			} else if strings.HasPrefix(trimmed, "live_path") {
 				parts := strings.SplitN(trimmed, "=", 2)
 				if len(parts) == 2 {
 					res["liveSavePath"] = strings.TrimSpace(parts[1])
@@ -750,11 +761,7 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// 检查原文件是否有 BOM，如果有则记录下来，然后全局清洗掉它
-		content := string(data)
-		content = strings.ReplaceAll(content, "\ufeff", "")
-
-		lines := strings.Split(content, "\n")
+		lines := strings.Split(string(data), "\n")
 		douyinFound, kuaishouFound, soopliveFound, livePathFound := false, false, false, false
 
 		for i, line := range lines {
@@ -768,13 +775,12 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 			} else if strings.HasPrefix(trimmed, "sooplive_cookie") {
 				lines[i] = "sooplive_cookie=" + req.Sooplive
 				soopliveFound = true
-			} else if strings.HasPrefix(trimmed, "live_path") { // 覆写物理路径
+			} else if strings.HasPrefix(trimmed, "live_path") {
 				lines[i] = "live_path=" + req.LiveSavePath
 				livePathFound = true
 			}
 		}
 
-		// 追加 Cookie 逻辑
 		insertAfterCookie := func(key, val string) {
 			for i, line := range lines {
 				if strings.TrimSpace(line) == "[cookie]" {
@@ -785,7 +791,6 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 			lines = append(lines, "", "[cookie]", key+"="+val)
 		}
 
-		// 追加 Base 配置逻辑
 		insertAfterBase := func(key, val string) {
 			for i, line := range lines {
 				if strings.TrimSpace(line) == "[base]" {
@@ -793,7 +798,6 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			// 如果连 [base] 节点都没有，直接插在最前面
 			lines = append([]string{"[base]", key + "=" + val, ""}, lines...)
 		}
 
@@ -807,17 +811,17 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 			insertAfterCookie("sooplive_cookie", req.Sooplive)
 		}
 		if !livePathFound && req.LiveSavePath != "" {
-			insertAfterBase("live_path", req.LiveSavePath) // 注入路径配置
+			insertAfterBase("live_path", req.LiveSavePath)
 		}
 
 		err = os.WriteFile(configPath, []byte(strings.Join(lines, "\n")), 0644)
 		if err != nil {
-			log.Printf("[CONTROL][ERR] 无法写入 Cookie 配置文件 %s: %v", configPath, err)
-			sendJSONError(w, http.StatusInternalServerError, "保存 Cookie 失败: "+err.Error())
+			log.Printf("[CONTROL][ERR] 无法写入配置文件 %s: %v", configPath, err)
+			sendJSONError(w, http.StatusInternalServerError, "保存配置失败: "+err.Error())
 			return
 		}
 
-		log.Printf("[CONTROL] 🍪 用户在网页端成功更新了 Cookie 至主配置文件 %s", configPath)
+		log.Printf("[CONTROL] 🍪 用户在网页端成功更新了主配置文件 %s", configPath)
 		sendJSONSuccess(w, nil)
 		return
 	}
@@ -1079,7 +1083,6 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, map[string]interface{}{"items": result, "total": total})
 }
 
-// ⭐ 恢复函数
 func restoreQueueCounts() {
 	data, err := os.ReadFile(successLogFile)
 	if err != nil {
@@ -1088,9 +1091,7 @@ func restoreQueueCounts() {
 	var list []UploadRecord
 	json.Unmarshal(data, &list)
 
-	// 将历史成功记录的数量同步到 queueSuccess
 	queueMu.Lock()
-	// 假设我们只恢复成功计数，因为等待和上传中的任务在重启后会重新扫描生成
 	for i := 0; i < len(list); i++ {
 		queueSuccess = append(queueSuccess, fmt.Sprintf("hist-%d", i))
 	}

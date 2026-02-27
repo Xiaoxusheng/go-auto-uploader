@@ -2,9 +2,9 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>直播录制文件上传系统面板</title>
-    <link rel="icon" href="data:,">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>分布式文件上传与录制系统</title>
+    <link rel="icon" href="data:," />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/@arco-design/web-vue/dist/arco-vue.min.js"></script>
@@ -14,6 +14,13 @@
     <link href="https://unpkg.com/@arco-design/web-vue/dist/arco.min.css" rel="stylesheet">
 
     <style>
+        /* 【适配修复】锁死整个屏幕的 X 轴，绝对禁止由于内部元素过宽导致的网页整体左右乱晃错位 */
+        html, body {
+            max-width: 100vw;
+            overflow-x: hidden;
+            -webkit-text-size-adjust: 100%;
+        }
+
         :root {
             --bg-base: #f0f2f5;
             --glass-bg: rgba(255, 255, 255, 0.75);
@@ -96,7 +103,7 @@
 
         .ws-data-flash { color: #165DFF !important; filter: drop-shadow(0 0 12px rgba(22, 93, 255, 0.9)); transform: scale(1.15) !important; transition: all 0.05s ease-out !important; }
 
-        #app { min-height: 100vh; display: flex; flex-direction: column; }
+        #app { min-height: 100vh; display: flex; flex-direction: column; width: 100%; overflow-x: hidden; }
         .main-container { padding: 24px; max-width: 1400px; margin: 0 auto; width: 100%; box-sizing: border-box; flex: 1; }
         .login-wrapper { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
         .login-box { width: 360px; padding: 32px; border: 1px solid var(--glass-border); }
@@ -123,17 +130,70 @@
         .arco-table-bordered .arco-table-container { border-left: 1px solid var(--glass-border) !important; border-top: 1px solid var(--glass-border) !important; }
         .arco-table-bordered .arco-table-th, .arco-table-bordered .arco-table-td { border-right: 1px solid var(--glass-border) !important; border-bottom: 1px solid var(--glass-border) !important; }
 
+        /* 录制状态小圆点 */
+        .builtin-status-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 6px; background-color: #c9cdd4; }
+        .builtin-status-dot.is-recording { background-color: #00b42a; box-shadow: 0 0 6px rgba(0, 180, 42, 0.4); }
+
+        /* 图片下载按钮的悬浮与响应式样式 */
+        .cover-download-btn {
+            position: absolute; bottom: 4px; right: 4px; z-index: 10;
+            background-color: rgba(0,0,0,0.6) !important; color: white !important;
+            border: none; width: 24px; height: 24px; display: none;
+            backdrop-filter: blur(4px); transition: all 0.2s;
+        }
+        .cover-download-btn:hover { background-color: #165DFF !important; transform: scale(1.1); }
+        .image-wrapper:hover .cover-download-btn { display: inline-flex; }
+
+        @supports (-webkit-touch-callout: none) {
+            * { -webkit-tap-highlight-color: transparent; }
+        }
+
+        /* ================= 苹果 Safari & 移动端深度防错位适配 ================= */
         @media screen and (max-width: 768px) {
-            .main-container { padding: 12px 8px; }
+            .main-container { padding: 12px 8px env(safe-area-inset-bottom) env(safe-area-inset-left) !important; width: 100vw; overflow: hidden; }
             .stat-value { font-size: 20px; }
-            .action-bar { display: flex; flex-wrap: wrap; gap: 8px; }
-            .action-bar .arco-btn { flex: 1 1 calc(50% - 8px); margin: 0; display: flex; justify-content: center; }
-            .action-bar .arco-btn[status="danger"] { flex: 1 1 100%; }
             .login-box { width: 90%; padding: 24px; }
             .arco-tabs-nav-type-rounded .arco-tabs-tab { padding: 4px 12px; font-size: 13px; }
-            header.nav-glass { flex-wrap: wrap; padding: 12px 16px !important; }
-            .nav-title { width: 100%; justify-content: space-between; margin-bottom: 8px; font-size: 15px !important;}
+
+            /* 防止输入框聚焦时苹果自动放大页面 */
+            .arco-input, .arco-textarea, .arco-select-view-value { font-size: 16px !important; }
+
+            header.nav-glass {
+                padding: calc(env(safe-area-inset-top) + 8px) 12px 8px 12px !important;
+                flex-direction: column !important;
+                align-items: flex-start !important;
+                gap: 12px;
+            }
+            .nav-title { width: 100%; display: flex; flex-wrap: wrap; line-height: 1.4; gap: 6px; font-size: 14px !important; }
+            .nav-title .arco-tag { margin-top: 2px; }
+            header.nav-glass .arco-space { width: 100%; justify-content: space-between; }
             .hidden-xs { display: none !important; }
+
+            /* 强制组件不准突破屏幕最大宽度 */
+            .arco-card, .arco-tabs, .arco-table-container, .arco-row, .arco-col, .arco-card-body, .arco-tabs-content { min-width: 0 !important; max-width: 100%; }
+            .arco-card-body { padding: 12px !important; }
+            .arco-card { height: auto !important; min-height: 120px; }
+
+            .action-bar { display: flex; flex-wrap: wrap; gap: 8px; }
+            .action-bar .arco-btn, .action-bar .arco-radio-group { flex: 1 1 calc(50% - 8px); margin: 0; display: flex; justify-content: center; }
+            .action-bar .arco-btn[status="danger"], .action-bar .arco-select { flex: 1 1 100%; }
+
+            /* 搜索栏全面流式折叠 */
+            .search-control-bar { display: flex; flex-direction: column !important; align-items: stretch !important; gap: 10px !important; width: 100%; }
+            .search-control-bar > * { width: 100% !important; min-width: 0 !important; margin: 0 !important; box-sizing: border-box; }
+
+            .search-control-bar .arco-input-group { width: 100% !important; display: flex; border-radius: 4px; box-sizing: border-box; }
+            .search-control-bar .arco-input-group > .arco-select { flex: 0 0 100px !important; width: 100px !important; }
+            .search-control-bar .arco-input-group > .arco-input-wrapper { flex: 1 !important; min-width: 0 !important; }
+            .search-control-bar .arco-divider-vertical { display: none; }
+            .streamer-inputs { flex-direction: column !important; gap: 8px !important; width: 100% !important; box-sizing: border-box; }
+            .streamer-inputs > * { width: 100% !important; box-sizing: border-box;}
+
+            .mobile-action-buttons { display: flex; flex-direction: row !important; gap: 8px; width: 100%; flex-wrap: wrap; box-sizing: border-box; }
+            .mobile-action-buttons > * { flex: 1 1 calc(50% - 4px); margin: 0 !important; box-sizing: border-box;}
+
+            .arco-modal { width: 92vw !important; max-width: 92vw !important; }
+            .cover-download-btn { display: inline-flex; }
         }
     </style>
 </head>
@@ -168,18 +228,18 @@
         <header class="nav-glass" style="padding: 12px 24px; display: flex; justify-content: space-between; align-items: center;">
             <div class="nav-title" style="font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 8px;">
                 <span style="display:flex; align-items:center; gap:6px;">
-                    <icon-cloud style="color: var(--color-primary-light-4); font-size: 20px;"></icon-cloud>直播录制文件上传系统
+                    <icon-cloud style="color: var(--color-primary-light-4); font-size: 20px;"></icon-cloud>分布式文件上传与录制系统
                 </span>
 
                 <a-tag :color="systemStatus.running ? 'green' : 'red'" size="small" style="border-radius: 4px;">
                     <template #icon><icon-check-circle v-if="systemStatus.running"></icon-check-circle><icon-minus-circle v-else></icon-minus-circle></template>
-                    {{ systemStatus.running ? '运行中' : '已暂停' }}
+                    {{ systemStatus.running ? '上传引擎运行中' : '上传引擎已挂起' }}
                 </a-tag>
             </div>
 
             <a-space size="medium">
                 <span style="font-size: 12px; color: var(--color-text-3); display: flex; align-items: center; gap: 4px; margin-right: 8px;">
-                    <icon-dashboard></icon-dashboard> Uptime: {{ formatDuration(systemStatus.uptime) }}
+                    <icon-dashboard></icon-dashboard> <span class="hidden-xs">Uptime:</span> {{ formatDuration(systemStatus.uptime) }}
                 </span>
                 <a-button type="text" shape="circle" size="small" @click="openGitHub">
                     <icon-github style="font-size: 16px; color: var(--color-text-2);"></icon-github>
@@ -198,23 +258,20 @@
             <a-tabs v-model:active-key="activeTab" type="rounded" size="small" class="apple-glass" style="padding: 16px; border-radius: 12px; border: 1px solid var(--glass-border);">
 
                 <a-tab-pane key="overview">
-                    <template #title><icon-apps></icon-apps> 系统概览</template>
+                    <template #title><icon-apps></icon-apps> <span class="hidden-xs">系统</span>概览</template>
 
                     <div class="action-bar" style="margin-top: 8px;">
                         <a-button type="primary" status="success" size="medium" @click="control('start')" :disabled="systemStatus.running">
-                            <template #icon><icon-play-arrow></icon-play-arrow></template> 启动扫描
+                            <template #icon><icon-play-arrow></icon-play-arrow></template> 启动扫描<span class="hidden-xs">上传</span>
                         </a-button>
                         <a-button type="primary" status="warning" size="medium" @click="control('pause')" :disabled="!systemStatus.running">
-                            <template #icon><icon-pause></icon-pause></template> 暂停任务
-                        </a-button>
-                        <a-button type="outline" status="danger" size="medium" @click="control('stop')">
-                            <template #icon><icon-stop></icon-stop></template> 停止系统
+                            <template #icon><icon-pause></icon-pause></template> 暂停扫描<span class="hidden-xs">上传</span>
                         </a-button>
                         <a-button type="outline" size="medium" @click="control('rescan')">
                             <template #icon><icon-refresh></icon-refresh></template> 手动重扫
                         </a-button>
                         <a-button type="outline" size="medium" @click="control('relogin')">
-                            <template #icon><icon-robot></icon-robot></template> 刷新远端授权
+                            <template #icon><icon-robot></icon-robot></template> 刷新授权
                         </a-button>
                     </div>
 
@@ -225,10 +282,11 @@
                                     <div style="display:flex; justify-content: space-between; align-items:center;">
                                         <div style="display:flex; align-items:center; gap:8px;">
                                             <icon-common style="color: #165DFF"></icon-common>
-                                            <span>全站流量与文件增长趋势 (近7日)</span>
+                                            <span class="hidden-xs">全站流量与文件增长趋势 (近7日)</span>
+                                            <span v-if="isMobile">趋势(近7日)</span>
                                         </div>
                                         <div style="font-size: 13px; color: var(--color-text-3); display: flex; align-items: center; gap: 6px;">
-                                            <icon-swap style="color: #165DFF;"></icon-swap> 瞬时网络上行:
+                                            <icon-swap style="color: #165DFF;"></icon-swap> <span class="hidden-xs">瞬时网络上行:</span>
                                             <span style="color: #165DFF; font-weight: bold; font-family: monospace; font-size: 15px;">
                                                 {{ formatSpeed(trafficMetrics.speed) }}
                                             </span>
@@ -355,11 +413,11 @@
 
                                 <a-col :xs="24">
                                     <a-card class="apple-glass" hoverable bordered style="height: 100%;">
-                                        <div style="display: flex; gap:12px; align-items:center; flex-wrap: wrap; height: 100%;">
+                                        <div class="mobile-action-buttons" style="display: flex; gap:12px; align-items:center; flex-wrap: wrap; height: 100%;">
                                             <div class="stat-label" style="margin-right: 4px; width: 100%;"><icon-tool></icon-tool> 队列快捷清理</div>
                                             <a-button size="small" status="danger" type="outline" @click="control('clear-fail-queue')">清空失败</a-button>
                                             <a-button size="small" status="warning" type="outline" @click="control('retry-fail-queue')">重试失败任务</a-button>
-                                            <a-button size="small" status="success" type="outline" @click="control('clear-success-queue')">清空成功记录</a-button>
+                                            <a-button size="small" status="success" type="outline" @click="control('clear-success-queue')">清空成功</a-button>
                                         </div>
                                     </a-card>
                                 </a-col>
@@ -397,7 +455,7 @@
                 </a-tab-pane>
 
                 <a-tab-pane key="live">
-                    <template #title><icon-thunderbolt></icon-thunderbolt> 实时任务</template>
+                    <template #title><icon-thunderbolt></icon-thunderbolt> <span class="hidden-xs">实时上传</span>任务</template>
 
                     <div class="action-bar" style="justify-content: space-between; align-items: center; margin-bottom: 20px;">
                         <a-radio-group v-model="liveTaskFilter" type="button" size="medium" style="background-color: var(--glass-border); border-radius: 8px; padding: 2px;">
@@ -406,7 +464,7 @@
                         </a-radio-group>
 
                         <a-button size="small" type="outline" @click="fetchLiveTasks" class="hover-effect">
-                            <template #icon><icon-refresh></icon-refresh></template> 手动刷新列表
+                            <template #icon><icon-refresh></icon-refresh></template> 刷新
                         </a-button>
                     </div>
 
@@ -417,26 +475,25 @@
                                         <icon-sync :spin="uploadingTasks.length > 0"></icon-sync> 正在处理中的文件
                                     </span>
                             </template>
-                            <div style="overflow-x: auto;">
-                                <a-table :data="uploadingTasks" size="small" :pagination="false"
-                                         style="min-height: 400px;"
-                                         bordered stripe hoverable column-resizable>
-                                    <template #empty>
-                                        <div style="padding: 80px 0; color: var(--color-text-3); text-align: center;">
-                                            <icon-inbox style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-inbox>
-                                            <div>暂时没有正在处理的任务</div>
-                                        </div>
-                                    </template>
-                                    <template #columns>
-                                        <a-table-column title="文件名" data-index="filename" :width="240" ellipsis tooltip></a-table-column>
-                                        <a-table-column title="大小" data-index="size" :width="100"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
-                                        <a-table-column title="进度" data-index="progress" :width="200"><template #cell="{ record }"><a-progress :percent="calculatePercent(record.uploaded, record.size)" size="small"></a-progress></template></a-table-column>
-                                        <a-table-column title="速度" data-index="speed" :width="100"><template #cell="{ record }">{{ formatSpeed(record.speed) }}</template></a-table-column>
-                                        <a-table-column title="已传时间" :width="100"><template #cell="{ record }">{{ getElapsedTime(record.startTime) }}</template></a-table-column>
-                                        <a-table-column title="状态" data-index="status" :width="100"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ formatStatusText(record.status) }}</a-tag></template></a-table-column>
-                                    </template>
-                                </a-table>
-                            </div>
+                            <a-table :data="uploadingTasks" size="small" :pagination="false"
+                                     :scroll="{ x: 800 }"
+                                     style="min-height: 400px;"
+                                     bordered stripe hoverable column-resizable>
+                                <template #empty>
+                                    <div style="padding: 80px 0; color: var(--color-text-3); text-align: center;">
+                                        <icon-inbox style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-inbox>
+                                        <div>暂时没有正在处理的任务</div>
+                                    </div>
+                                </template>
+                                <template #columns>
+                                    <a-table-column title="文件名" data-index="filename" :width="240" ellipsis tooltip></a-table-column>
+                                    <a-table-column title="大小" data-index="size" :width="100"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
+                                    <a-table-column title="进度" data-index="progress" :width="200"><template #cell="{ record }"><a-progress :percent="calculatePercent(record.uploaded, record.size)" size="small"></a-progress></template></a-table-column>
+                                    <a-table-column title="速度" data-index="speed" :width="100"><template #cell="{ record }">{{ formatSpeed(record.speed) }}</template></a-table-column>
+                                    <a-table-column title="已传时间" :width="100"><template #cell="{ record }">{{ getElapsedTime(record.startTime) }}</template></a-table-column>
+                                    <a-table-column title="状态" data-index="status" :width="100"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ formatStatusText(record.status) }}</a-tag></template></a-table-column>
+                                </template>
+                            </a-table>
                         </a-card>
 
                         <a-card v-else-if="liveTaskFilter === 'completed'" class="apple-glass hover-effect" bordered key="completed">
@@ -445,32 +502,312 @@
                                         <icon-check-circle-fill></icon-check-circle-fill> 近期已处理完成的文件
                                     </span>
                             </template>
-                            <div style="overflow-x: auto;">
-                                <a-table :data="completedTasks" size="small" :pagination="false"
-                                         style="min-height: 400px;"
-                                         bordered stripe hoverable column-resizable>
-                                    <template #empty>
-                                        <div style="padding: 80px 0; color: var(--color-text-3); text-align: center;">
-                                            <icon-check-circle style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-check-circle>
-                                            <div>近期没有已完成的任务</div>
-                                        </div>
-                                    </template>
-                                    <template #columns>
-                                        <a-table-column title="文件名" data-index="filename" :width="300" ellipsis tooltip></a-table-column>
-                                        <a-table-column title="大小" data-index="size" :width="120"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
-                                        <a-table-column title="传输耗时" data-index="duration" :width="120"><template #cell="{ record }">{{ formatDurationSeconds(record.duration) }}</template></a-table-column>
-                                        <a-table-column title="状态" data-index="status" :width="120"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ formatStatusText(record.status) }}</a-tag></template></a-table-column>
-                                        <a-table-column title="备注 / 错误信息" data-index="error" ellipsis tooltip></a-table-column>
-                                    </template>
-                                </a-table>
-                            </div>
+                            <a-table :data="completedTasks" size="small" :pagination="false"
+                                     :scroll="{ x: 800 }"
+                                     style="min-height: 400px;"
+                                     bordered stripe hoverable column-resizable>
+                                <template #empty>
+                                    <div style="padding: 80px 0; color: var(--color-text-3); text-align: center;">
+                                        <icon-check-circle style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-check-circle>
+                                        <div>近期没有已完成的任务</div>
+                                    </div>
+                                </template>
+                                <template #columns>
+                                    <a-table-column title="文件名" data-index="filename" :width="300" ellipsis tooltip></a-table-column>
+                                    <a-table-column title="大小" data-index="size" :width="120"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
+                                    <a-table-column title="传输耗时" data-index="duration" :width="120"><template #cell="{ record }">{{ formatDurationSeconds(record.duration) }}</template></a-table-column>
+                                    <a-table-column title="状态" data-index="status" :width="120"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ formatStatusText(record.status) }}</a-tag></template></a-table-column>
+                                    <a-table-column title="备注 / 错误信息" data-index="error" ellipsis tooltip></a-table-column>
+                                </template>
+                            </a-table>
                         </a-card>
                     </transition>
                 </a-tab-pane>
 
+                <a-tab-pane key="builtin_recorder">
+                    <template #title><icon-record></icon-record> 内置<span class="hidden-xs">轻量</span>引擎</template>
+
+                    <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
+                        <div class="search-control-bar" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                            <a-input-search
+                                    v-model="builtinSearchQuery"
+                                    placeholder="搜索主播或链接"
+                                    style="width: 220px;"
+                                    size="medium"
+                                    allow-clear>
+                                <template #prefix><icon-search></icon-search></template>
+                            </a-input-search>
+
+                            <a-divider direction="vertical" style="height: 24px; margin: 0;"></a-divider>
+
+                            <a-input-group style="flex: 1; min-width: 300px;">
+                                <a-select v-model="builtinForm.platform" style="width: 140px;" size="medium" placeholder="选择平台">
+                                    <a-option value="Douyin">抖音 (Douyin)</a-option>
+                                    <a-option value="Kuaishou">快手 (Kuaishou)</a-option>
+                                    <a-option value="Soop">Soop</a-option>
+                                </a-select>
+                                <a-input v-model="builtinForm.url" placeholder="直播间链接" allow-clear size="medium" @press-enter="handleAddBuiltin"></a-input>
+                            </a-input-group>
+
+                            <div class="mobile-action-buttons">
+                                <a-button type="primary" status="success" size="medium" @click="handleAddBuiltin" :loading="builtinAdding">
+                                    <template #icon><icon-plus></icon-plus></template> <span class="hidden-xs">添加监控</span><span v-if="isMobile">添加</span>
+                                </a-button>
+
+                                <a-button type="primary" status="warning" size="medium" @click="showBuiltinBatchModal = true">
+                                    <template #icon><icon-copy></icon-copy></template> <span class="hidden-xs">批量添加</span><span v-if="isMobile">批量</span>
+                                </a-button>
+                            </div>
+
+                            <div class="mobile-action-buttons" style="align-items: center;">
+                                <div style="display: flex; align-items: center; justify-content: center; gap: 8px; background-color: rgba(242, 243, 245, 0.5); padding: 4px 12px; border-radius: 4px; height: 32px; flex: 1;">
+                                    <span style="font-size: 13px; font-weight: bold; color: #4e5969;">全局</span>
+                                    <a-switch
+                                            :model-value="isAllBuiltinActive"
+                                            @change="handleMasterSwitchBuiltin"
+                                            :disabled="builtinTasks.length === 0"
+                                            checked-color="#00b42a"
+                                            unchecked-color="#f53f3f">
+                                        <template #checked>ON</template>
+                                        <template #unchecked>OFF</template>
+                                    </a-switch>
+                                </div>
+
+                                <a-button type="outline" size="medium" @click="openBuiltinSettingsModal" style="flex: 1;">
+                                    <template #icon><icon-settings></icon-settings></template> 引擎设置
+                                </a-button>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 12px; display: flex; gap: 16px; font-size: 13px; color: var(--color-text-3); justify-content: flex-end;">
+                            <span><icon-menu></icon-menu> 总计: <b>{{ builtinTasks.length }}</b></span>
+                            <span style="color: #00B42A"><icon-play-circle></icon-play-circle> 监控: <b>{{ builtinActiveCount }}</b></span>
+                            <span style="color: #F53F3F"><icon-record></icon-record> 录制: <b>{{ builtinRecordingCount }}</b></span>
+                        </div>
+                    </a-card>
+
+                    <a-card class="apple-glass hover-effect" bordered>
+                        <a-table :data="paginatedBuiltinTasks" :pagination="false" bordered stripe hoverable column-resizable
+                                 :scroll="{ x: 740 }"
+                                 style="min-height: 450px;" size="small">
+                            <template #empty>
+                                <div style="padding: 100px 0; color: var(--color-text-3); text-align: center;">
+                                    <icon-video-camera style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-video-camera>
+                                    <div>内置轻量引擎暂无监控任务，请在上方添加</div>
+                                </div>
+                            </template>
+                            <template #columns>
+                                <a-table-column title="主播及画面" data-index="anchor_name" :width="240">
+                                    <template #cell="{ record }">
+                                        <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+                                            <div class="image-wrapper" style="position: relative; display: inline-block; flex-shrink: 0; line-height: 0;">
+                                                <a-image
+                                                        v-if="record.avatar"
+                                                        :src="record.avatar"
+                                                        width="80" height="45" fit="cover"
+                                                        style="border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);"
+                                                        alt="直播画面">
+                                                    <template #error>
+                                                        <div style="width: 80px; height: 45px; background: #f2f3f5; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #86909c;">封面失效</div>
+                                                    </template>
+                                                </a-image>
+                                                <div v-else style="width: 80px; height: 45px; background: #f2f3f5; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #86909c;">
+                                                    无画面
+                                                </div>
+                                                <a-button v-if="record.avatar" shape="circle" size="mini" class="cover-download-btn" @click.stop="downloadBuiltinCover(record.avatar, record.anchor_name)" title="点击下载封面">
+                                                    <icon-download />
+                                                </a-button>
+                                            </div>
+
+                                            <div style="display: flex; flex-direction: column; overflow: hidden; flex: 1; min-width: 0;">
+                                                <span style="font-weight: 600; color: #1d2129; line-height: 1.2; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" :title="record.anchor_name">
+                                                  {{ record.anchor_name }}
+                                                </span>
+                                                <div v-if="record.status === '初始化中' || record.anchor_name === record.room_id" style="color: #86909c; font-size: 11px; margin-top: 4px;">
+                                                    <icon-loading></icon-loading> 等待抓取...
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </a-table-column>
+                                <a-table-column title="直播链接" :width="120">
+                                    <template #cell="{ record }">
+                                        <a :href="getBuiltinLiveUrl(record.platform, record.room_id)" target="_blank" style="color: #165dff; text-decoration: none; font-size: 12px; white-space: nowrap;">
+                                            前往房间 <icon-launch style="font-size: 10px;"></icon-launch>
+                                        </a>
+                                    </template>
+                                </a-table-column>
+                                <a-table-column title="录制状态" :width="200">
+                                    <template #cell="{ record }">
+                                        <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap;">
+                                            <span class="builtin-status-dot" :class="{ 'is-recording': record.status === '录制中' }"></span>
+                                            <span :style="{ color: record.status === '录制中' ? '#00b42a' : '#86909c' }">
+                                              {{ record.status === '录制中' ? '正在录制' : '未在录制' }}
+                                            </span>
+                                            <span v-if="record.status === '录制中'" style="font-size: 11px; color: #86909c;">
+                                              (<span style="color: #165dff;">{{ record.duration }}</span> | <span style="color: #ff7d00;">{{ record.file_size }}</span>)
+                                            </span>
+                                        </div>
+                                    </template>
+                                </a-table-column>
+                                <a-table-column title="监听状态" :width="100">
+                                    <template #cell="{ record }">
+                                        <div style="display: flex; align-items: center; gap: 6px;">
+                                            <a-switch :model-value="!record.is_paused" size="small" :loading="record.switching" @change="(val) => handleSwitchBuiltin(val, record)"></a-switch>
+                                        </div>
+                                    </template>
+                                </a-table-column>
+                                <a-table-column title="操作" align="center" :width="80">
+                                    <template #cell="{ record }">
+                                        <a-popconfirm content="确定要删除吗？" type="error" @ok="handleControlBuiltin('delete', record)">
+                                            <a-button type="text" status="danger" size="mini">
+                                                <template #icon><icon-delete></icon-delete></template> <span class="hidden-xs">删除</span>
+                                            </a-button>
+                                        </a-popconfirm>
+                                    </template>
+                                </a-table-column>
+                            </template>
+                        </a-table>
+
+                        <div style="display: flex; justify-content: flex-end; margin-top: 12px;">
+                            <a-pagination
+                                    v-model:current="builtinCurrentPage"
+                                    v-model:page-size="builtinPageSize"
+                                    :total="sortedBuiltinTasks.length"
+                                    size="small"
+                                    :simple="isMobile"
+                                    :show-total="!isMobile"
+                                    :show-jumper="!isMobile"
+                                    :show-page-size="!isMobile">
+                            </a-pagination>
+                        </div>
+                    </a-card>
+                </a-tab-pane>
+
+
+                <a-tab-pane key="streamers">
+                    <template #title><icon-link></icon-link> 外部<span class="hidden-xs">引擎</span>(Docker)</template>
+
+                    <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
+                        <div class="search-control-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
+                            <div style="display: flex; align-items: center; gap: 12px; min-width: 200px;">
+                                <div style="font-size: 15px; font-weight: 500;">
+                                    <icon-computer></icon-computer> 录制引擎容器 (外置版)
+                                </div>
+                                <a-badge v-if="recorderStatus === 'running'" status="success" text="🟢 Running"></a-badge>
+                                <a-badge v-else-if="recorderStatus === 'exited'" status="danger" text="🔴 Exited"></a-badge>
+                                <a-badge v-else status="warning" :text="recorderStatus"></a-badge>
+                            </div>
+
+                            <div class="mobile-action-buttons">
+                                <a-button type="primary" status="success" size="small" @click="controlRecorder('start')" :disabled="recorderStatus === 'running' || recorderControlLoading">启动</a-button>
+                                <a-button type="primary" status="warning" size="small" @click="controlRecorder('restart')" :loading="recorderControlLoading">重启</a-button>
+                                <a-button type="outline" status="danger" size="small" @click="controlRecorder('stop')" :disabled="recorderStatus !== 'running' || recorderControlLoading">停止</a-button>
+                                <a-button type="secondary" size="small" @click="openLogsModal"><template #icon><icon-code></icon-code></template> 日志</a-button>
+                            </div>
+                        </div>
+                    </a-card>
+
+                    <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
+                        <div class="search-control-bar" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                            <a-input-search
+                                    ref="streamerSearchRef"
+                                    v-model="streamerSearchQuery"
+                                    placeholder="搜索主播或链接"
+                                    style="width: 220px;"
+                                    size="medium"
+                                    allow-clear>
+                                <template #prefix><icon-search></icon-search></template>
+                            </a-input-search>
+
+                            <a-divider direction="vertical" style="height: 24px; margin: 0;"></a-divider>
+
+                            <div style="display: flex; flex: 1; min-width: 300px; gap: 8px;" class="streamer-inputs">
+                                <a-input v-model="newStreamer.url" placeholder="直播间链接" style="flex: 2; min-width: 0;" size="medium"><template #prefix><icon-link></icon-link></template></a-input>
+                                <a-input v-model="newStreamer.name" placeholder="主播名" style="flex: 1; min-width: 0;" size="medium"><template #prefix><icon-user></icon-user></template></a-input>
+                            </div>
+
+                            <div class="mobile-action-buttons">
+                                <a-button type="primary" status="success" @click="addStreamer" size="medium">
+                                    <template #icon><icon-plus></icon-plus></template> <span class="hidden-xs">添加</span><span v-if="isMobile">添加</span>
+                                </a-button>
+                                <a-button type="primary" status="warning" @click="showBatchAddModal = true" size="medium">
+                                    <template #icon><icon-copy></icon-copy></template> <span class="hidden-xs">批量</span><span v-if="isMobile">批量</span>
+                                </a-button>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 12px; display: flex; gap: 16px; font-size: 13px; color: var(--color-text-3); justify-content: flex-end;">
+                            <span><icon-menu></icon-menu> 总计: <b>{{ streamers.length }}</b></span>
+                            <span style="color: #00B42A"><icon-play-circle></icon-play-circle> 监控: <b>{{ activeStreamersCount }}</b></span>
+                            <span style="color: #F53F3F"><icon-live-broadcast></icon-live-broadcast> 录制: <b>{{ onlineStreamersCount }}</b></span>
+                        </div>
+                    </a-card>
+
+                    <a-card class="apple-glass hover-effect" bordered>
+                        <a-table :data="filteredStreamers" size="small" :pagination="{ pageSize: 20, simple: isMobile }"
+                                 :scroll="{ x: 700 }"
+                                 style="min-height: 450px;"
+                                 bordered stripe hoverable column-resizable>
+                            <template #empty>
+                                <div style="padding: 100px 0; color: var(--color-text-3); text-align: center;">
+                                    <icon-user-group style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-user-group>
+                                    <div v-if="streamerSearchQuery">未搜索到匹配的主播 "{{ streamerSearchQuery }}"</div>
+                                    <div v-else>当前配置文件中没有主播记录</div>
+                                </div>
+                            </template>
+                            <template #columns>
+                                <a-table-column title="主播名称" data-index="name" :width="180">
+                                    <template #cell="{ record }">
+                                        <span v-if="record.name && record.name.trim() !== ''" :style="{ color: record.active ? 'var(--color-text-1)' : 'var(--color-text-3)', fontWeight: record.active ? '500' : 'normal' }">
+                                            {{ record.name }}
+                                        </span>
+                                        <span v-else style="color: var(--color-text-4); font-size: 13px; display: inline-flex; align-items: center; gap: 4px;">
+                                            <icon-sync spin></icon-sync> <span>等待引擎抓取...</span>
+                                        </span>
+                                    </template>
+                                </a-table-column>
+
+                                <a-table-column title="直播链接" data-index="url" ellipsis tooltip>
+                                    <template #cell="{ record }">
+                                        <a :href="record.url" target="_blank" :style="{ color: record.active ? 'var(--color-primary-light-4)' : 'var(--color-text-4)', textDecoration: 'none' }">
+                                            {{ record.url }}
+                                        </a>
+                                    </template>
+                                </a-table-column>
+
+                                <a-table-column title="录制状态" :width="100" align="center">
+                                    <template #cell="{ record }">
+                                        <a-badge v-if="activeRecordingStreamers.includes(record.name) && record.active" status="processing" color="red" text="正在录制"></a-badge>
+                                        <a-badge v-else status="normal" text="未在录制"></a-badge>
+                                    </template>
+                                </a-table-column>
+
+                                <a-table-column title="监听" data-index="active" :width="80" align="center">
+                                    <template #cell="{ record }">
+                                        <div style="display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                            <a-switch v-model="record.active" size="small" @change="saveStreamers(false)"></a-switch>
+                                        </div>
+                                    </template>
+                                </a-table-column>
+
+                                <a-table-column title="操作" :width="80" align="center">
+                                    <template #cell="{ record }">
+                                        <a-popconfirm content="确定要删除此主播配置吗？" position="left" type="warning" @ok="removeStreamer(record)">
+                                            <a-button type="text" status="danger" size="mini">
+                                                <template #icon><icon-delete></icon-delete></template> <span class="hidden-xs">删除</span>
+                                            </a-button>
+                                        </a-popconfirm>
+                                    </template>
+                                </a-table-column>
+                            </template>
+                        </a-table>
+                    </a-card>
+                </a-tab-pane>
+
                 <a-tab-pane key="history">
-                    <template #title><icon-history></icon-history> 历史记录</template>
-                    <div class="action-bar">
+                    <template #title><icon-history></icon-history> 历史<span class="hidden-xs">记录</span></template>
+                    <div class="search-control-bar action-bar">
                         <a-input-search v-model="historyQuery.filename" placeholder="搜索文件名" size="small" style="width: 250px" @search="fetchHistory" @keyup.enter="fetchHistory"></a-input-search>
 
                         <a-select v-model="historyQuery.status" placeholder="全部状态" size="small" style="width: 120px" allow-clear @change="fetchHistory">
@@ -480,220 +817,56 @@
                         <a-button size="small" type="primary" @click="fetchHistory"><template #icon><icon-search></icon-search></template> 查询</a-button>
                     </div>
                     <a-card class="apple-glass hover-effect" bordered>
-                        <div style="overflow-x: auto;">
-                            <a-table :data="historyData.items" size="small" :pagination="pagination" @page-change="onPageChange"
-                                     style="min-height: 450px;"
-                                     bordered stripe hoverable column-resizable>
-                                <template #empty>
-                                    <div style="padding: 100px 0; color: var(--color-text-3); text-align: center;">
-                                        <icon-history style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-history>
-                                        <div>没有找到相关的历史记录</div>
-                                    </div>
-                                </template>
-                                <template #columns>
-                                    <a-table-column title="完成时间" data-index="id" :width="160"></a-table-column>
-                                    <a-table-column title="文件名" data-index="filename" :width="200" ellipsis tooltip></a-table-column>
-                                    <a-table-column title="大小" data-index="size" :width="100"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
-                                    <a-table-column title="耗时" data-index="duration" :width="100"><template #cell="{ record }">{{ formatDurationSeconds(record.duration) }}</template></a-table-column>
-                                    <a-table-column title="状态" data-index="status" :width="100"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ formatStatusText(record.status) }}</a-tag></template></a-table-column>
-                                    <a-table-column title="失败详情" data-index="error" ellipsis tooltip></a-table-column>
-                                </template>
-                            </a-table>
-                        </div>
-                    </a-card>
-                </a-tab-pane>
-
-                <a-tab-pane key="streamers">
-                    <template #title><icon-video-camera></icon-video-camera> 录制名单管理</template>
-
-                    <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
-                        <div class="action-bar" style="justify-content: space-between; align-items: center; margin-bottom: 0;">
-                            <div style="display: flex; align-items: center; gap: 12px; min-width: 200px;">
-                                <div style="font-size: 15px; font-weight: 500;">
-                                    <icon-computer></icon-computer> 录制引擎容器
+                        <a-table :data="historyData.items" size="small" :pagination="pagination" @page-change="onPageChange"
+                                 :scroll="{ x: 800 }"
+                                 style="min-height: 450px;"
+                                 bordered stripe hoverable column-resizable>
+                            <template #empty>
+                                <div style="padding: 100px 0; color: var(--color-text-3); text-align: center;">
+                                    <icon-history style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-history>
+                                    <div>没有找到相关的历史记录</div>
                                 </div>
-                                <a-badge v-if="recorderStatus === 'running'" status="success" text="🟢 Running"></a-badge>
-                                <a-badge v-else-if="recorderStatus === 'exited'" status="danger" text="🔴 Exited"></a-badge>
-                                <a-badge v-else status="warning" :text="recorderStatus"></a-badge>
-                            </div>
-
-                            <a-space size="small" wrap>
-                                <a-button type="primary" status="success" size="small" @click="controlRecorder('start')" :disabled="recorderStatus === 'running' || recorderControlLoading">启动</a-button>
-                                <a-button type="primary" status="warning" size="small" @click="controlRecorder('restart')" :loading="recorderControlLoading">重启生效</a-button>
-                                <a-button type="outline" status="danger" size="small" @click="controlRecorder('stop')" :disabled="recorderStatus !== 'running' || recorderControlLoading">停止</a-button>
-                                <a-button type="secondary" size="small" @click="openLogsModal"><template #icon><icon-code></icon-code></template> 实时日志</a-button>
-                            </a-space>
-                        </div>
-                    </a-card>
-
-                    <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
-                        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-                            <a-input-search
-                                    ref="streamerSearchRef"
-                                    v-model="streamerSearchQuery"
-                                    placeholder="搜索主播或链接 (Ctrl+X)"
-                                    style="width: 220px;"
-                                    size="medium"
-                                    allow-clear>
-                                <template #prefix><icon-search></icon-search></template>
-                            </a-input-search>
-
-                            <a-divider direction="vertical" style="height: 24px; margin: 0;"></a-divider>
-
-                            <a-input v-model="newStreamer.url" placeholder="直播间链接 (http...)" style="flex: 1; min-width: 200px;" size="medium"><template #prefix><icon-link></icon-link></template></a-input>
-                            <a-input v-model="newStreamer.name" placeholder="主播名 (可选)" style="width: 140px;" size="medium"><template #prefix><icon-user></icon-user></template></a-input>
-
-                            <a-button type="primary" status="success" @click="addStreamer" size="medium">
-                                <template #icon><icon-plus></icon-plus></template> <span class="hidden-xs">添加</span>
-                            </a-button>
-                            <a-button type="primary" status="warning" @click="showBatchAddModal = true" size="medium">
-                                <template #icon><icon-copy></icon-copy></template> <span class="hidden-xs">批量</span>
-                            </a-button>
-                        </div>
-
-                        <div style="margin-top: 12px; display: flex; gap: 16px; font-size: 13px; color: var(--color-text-3); justify-content: flex-end;">
-                            <span><icon-menu></icon-menu> 总计: <b>{{ streamers.length }}</b></span>
-                            <span style="color: #00B42A"><icon-play-circle></icon-play-circle> 监控中: <b>{{ activeStreamersCount }}</b></span>
-                            <span style="color: #F53F3F"><icon-live-broadcast></icon-live-broadcast> 当前录制: <b>{{ onlineStreamersCount }}</b></span>
-                            <span v-if="streamerSearchQuery">🔍 搜索结果: <b>{{ filteredStreamers.length }}</b></span>
-                        </div>
-                    </a-card>
-
-                    <a-card class="apple-glass hover-effect" bordered>
-                        <div style="overflow-x: auto;">
-                            <a-table :data="filteredStreamers" size="small" :pagination="{ pageSize: 20 }"
-                                     style="min-height: 450px;"
-                                     bordered stripe hoverable column-resizable>
-                                <template #empty>
-                                    <div style="padding: 100px 0; color: var(--color-text-3); text-align: center;">
-                                        <icon-user-group style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-user-group>
-                                        <div v-if="streamerSearchQuery">未搜索到匹配的主播 "{{ streamerSearchQuery }}"</div>
-                                        <div v-else>当前配置文件中没有主播记录</div>
-                                    </div>
-                                </template>
-                                <template #columns>
-                                    <a-table-column title="主播名称" data-index="name" :width="180">
-                                        <template #cell="{ record }">
-                                            <span v-if="record.name && record.name.trim() !== ''" :style="{ color: record.active ? 'var(--color-text-1)' : 'var(--color-text-3)', fontWeight: record.active ? '500' : 'normal' }">
-                                                {{ record.name }}
-                                            </span>
-                                            <span v-else style="color: var(--color-text-4); font-size: 13px; display: inline-flex; align-items: center; gap: 4px;">
-                                                <icon-sync spin></icon-sync> <span>等待引擎抓取...</span>
-                                            </span>
-                                        </template>
-                                    </a-table-column>
-
-                                    <a-table-column title="直播链接" data-index="url" ellipsis tooltip>
-                                        <template #cell="{ record }">
-                                            <a :href="record.url" target="_blank" :style="{ color: record.active ? 'var(--color-primary-light-4)' : 'var(--color-text-4)', textDecoration: 'none' }">
-                                                {{ record.url }}
-                                            </a>
-                                        </template>
-                                    </a-table-column>
-
-                                    <a-table-column title="录制状态" :width="120" align="center">
-                                        <template #cell="{ record }">
-                                            <a-badge v-if="activeRecordingStreamers.includes(record.name) && record.active" status="processing" color="red" text="正在录制"></a-badge>
-                                            <a-badge v-else status="normal" text="未在录制"></a-badge>
-                                        </template>
-                                    </a-table-column>
-
-                                    <a-table-column title="监听状态" data-index="active" :width="120" align="center">
-                                        <template #cell="{ record }">
-                                            <div style="display: flex; align-items: center; justify-content: center; gap: 8px;">
-                                                <a-switch v-model="record.active" size="small" @change="saveStreamers(false)"></a-switch>
-                                                <span :style="{ color: record.active ? 'var(--color-success-light-4)' : 'var(--color-text-4)', fontSize: '13px' }">
-                                                    {{ record.active ? '监控中' : '已忽略' }}
-                                                </span>
-                                            </div>
-                                        </template>
-                                    </a-table-column>
-
-                                    <a-table-column title="操作" :width="100" align="center">
-                                        <template #cell="{ record }">
-                                            <a-popconfirm content="确定要删除此主播配置吗？" position="left" type="warning" @ok="removeStreamer(record)">
-                                                <a-button type="text" status="danger" size="mini">
-                                                    <template #icon><icon-delete></icon-delete></template> 删除
-                                                </a-button>
-                                            </a-popconfirm>
-                                        </template>
-                                    </a-table-column>
-                                </template>
-                            </a-table>
-                        </div>
-                    </a-card>
-                </a-tab-pane>
-
-                <a-tab-pane key="cookies">
-                    <template #title><icon-settings></icon-settings> 引擎核心配置 (config.ini)</template>
-                    <a-card class="apple-glass hover-effect" bordered style="max-width: 1000px;">
-                        <a-form layout="vertical" :model="cookiesForm" @submit="saveCookies">
-                            <a-alert type="info" style="margin-bottom: 20px;">
-                                设置前，请确保在【系统参数设置】中配置了正确的 <b>录制引擎主配置文件 (config.ini)</b> 的物理路径。保存后需去录制管理页重启引擎容器生效。
-                            </a-alert>
-
-                            <a-form-item label="直播保存物理路径 (不填则使用引擎默认)">
-                                <a-input v-model="cookiesForm.liveSavePath" size="medium" placeholder="例如: /home/file/static/">
-                                    <template #prefix><icon-folder></icon-folder></template>
-                                </a-input>
-                                <template #help>该路径为录制引擎容器内部/宿主机的视频保存绝对路径。</template>
-                            </a-form-item>
-
-                            <a-divider style="margin: 20px 0;"><span style="color: var(--color-text-3); font-size: 12px;">Cookie 凭证配置</span></a-divider>
-
-                            <a-form-item label="抖音 Cookie">
-                                <a-textarea v-model="cookiesForm.douyin" :auto-size="{minRows: 4, maxRows: 8}" placeholder="在此填入抖音 Cookie (包含 sessionid_ss 等凭证)"></a-textarea>
-                            </a-form-item>
-
-                            <a-form-item label="快手 Cookie">
-                                <a-textarea v-model="cookiesForm.kuaishou" :auto-size="{minRows: 3, maxRows: 6}" placeholder="在此填入快手 Cookie"></a-textarea>
-                            </a-form-item>
-
-                            <a-form-item label="Sooplive Cookie">
-                                <a-textarea v-model="cookiesForm.sooplive" :auto-size="{minRows: 3, maxRows: 6}" placeholder="在此填入 Sooplive Cookie"></a-textarea>
-                            </a-form-item>
-
-                            <a-divider style="margin: 12px 0 24px 0"></a-divider>
-                            <a-form-item style="margin-bottom: 0;">
-                                <a-button type="primary" html-type="submit" size="medium" :loading="cookiesLoading" style="border-radius: 8px;">
-                                    <template #icon><icon-save></icon-save></template> 安全写入至配置文件
-                                </a-button>
-                                <a-button type="outline" size="medium" style="margin-left: 12px; border-radius: 8px;" @click="fetchCookies" :loading="cookiesLoading">
-                                    <template #icon><icon-refresh></icon-refresh></template> 从文件重新读取
-                                </a-button>
-                            </a-form-item>
-                        </a-form>
+                            </template>
+                            <template #columns>
+                                <a-table-column title="完成时间" data-index="id" :width="160"></a-table-column>
+                                <a-table-column title="文件名" data-index="filename" :width="200" ellipsis tooltip></a-table-column>
+                                <a-table-column title="大小" data-index="size" :width="100"><template #cell="{ record }">{{ formatSize(record.size) }}</template></a-table-column>
+                                <a-table-column title="耗时" data-index="duration" :width="100"><template #cell="{ record }">{{ formatDurationSeconds(record.duration) }}</template></a-table-column>
+                                <a-table-column title="状态" data-index="status" :width="100"><template #cell="{ record }"><a-tag :color="getStatusColor(record.status)" size="small">{{ formatStatusText(record.status) }}</a-tag></template></a-table-column>
+                                <a-table-column title="失败详情" data-index="error" ellipsis tooltip></a-table-column>
+                            </template>
+                        </a-table>
                     </a-card>
                 </a-tab-pane>
 
                 <a-tab-pane key="logs">
-                    <template #title><icon-code></icon-code> 系统终端日志</template>
-                    <div class="action-bar" style="justify-content: space-between; align-items: center;">
-                        <a-space size="small" wrap>
+                    <template #title><icon-code></icon-code> <span class="hidden-xs">系统终端</span>日志</template>
+                    <div class="search-control-bar action-bar" style="justify-content: space-between; align-items: center;">
+                        <div class="mobile-action-buttons" style="flex: 1;">
                             <a-select v-model="logQuery.level" placeholder="等级" size="small" style="width: 100px" allow-clear @change="logQuery.page=1; fetchLogs()">
                                 <a-option value="info">Info</a-option>
                                 <a-option value="error">Error</a-option>
                                 <a-option value="warn">Warn</a-option>
                             </a-select>
                             <a-input-search v-model="logQuery.keyword" placeholder="日志关键词搜索..." size="small" style="width: 200px" @search="logQuery.page=1; fetchLogs()" @keyup.enter="logQuery.page=1; fetchLogs()"></a-input-search>
-                            <a-button size="small" type="primary" @click="logQuery.page=1; fetchLogs()"><template #icon><icon-refresh></icon-refresh></template> 手动拉取历史记录</a-button>
-                        </a-space>
+                            <a-button size="small" type="primary" @click="logQuery.page=1; fetchLogs()"><template #icon><icon-refresh></icon-refresh></template> <span class="hidden-xs">手动拉取历史记录</span><span v-if="isMobile">拉取</span></a-button>
+                        </div>
 
-                        <a-space size="small" wrap>
+                        <div class="mobile-action-buttons" style="flex: 1;">
                             <a-select v-model="logExportLimit" size="small" style="width: 140px">
                                 <a-option :value="50">导出最新 50 条</a-option>
                                 <a-option :value="200">导出最新 200 条</a-option>
                                 <a-option :value="500">导出最新 500 条</a-option>
-                                <a-option :value="1000">导出全部 (上限1000)</a-option>
+                                <a-option :value="1000">导出全部</a-option>
                             </a-select>
                             <a-button class="download-btn hover-effect" size="small" @click="downloadLogs">
-                                <template #icon><icon-download></icon-download></template> 导出 .log 文件
+                                <template #icon><icon-download></icon-download></template> 导出 <span class="hidden-xs">.log 文件</span>
                             </a-button>
-                        </a-space>
+                        </div>
                     </div>
 
-                    <div class="apple-glass log-container" ref="logContainerRef" style="height: 420px; margin-bottom: 12px;">
-                        <div v-for="(log, index) in logData.items" :key="log.time + index" style="margin-bottom: 6px; border-bottom: 1px dashed rgba(128,128,128,0.15); padding-bottom: 6px;">
+                    <div class="apple-glass log-container" ref="logContainerRef" style="height: 420px; margin-bottom: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+                        <div v-for="(log, index) in logData.items" :key="log.time + index" style="margin-bottom: 6px; border-bottom: 1px dashed rgba(128,128,128,0.15); padding-bottom: 6px; min-width: 600px;">
                             <span style="color: var(--color-text-3);">[{{ log.time }}]</span>
                             <span :style="{ color: getLogLevelColor(log.level), display: 'inline-block', width: '55px', fontWeight: 'bold' }">[{{ log.level.toUpperCase() }}]</span>
                             <span style="color: var(--color-text-1);">{{ log.message }}</span>
@@ -711,6 +884,7 @@
                                 v-model:page-size="logQuery.limit"
                                 :page-size-options="[50, 100, 200, 500]"
                                 show-page-size
+                                :simple="isMobile"
                                 size="small"
                                 @change="fetchLogs"
                                 @page-size-change="logQuery.page=1; fetchLogs()"
@@ -719,18 +893,18 @@
                 </a-tab-pane>
 
                 <a-tab-pane key="settings">
-                    <template #title><icon-settings></icon-settings> 系统参数设置</template>
+                    <template #title><icon-settings></icon-settings> 上传参数</template>
                     <a-card class="apple-glass hover-effect" bordered style="max-width: 800px;">
                         <a-form :model="configForm" layout="vertical" @submit="saveConfig">
 
                             <a-row :gutter="24">
                                 <a-col :xs="24" :sm="12">
-                                    <a-form-item field="liveConfigPath" label="直播录制名单路径 (URL_config.ini)">
+                                    <a-form-item field="liveConfigPath" label="外部引擎 URL_config.ini 路径">
                                         <a-input v-model="configForm.liveConfigPath" size="small"><template #prefix><icon-file></icon-file></template></a-input>
                                     </a-form-item>
                                 </a-col>
                                 <a-col :xs="24" :sm="12">
-                                    <a-form-item field="recorderConfigPath" label="录制引擎主配置文件 (config.ini)">
+                                    <a-form-item field="recorderConfigPath" label="外部引擎 config.ini 路径">
                                         <a-input v-model="configForm.recorderConfigPath" size="small" placeholder="/app/config.ini"><template #prefix><icon-file></icon-file></template></a-input>
                                     </a-form-item>
                                 </a-col>
@@ -743,7 +917,7 @@
                                     </a-form-item>
                                 </a-col>
                                 <a-col :xs="24" :sm="12">
-                                    <a-form-item field="recorderContainer" label="录制引擎 Docker 容器名">
+                                    <a-form-item field="recorderContainer" label="外部引擎 Docker 容器名">
                                         <a-input v-model="configForm.recorderContainer" size="small"><template #prefix><icon-computer></icon-computer></template></a-input>
                                     </a-form-item>
                                 </a-col>
@@ -779,10 +953,52 @@
                                 <a-col :xs="24" :sm="8"><a-form-item field="maxRetry" label="重试次数上限"><a-input-number v-model="configForm.maxRetry" :min="1" :max="10" size="small"></a-input-number></a-form-item></a-col>
                             </a-row>
                             <a-divider style="margin: 12px 0 24px 0"></a-divider>
-                            <a-form-item style="margin-bottom: 0;">
-                                <a-button type="primary" html-type="submit" size="medium" style="border-radius: 8px;"><template #icon><icon-save></icon-save></template> 生效并保存配置</a-button>
-                                <a-button type="outline" size="medium" style="margin-left: 12px; border-radius: 8px;" @click="fetchConfig">撤销改动</a-button>
+                            <div class="mobile-action-buttons">
+                                <a-button type="primary" html-type="submit" size="medium" style="border-radius: 8px;"><template #icon><icon-save></icon-save></template> 生效并保存</a-button>
+                                <a-button type="outline" size="medium" style="border-radius: 8px;" @click="fetchConfig">撤销改动</a-button>
+                            </div>
+                        </a-form>
+                    </a-card>
+                </a-tab-pane>
+
+                <a-tab-pane key="cookies">
+                    <template #title><icon-edit></icon-edit> 外部<span class="hidden-xs">引擎凭证</span></template>
+                    <a-card class="apple-glass hover-effect" bordered style="max-width: 1000px;">
+                        <a-form layout="vertical" :model="cookiesForm" @submit="saveCookies">
+                            <a-alert type="info" style="margin-bottom: 20px;">
+                                设置前，请确保在【上传参数设置】中配置了正确的 <b>外部引擎主配置文件 (config.ini)</b> 的物理路径。保存后需去外部引擎管理页重启容器生效。
+                            </a-alert>
+
+                            <a-form-item label="直播保存物理路径 (不填则使用引擎默认)">
+                                <a-input v-model="cookiesForm.liveSavePath" size="medium" placeholder="例如: /home/file/static/">
+                                    <template #prefix><icon-folder></icon-folder></template>
+                                </a-input>
+                                <template #help>该路径为外部 Docker 录制引擎容器内部/宿主机的视频保存绝对路径。</template>
                             </a-form-item>
+
+                            <a-divider style="margin: 20px 0;"><span style="color: var(--color-text-3); font-size: 12px;">Cookie 凭证配置</span></a-divider>
+
+                            <a-form-item label="抖音 Cookie">
+                                <a-textarea v-model="cookiesForm.douyin" :auto-size="{minRows: 4, maxRows: 8}" placeholder="在此填入抖音 Cookie (包含 sessionid_ss 等凭证)"></a-textarea>
+                            </a-form-item>
+
+                            <a-form-item label="快手 Cookie">
+                                <a-textarea v-model="cookiesForm.kuaishou" :auto-size="{minRows: 3, maxRows: 6}" placeholder="在此填入快手 Cookie"></a-textarea>
+                            </a-form-item>
+
+                            <a-form-item label="Sooplive Cookie">
+                                <a-textarea v-model="cookiesForm.sooplive" :auto-size="{minRows: 3, maxRows: 6}" placeholder="在此填入 Sooplive Cookie"></a-textarea>
+                            </a-form-item>
+
+                            <a-divider style="margin: 12px 0 24px 0"></a-divider>
+                            <div class="mobile-action-buttons">
+                                <a-button type="primary" html-type="submit" size="medium" :loading="cookiesLoading" style="border-radius: 8px;">
+                                    <template #icon><icon-save></icon-save></template> 安全写入至配置文件
+                                </a-button>
+                                <a-button type="outline" size="medium" style="border-radius: 8px;" @click="fetchCookies" :loading="cookiesLoading">
+                                    <template #icon><icon-refresh></icon-refresh></template> 从文件重新读取
+                                </a-button>
+                            </div>
                         </a-form>
                     </a-card>
                 </a-tab-pane>
@@ -797,7 +1013,7 @@
             </a>
         </footer>
 
-        <a-modal v-model:visible="showLogsModal" title="录制引擎实时日志输出" width="80%" :footer="false" draggable>
+        <a-modal v-model:visible="showLogsModal" title="外部录制引擎实时日志输出" width="80%" :footer="false" draggable>
             <div class="action-bar" style="margin-bottom: 12px;">
                 <a-button type="primary" size="small" @click="fetchRecorderLogs"><template #icon><icon-refresh></icon-refresh></template> 刷新日志</a-button>
                 <span style="color: var(--color-text-3); font-size: 13px; margin-left: 12px;">显示最后 100 行容器日志</span>
@@ -807,8 +1023,7 @@
                 <div v-if="!recorderLogsContent" style="color: gray;">暂无日志输出...</div>
             </div>
         </a-modal>
-
-        <a-modal v-model:visible="showBatchAddModal" title="批量导入主播名单" @ok="handleBatchAdd" @cancel="showBatchAddModal = false" :ok-loading="batchAddLoading">
+        <a-modal v-model:visible="showBatchAddModal" title="批量导入外部引擎名单" @ok="handleBatchAdd" @cancel="showBatchAddModal = false" :ok-loading="batchAddLoading">
             <a-alert type="info" style="margin-bottom: 16px;">
                 请在下方输入框内粘贴主播信息，<b>每行一个</b>，单次导入上限受后端安全策略保护为 <b>50</b> 个。<br>
                 格式支持：<code>直播间链接</code> 或者 <code>直播间链接,主播名字</code>
@@ -816,6 +1031,58 @@
             <a-textarea v-model="batchAddText" placeholder="示例:&#10;https://live.douyin.com/12345678&#10;https://live.douyin.com/87654321,张三" :auto-size="{minRows: 10, maxRows: 15}" style="font-family: monospace;"></a-textarea>
         </a-modal>
 
+        <a-modal v-model:visible="showBuiltinSettingsModal" title="⚙️ 内置引擎全局设置" :footer="false" width="600px">
+            <a-tabs default-active-key="1">
+                <a-tab-pane key="1" title="基础设置">
+                    <a-form layout="vertical" :model="builtinSettings" style="margin-top: 15px;">
+                        <a-form-item label="录制保存路径" tooltip="支持绝对路径或相对路径，默认 ./downloads">
+                            <a-input v-model="builtinSettings.save_path" placeholder="./downloads"></a-input>
+                        </a-form-item>
+                        <a-form-item label="默认录制画质">
+                            <a-select v-model="builtinSettings.quality">
+                                <a-option value="uhd">蓝光 / 超清 (最高画质)</a-option>
+                                <a-option value="hd">高清</a-option>
+                                <a-option value="sd">标清</a-option>
+                            </a-select>
+                        </a-form-item>
+                        <a-form-item label="自动分片时长 (分钟)" tooltip="达到时间后自动分割视频文件，0为不限制">
+                            <a-input-number v-model="builtinSettings.segment_time" :min="0" :max="1440"></a-input-number>
+                        </a-form-item>
+                        <a-button type="primary" status="success" long @click="saveBuiltinConfig" :loading="builtinSaving">保存基础设置</a-button>
+                    </a-form>
+                </a-tab-pane>
+
+                <a-tab-pane key="2" title="内置平台 Cookie">
+                    <div style="color: #86909c; font-size: 12px; margin: 10px 0 15px;">若内置引擎一直显示“等待中”或报错，请在此更新 Cookie 以解除平台风控。</div>
+                    <a-form layout="vertical" :model="builtinCookies">
+                        <a-form-item label="抖音 (Douyin) Cookie">
+                            <a-textarea v-model="builtinCookies.douyin" placeholder="抓取抖音网页版 Cookie" allow-clear auto-size></a-textarea>
+                        </a-form-item>
+                        <a-form-item label="快手 (Kuaishou) Cookie">
+                            <a-textarea v-model="builtinCookies.kuaishou" placeholder="抓取快手网页版 Cookie (选填)" allow-clear auto-size></a-textarea>
+                        </a-form-item>
+                        <a-form-item label="Soop Cookie">
+                            <a-textarea v-model="builtinCookies.soop" placeholder="抓取 Soop 网页版 Cookie" allow-clear auto-size></a-textarea>
+                        </a-form-item>
+                        <a-button type="primary" status="warning" long @click="saveBuiltinCookies" :loading="builtinSavingCookies">热更新 Cookie</a-button>
+                    </a-form>
+                </a-tab-pane>
+            </a-tabs>
+        </a-modal>
+        <a-modal v-model:visible="showBuiltinBatchModal" title="📑 批量添加内置引擎任务" @ok="handleBatchAddBuiltin" :ok-loading="builtinBatchAdding">
+            <div style="margin-bottom: 15px;">
+                <a-select v-model="builtinBatchForm.platform" placeholder="请选择统一的平台">
+                    <a-option value="Douyin">抖音 (Douyin)</a-option>
+                    <a-option value="Kuaishou">快手 (Kuaishou)</a-option>
+                    <a-option value="Soop">Soop (AfreecaTV)</a-option>
+                </a-select>
+            </div>
+            <a-textarea
+                    v-model="builtinBatchForm.urls"
+                    placeholder="请输入直播间链接，确保【一行一个】&#10;示例：&#10;https://live.douyin.com/123456"
+                    :auto-size="{minRows: 6, maxRows: 12}">
+            </a-textarea>
+        </a-modal>
     </template>
 </div>
 
@@ -844,6 +1111,9 @@
 
     const app = createApp({
         setup() {
+            const isMobile = ref(window.innerWidth <= 768);
+            const handleResize = () => { isMobile.value = window.innerWidth <= 768; };
+
             const isDarkMode = ref(false);
 
             const autoSetThemeByTime = () => {
@@ -930,16 +1200,179 @@
                 return list.slice().sort((a, b) => {
                     const aOnline = activeRecordingStreamers.value.includes(a.name) && a.active;
                     const bOnline = activeRecordingStreamers.value.includes(b.name) && b.active;
-
                     if (aOnline && !bOnline) return -1;
                     if (!aOnline && bOnline) return 1;
-
                     if (a.active && !b.active) return -1;
                     if (!a.active && b.active) return 1;
-
                     return 0;
                 });
             });
+
+            const builtinSearchQuery = ref('');
+            const showBuiltinSettingsModal = ref(false);
+            const showBuiltinBatchModal = ref(false);
+            const builtinCurrentPage = ref(1);
+            const builtinPageSize = ref(10);
+            const builtinForm = ref({ platform: 'Douyin', url: '' });
+            const builtinBatchForm = ref({ platform: 'Douyin', urls: '' });
+            const builtinSettings = ref({ quality: 'uhd', segment_time: 0, save_path: './downloads' });
+            const builtinCookies = ref({ douyin: '', kuaishou: '', soop: '' });
+            const builtinTasks = ref([]);
+            const builtinAdding = ref(false);
+            const builtinBatchAdding = ref(false);
+            const builtinSaving = ref(false);
+            const builtinSavingCookies = ref(false);
+
+            const sortedBuiltinTasks = computed(() => {
+                let list = [...builtinTasks.value];
+                if (builtinSearchQuery.value) {
+                    const q = builtinSearchQuery.value.toLowerCase().trim();
+                    list = list.filter(t => {
+                        const nameMatch = t.anchor_name && t.anchor_name.toLowerCase().includes(q);
+                        const roomMatch = t.room_id && t.room_id.toLowerCase().includes(q);
+                        return nameMatch || roomMatch;
+                    });
+                }
+                list.sort((a, b) => {
+                    const isARecording = a.status === '录制中' ? 1 : 0;
+                    const isBRecording = b.status === '录制中' ? 1 : 0;
+                    return isBRecording - isARecording;
+                });
+                return list;
+            });
+
+            const paginatedBuiltinTasks = computed(() => {
+                const start = (builtinCurrentPage.value - 1) * builtinPageSize.value;
+                return sortedBuiltinTasks.value.slice(start, start + builtinPageSize.value);
+            });
+            watch(builtinSearchQuery, () => { builtinCurrentPage.value = 1; });
+
+            const builtinActiveCount = computed(() => builtinTasks.value.filter(t => !t.is_paused).length);
+            const builtinRecordingCount = computed(() => builtinTasks.value.filter(t => t.status === '录制中').length);
+            const isAllBuiltinActive = computed(() => builtinTasks.value.length > 0 && builtinTasks.value.some(t => !t.is_paused));
+
+            const getBuiltinLiveUrl = (platform, roomId) => {
+                if (platform === 'Douyin') return `https://live.douyin.com/${roomId}`;
+                if (platform === 'Kuaishou') return `https://live.kuaishou.com/u/${roomId}`;
+                if (platform === 'Soop') return `https://play.sooplive.co.kr/${roomId}`;
+                return roomId;
+            };
+
+            const downloadBuiltinCover = async (url, anchorName) => {
+                try {
+                    const response = await fetch(url);
+                    const blob = await response.blob();
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    const safeName = (anchorName || '未命名主播').replace(/[/\\?%*:|"<>]/g, '-');
+                    link.download = `${safeName}_封面图_${Date.now()}.jpg`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(link.href);
+                    Message.success('封面图片已开始下载');
+                } catch (e) {
+                    Message.error('图片下载失败，请直接右键保存图片');
+                }
+            };
+
+            const fetchBuiltinConfig = async () => {
+                try {
+                    const res1 = await api.get('/builtin_recorder/config');
+                    if (res1.data) {
+                        builtinSettings.value.quality = res1.data.quality || 'uhd';
+                        builtinSettings.value.segment_time = res1.data.segment_time || 0;
+                        builtinSettings.value.save_path = res1.data.save_path || './downloads';
+                    }
+                    const res2 = await api.get('/builtin_recorder/cookies');
+                    if (res2.data) { builtinCookies.value = res2.data; }
+                } catch (e) {}
+            };
+            const openBuiltinSettingsModal = () => {
+                showBuiltinSettingsModal.value = true;
+                fetchBuiltinConfig();
+            };
+
+            const saveBuiltinConfig = async () => {
+                builtinSaving.value = true;
+                try {
+                    await api.post('/builtin_recorder/config', builtinSettings.value);
+                    Message.success("内置引擎基础设置已生效！");
+                    showBuiltinSettingsModal.value = false;
+                } catch (e) {} finally { builtinSaving.value = false; }
+            };
+
+            const saveBuiltinCookies = async () => {
+                builtinSavingCookies.value = true;
+                try {
+                    await api.post('/builtin_recorder/cookies', builtinCookies.value);
+                    Message.success("内置引擎 Cookie 已热更新！");
+                } catch (e) {} finally { builtinSavingCookies.value = false; }
+            };
+
+            const handleAddBuiltin = async () => {
+                if (!builtinForm.value.url.trim()) return Message.warning("请填写直播间地址或ID");
+                builtinAdding.value = true;
+                try {
+                    await api.post('/builtin_recorder/add', builtinForm.value);
+                    Message.success("任务添加成功");
+                    builtinForm.value.url = '';
+                } catch (e) {} finally { builtinAdding.value = false; }
+            };
+
+            const handleBatchAddBuiltin = async (done) => {
+                const lines = builtinBatchForm.value.urls.split('\n').map(l => l.trim()).filter(l => l !== '');
+                if (lines.length === 0) {
+                    Message.warning("内容为空");
+                    done(false); return;
+                }
+                builtinBatchAdding.value = true;
+                let success = 0, fail = 0;
+                for (const url of lines) {
+                    try {
+                        await api.post('/builtin_recorder/add', { platform: builtinBatchForm.value.platform, url: url });
+                        success++;
+                    } catch (e) { fail++; }
+                }
+                builtinBatchAdding.value = false;
+                if (fail === 0) {
+                    Message.success(`成功批量添加 ${success} 个任务`);
+                    builtinBatchForm.value.urls = '';
+                    done(true);
+                } else {
+                    Message.warning(`添加完成，成功 ${success} 个，失败 ${fail} 个`);
+                    done(true);
+                }
+            };
+
+            const handleSwitchBuiltin = async (checked, record) => {
+                record.switching = true;
+                const action = checked ? 'resume' : 'pause';
+                try {
+                    await handleControlBuiltin(action, record);
+                } finally {
+                    record.switching = false;
+                }
+            };
+
+            const handleControlBuiltin = async (action, record) => {
+                try {
+                    await api.post('/builtin_recorder/control', { action: action, platform: record.platform, room_id: record.room_id });
+                    if (action === 'delete') Message.success("任务已删除");
+                    return true;
+                } catch (e) { return false; }
+            };
+
+            const handleMasterSwitchBuiltin = async (val) => {
+                const action = val ? 'resume_all' : 'pause_all';
+                const actionName = val ? '全部开启' : '全部暂停';
+                try {
+                    await api.post('/builtin_recorder/control_all', { action: action });
+                    Message.success(`已成功执行：${actionName}`);
+                    builtinTasks.value.forEach(t => { t.is_paused = !val; });
+                } catch (e) {}
+            };
+
 
             const handleGlobalKeydown = (e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
@@ -963,36 +1396,22 @@
             const batchAddText = ref('');
             const batchAddLoading = ref(false);
 
-            // ⭐ 更新：绑定 liveSavePath 参数
             const cookiesForm = reactive({ douyin: '', kuaishou: '', sooplive: '', liveSavePath: '' });
             const cookiesLoading = ref(false);
 
             const radarState = computed(() => {
                 const next = systemStatus.nextScanTime;
-
-                if (!systemStatus.running || next === 0) {
-                    return { status: 'paused', text: '系统已挂起', color: 'var(--color-text-3)' };
-                }
-
-                if (next === -1) {
-                    return { status: 'scanning', text: '正在同步目录状态...', color: '#165DFF' };
-                }
+                if (!systemStatus.running || next === 0) return { status: 'paused', text: '系统已挂起', color: 'var(--color-text-3)' };
+                if (next === -1) return { status: 'scanning', text: '正在同步目录状态...', color: '#165DFF' };
 
                 const diffSeconds = Math.floor((next - clientTime.value) / 1000);
-                if (diffSeconds < 0) {
-                    return { status: 'scanning', text: '准备执行扫描...', color: '#165DFF' };
-                }
+                if (diffSeconds < 0) return { status: 'scanning', text: '准备执行扫描...', color: '#165DFF' };
 
                 const m = Math.floor(diffSeconds / 60).toString().padStart(2, '0');
                 const s = (diffSeconds % 60).toString().padStart(2, '0');
-
                 const isUrgent = diffSeconds <= 60;
 
-                return {
-                    status: 'waiting',
-                    text: `${m} 分 ${s} 秒`,
-                    color: isUrgent ? '#F53F3F' : 'var(--color-text-1)'
-                };
+                return { status: 'waiting', text: `${m} 分 ${s} 秒`, color: isUrgent ? '#F53F3F' : 'var(--color-text-1)' };
             });
 
             const calculateRankPercent = (size) => {
@@ -1007,23 +1426,19 @@
                 try {
                     const res = await api.get('/cookies');
                     Object.assign(cookiesForm, res.data);
-                } catch(e) {} finally {
-                    cookiesLoading.value = false;
-                }
+                } catch(e) {} finally { cookiesLoading.value = false; }
             };
 
             const saveCookies = async () => {
                 if (!configForm.value.recorderConfigPath) {
-                    Message.warning('系统安全拦截：请先在【系统参数设置】中配置 config.ini 物理路径！');
+                    Message.warning('系统安全拦截：请先在【上传参数设置】中配置 config.ini 物理路径！');
                     return;
                 }
                 cookiesLoading.value = true;
                 try {
                     await api.put('/cookies', cookiesForm);
                     Message.success('录制引擎配置已安全追记至文件！');
-                } catch(e) {} finally {
-                    cookiesLoading.value = false;
-                }
+                } catch(e) {} finally { cookiesLoading.value = false; }
             };
 
             const uploadingTasks = computed(() => liveTasks.value.filter(t => t.status === 'uploading' || t.status === 'waiting'));
@@ -1042,7 +1457,6 @@
             const configDirsString = ref('');
 
             let originalConfigSnapshot = {};
-
             let chartInstance = null;
 
             const renderChart = () => {
@@ -1051,14 +1465,9 @@
                     const dom = document.getElementById('queueChart');
                     if (!dom) return;
                     if (!chartInstance) chartInstance = echarts.init(dom);
-
                     const total = queueStatus.waiting + queueStatus.uploading + queueStatus.success + queueStatus.failed;
-
                     if (total === 0) {
-                        chartInstance.setOption({
-                            title: { text: '暂无任务数据', left: 'center', top: 'center', textStyle: { color: '#999', fontSize: 14 } },
-                            series: []
-                        });
+                        chartInstance.setOption({ title: { text: '暂无任务数据', left: 'center', top: 'center', textStyle: { color: '#999', fontSize: 14 } }, series: [] });
                         return;
                     }
                     const option = {
@@ -1067,19 +1476,13 @@
                         legend: { bottom: '4%', left: 'center', textStyle: { color: isDarkMode.value ? '#E5E6EB' : '#1D2129' }, itemGap: 12 },
                         color: ['#F5A623', '#165DFF', '#00B42A', '#F53F3F'],
                         series: [{
-                            type: 'pie',
-                            radius: ['40%', '65%'],
-                            center: ['50%', '40%'],
-                            avoidLabelOverlap: true,
+                            type: 'pie', radius: ['40%', '65%'], center: ['50%', '40%'], avoidLabelOverlap: true,
                             itemStyle: { borderRadius: 6, borderColor: isDarkMode.value ? '#232324' : '#ffffff', borderWidth: 2 },
-                            label: { show: false, position: 'center' },
-                            emphasis: { label: { show: true, fontSize: '16', fontWeight: 'bold' } },
+                            label: { show: false, position: 'center' }, emphasis: { label: { show: true, fontSize: '16', fontWeight: 'bold' } },
                             labelLine: { show: false },
                             data: [
-                                { value: queueStatus.waiting, name: '等待中' },
-                                { value: queueStatus.uploading, name: '上传中' },
-                                { value: queueStatus.success, name: '已成功' },
-                                { value: queueStatus.failed, name: '已失败' }
+                                { value: queueStatus.waiting, name: '等待中' }, { value: queueStatus.uploading, name: '上传中' },
+                                { value: queueStatus.success, name: '已成功' }, { value: queueStatus.failed, name: '已失败' }
                             ]
                         }]
                     };
@@ -1091,83 +1494,32 @@
                 const dom = document.getElementById('trendChart');
                 if (!dom) return;
                 if (!trendChartInstance) trendChartInstance = echarts.init(dom);
-
                 const isDark = document.body.getAttribute('arco-theme') === 'dark';
                 const textColor = isDark ? 'rgba(255,255,255,0.7)' : '#4E5969';
                 const splitLineColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)';
 
                 const option = {
                     grid: { top: '15%', left: '3%', right: '4%', bottom: '8%', containLabel: true },
-                    tooltip: {
-                        trigger: 'axis',
-                        backgroundColor: isDark ? '#232324' : '#fff',
-                        borderColor: 'rgba(0,0,0,0.1)',
-                        textStyle: { color: isDark ? '#fff' : '#000' }
-                    },
-                    legend: {
-                        data: ['上传流量 (GB)', '文件数量 (个)'],
-                        textStyle: { color: textColor },
-                        top: '0%',
-                        right: 10
-                    },
-                    xAxis: {
-                        type: 'category',
-                        data: (statsData.trend || []).map(i => i.date),
-                        axisLine: { lineStyle: { color: splitLineColor } },
-                        axisLabel: { color: textColor }
-                    },
+                    tooltip: { trigger: 'axis', backgroundColor: isDark ? '#232324' : '#fff', borderColor: 'rgba(0,0,0,0.1)', textStyle: { color: isDark ? '#fff' : '#000' } },
+                    legend: { data: ['上传流量 (GB)', '文件数量 (个)'], textStyle: { color: textColor }, top: '0%', right: 10 },
+                    xAxis: { type: 'category', data: (statsData.trend || []).map(i => i.date), axisLine: { lineStyle: { color: splitLineColor } }, axisLabel: { color: textColor } },
                     yAxis: [
-                        {
-                            type: 'value', name: 'GB',
-                            splitLine: { lineStyle: { color: splitLineColor } },
-                            axisLabel: { color: textColor }
-                        },
-                        {
-                            type: 'value', name: '个', position: 'right',
-                            splitLine: { show: false },
-                            axisLabel: { color: textColor }
-                        }
+                        { type: 'value', name: 'GB', splitLine: { lineStyle: { color: splitLineColor } }, axisLabel: { color: textColor } },
+                        { type: 'value', name: '个', position: 'right', splitLine: { show: false }, axisLabel: { color: textColor } }
                     ],
                     series: [
-                        {
-                            name: '上传流量 (GB)',
-                            type: 'line',
-                            smooth: true,
-                            yAxisIndex: 0,
-                            data: (statsData.trend || []).map(i => i.size.toFixed(2)),
-                            areaStyle: {
-                                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                                    { offset: 0, color: 'rgba(22, 93, 255, 0.4)' },
-                                    { offset: 1, color: 'rgba(22, 93, 255, 0)' }
-                                ])
-                            },
-                            itemStyle: { color: '#165DFF' },
-                            lineStyle: { width: 3 }
-                        },
-                        {
-                            name: '文件数量 (个)',
-                            type: 'line',
-                            smooth: true,
-                            yAxisIndex: 1,
-                            data: (statsData.trend || []).map(i => i.count),
-                            itemStyle: { color: '#FF7D00' },
-                            lineStyle: { width: 3, type: 'dashed' }
-                        }
+                        { name: '上传流量 (GB)', type: 'line', smooth: true, yAxisIndex: 0, data: (statsData.trend || []).map(i => i.size.toFixed(2)), areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [ { offset: 0, color: 'rgba(22, 93, 255, 0.4)' }, { offset: 1, color: 'rgba(22, 93, 255, 0)' } ]) }, itemStyle: { color: '#165DFF' }, lineStyle: { width: 3 } },
+                        { name: '文件数量 (个)', type: 'line', smooth: true, yAxisIndex: 1, data: (statsData.trend || []).map(i => i.count), itemStyle: { color: '#FF7D00' }, lineStyle: { width: 3, type: 'dashed' } }
                     ]
                 };
                 trendChartInstance.setOption(option);
             };
 
             watch(queueStatus, renderChart, { deep: true });
-            watch(activeTab, (val) => {
-                if (val === 'overview') {
-                    setTimeout(() => {
-                        renderChart();
-                        renderTrendChart();
-                    }, 200);
-                }
-            });
+            watch(activeTab, (val) => { if (val === 'overview') { setTimeout(() => { renderChart(); renderTrendChart(); }, 200); } });
+
             window.addEventListener('resize', () => {
+                handleResize();
                 if(chartInstance) chartInstance.resize();
                 if(trendChartInstance) trendChartInstance.resize();
             });
@@ -1197,14 +1549,12 @@
                 try {
                     const res = await api.get('/recorder/status');
                     recorderStatus.value = res.data || '获取失败';
-                } catch (e) {
-                    recorderStatus.value = '离线/异常';
-                }
+                } catch (e) { recorderStatus.value = '离线/异常'; }
             };
 
             const controlRecorder = async (action) => {
                 if (!configForm.value.recorderContainer) {
-                    Message.error('请先在系统参数设置中配置 Docker 容器名');
+                    Message.error('请先在上传参数设置中配置 Docker 容器名');
                     activeTab.value = 'settings';
                     return;
                 }
@@ -1213,27 +1563,18 @@
                     await api.post('/recorder/control', null, { params: { action } });
                     Message.success('操作已成功执行');
                     fetchRecorderStatus();
-                } catch (e) {} finally {
-                    recorderControlLoading.value = false;
-                }
+                } catch (e) {} finally { recorderControlLoading.value = false; }
             };
 
             const fetchRecorderLogs = async () => {
                 try {
                     const res = await api.get('/recorder/logs');
                     recorderLogsContent.value = res.data;
-                    nextTick(() => {
-                        if (dockerLogsRef.value) {
-                            dockerLogsRef.value.scrollTop = dockerLogsRef.value.scrollHeight;
-                        }
-                    });
+                    nextTick(() => { if (dockerLogsRef.value) { dockerLogsRef.value.scrollTop = dockerLogsRef.value.scrollHeight; } });
                 } catch (e) {}
             };
 
-            const openLogsModal = () => {
-                showLogsModal.value = true;
-                fetchRecorderLogs();
-            };
+            const openLogsModal = () => { showLogsModal.value = true; fetchRecorderLogs(); };
 
             const fetchActiveStreamers = async () => {
                 try {
@@ -1255,185 +1596,93 @@
                 try {
                     await api.put('/streamers', streamers.value);
                     if (showMsg) Message.success('录制名单配置已热更新并保存到文件');
-                } catch (e) {
-                } finally {
+                } catch (e) {} finally {
                     setTimeout(() => { isSavingStreamers.value = false; }, 500);
                 }
             };
 
             const addStreamer = () => {
-                if (!newStreamer.url) {
-                    Message.warning('请输入直播间链接');
-                    return;
-                }
-                streamers.value.unshift({
-                    url: newStreamer.url.trim(),
-                    name: newStreamer.name.trim(),
-                    active: true
-                });
-                newStreamer.url = '';
-                newStreamer.name = '';
-                saveStreamers();
+                if (!newStreamer.url) { Message.warning('请输入直播间链接'); return; }
+                streamers.value.unshift({ url: newStreamer.url.trim(), name: newStreamer.name.trim(), active: true });
+                newStreamer.url = ''; newStreamer.name = ''; saveStreamers();
             };
 
             const handleBatchAdd = async () => {
-                if (!batchAddText.value.trim()) {
-                    Message.warning('请输入要批量添加的主播内容');
-                    return false;
-                }
-
+                if (!batchAddText.value.trim()) { Message.warning('请输入要批量添加的主播内容'); return false; }
                 const lines = batchAddText.value.split('\n').map(l => l.trim()).filter(l => l);
-                if (lines.length > 50) {
-                    Message.error(`后端安全配置拦截：单次最多添加 50 个，您当前输入了 ${lines.length} 个`);
-                    return false;
-                }
-
+                if (lines.length > 50) { Message.error(`单次最多添加 50 个`); return false; }
                 const newEntries = [];
                 for (const line of lines) {
-                    let url = line;
-                    let name = '';
-
+                    let url = line; let name = '';
                     const commaIndex = line.indexOf(',') > -1 ? line.indexOf(',') : line.indexOf('，');
-                    if (commaIndex > -1) {
-                        url = line.substring(0, commaIndex).trim();
-                        name = line.substring(commaIndex + 1).trim();
-                    }
-                    if (url) {
-                        newEntries.push({ url, name, active: true });
-                    }
+                    if (commaIndex > -1) { url = line.substring(0, commaIndex).trim(); name = line.substring(commaIndex + 1).trim(); }
+                    if (url) newEntries.push({ url, name, active: true });
                 }
-
-                if (newEntries.length === 0) {
-                    Message.warning('未能解析到有效的直播间链接，请检查格式');
-                    return false;
-                }
-
+                if (newEntries.length === 0) { Message.warning('未能解析到链接'); return false; }
                 batchAddLoading.value = true;
                 try {
                     await api.post('/streamers', newEntries);
-                    Message.success(`成功批量添加了 ${newEntries.length} 个主播记录`);
-                    batchAddText.value = '';
-                    showBatchAddModal.value = false;
-                    return true;
-                } catch (e) {
-                    return false;
-                } finally {
-                    batchAddLoading.value = false;
-                }
+                    Message.success(`成功批量添加了 ${newEntries.length} 个记录`);
+                    batchAddText.value = ''; showBatchAddModal.value = false; return true;
+                } catch (e) { return false; } finally { batchAddLoading.value = false; }
             };
 
             const removeStreamer = (record) => {
                 const index = streamers.value.findIndex(s => s.url === record.url);
-                if (index > -1) {
-                    streamers.value.splice(index, 1);
-                    saveStreamers();
-                    Message.success('已成功删除该主播记录');
-                }
+                if (index > -1) { streamers.value.splice(index, 1); saveStreamers(); Message.success('已成功删除'); }
             };
 
             const triggerWsPulse = (eventType) => {
-                wsStats.msgCount++;
-                wsStats.lastEvent = eventType;
-                wsStats.pulse = true;
+                wsStats.msgCount++; wsStats.lastEvent = eventType; wsStats.pulse = true;
                 if (wsPulseTimeout) clearTimeout(wsPulseTimeout);
                 wsPulseTimeout = setTimeout(() => { wsStats.pulse = false; }, 150);
             };
 
             const connectWS = () => {
-                if (ws) {
-                    ws.onclose = null;
-                    ws.close();
-                }
+                if (ws) { ws.onclose = null; ws.close(); }
                 wsStatus.value = 'connecting';
-
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
 
                 ws.onopen = () => {
                     wsStatus.value = 'connected';
-
                     if (pingTimer) clearInterval(pingTimer);
                     pingTimer = setInterval(() => {
-                        if (ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({ type: 'ping', payload: Date.now() }));
-                        }
+                        if (ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ type: 'ping', payload: Date.now() })); }
                     }, 5000);
                 };
 
                 ws.onmessage = (event) => {
                     try {
                         const msg = JSON.parse(event.data);
-
-                        if (msg.type === 'pong') {
-                            wsLatency.value = Date.now() - msg.payload;
-                            return;
-                        }
-
+                        if (msg.type === 'pong') { wsLatency.value = Date.now() - msg.payload; return; }
                         triggerWsPulse(msg.type);
 
                         if (msg.type === 'systemAlert') {
                             const payload = msg.payload;
-                            Notification[payload.level || 'error']({
-                                title: payload.title,
-                                content: payload.message + `\n\n触发时间: ${payload.time}`,
-                                duration: 0,
-                                closable: true,
-                                position: 'bottomRight',
-                                style: {
-                                    whiteSpace: 'pre-wrap',
-                                    wordBreak: 'break-all',
-                                    lineHeight: '1.6'
-                                }
-                            });
+                            Notification[payload.level || 'error']({ title: payload.title, content: payload.message + `\n\n触发时间: ${payload.time}`, duration: 0, closable: true, position: 'bottomRight', style: { whiteSpace: 'pre-wrap', wordBreak: 'break-all', lineHeight: '1.6' } });
                         } else if (msg.type === 'trafficMetrics') {
-                            trafficMetrics.speed = msg.payload.speed;
-                            trafficMetrics.time = msg.payload.time;
+                            trafficMetrics.speed = msg.payload.speed; trafficMetrics.time = msg.payload.time;
                         } else if (msg.type === 'statsTrend') {
                             const newStr = JSON.stringify(msg.payload);
                             if (window.lastStatsStr !== newStr) {
-                                window.lastStatsStr = newStr;
-                                statsData.trend = msg.payload.trend || [];
-                                statsData.rank = msg.payload.rank || [];
-
-                                if (activeTab.value === 'overview' && statsData.trend.length > 0) {
-                                    nextTick(() => renderTrendChart());
-                                }
+                                window.lastStatsStr = newStr; statsData.trend = msg.payload.trend || []; statsData.rank = msg.payload.rank || [];
+                                if (activeTab.value === 'overview' && statsData.trend.length > 0) { nextTick(() => renderTrendChart()); }
                             }
-                        } else if (msg.type === 'recorderStatus') {
-                            recorderStatus.value = msg.payload;
-                        } else if (msg.type === 'activeStreamers') {
-                            activeRecordingStreamers.value = msg.payload || [];
+                        } else if (msg.type === 'recorderStatus') { recorderStatus.value = msg.payload;
+                        } else if (msg.type === 'activeStreamers') { activeRecordingStreamers.value = msg.payload || [];
                         } else if (msg.type === 'streamersData') {
                             if (!isSavingStreamers.value) {
                                 const newStr = JSON.stringify(msg.payload);
-                                if (window.lastStreamersStr !== newStr) {
-                                    streamers.value = msg.payload;
-                                    window.lastStreamersStr = newStr;
-                                }
+                                if (window.lastStreamersStr !== newStr) { streamers.value = msg.payload; window.lastStreamersStr = newStr; }
                             }
                         } else if (msg.type === 'uploadProgress') {
                             const idx = liveTasks.value.findIndex(t => t.id === msg.payload.id);
                             if (idx > -1) {
-                                liveTasks.value[idx].uploaded = msg.payload.uploaded;
-                                liveTasks.value[idx].speed = msg.payload.speed;
-                                liveTasks.value[idx].status = msg.payload.status;
-                            } else {
-                                liveTasks.value.unshift({
-                                    id: msg.payload.id,
-                                    filename: msg.payload.filename,
-                                    path: msg.payload.path,
-                                    size: msg.payload.size,
-                                    uploaded: msg.payload.uploaded,
-                                    speed: msg.payload.speed,
-                                    status: msg.payload.status,
-                                    startTime: msg.payload.startTime,
-                                    duration: 0
-                                });
-                            }
-                        } else if (msg.type === 'systemStatus') {
-                            Object.assign(systemStatus, msg.payload);
-                        } else if (msg.type === 'queueStatus') {
-                            Object.assign(queueStatus, msg.payload);
+                                liveTasks.value[idx].uploaded = msg.payload.uploaded; liveTasks.value[idx].speed = msg.payload.speed; liveTasks.value[idx].status = msg.payload.status;
+                            } else { liveTasks.value.unshift({ id: msg.payload.id, filename: msg.payload.filename, path: msg.payload.path, size: msg.payload.size, uploaded: msg.payload.uploaded, speed: msg.payload.speed, status: msg.payload.status, startTime: msg.payload.startTime, duration: 0 }); }
+                        } else if (msg.type === 'systemStatus') { Object.assign(systemStatus, msg.payload);
+                        } else if (msg.type === 'queueStatus') { Object.assign(queueStatus, msg.payload);
                         } else if (msg.type === 'taskDone') {
                             const idx = liveTasks.value.findIndex(t => t.id === msg.payload.id);
                             if (idx > -1) {
@@ -1445,238 +1694,84 @@
                         } else if (msg.type === 'newLog') {
                             const log = msg.payload;
                             if (logQuery.page === 1 && !logQuery.keyword && (!logQuery.level || logQuery.level === log.level)) {
-                                logData.items.push(log);
-                                logData.total++;
-                                if (logData.items.length > logQuery.limit) {
-                                    logData.items.shift();
-                                }
+                                logData.items.push(log); logData.total++;
+                                if (logData.items.length > logQuery.limit) { logData.items.shift(); }
                             }
                         } else if (msg.type === 'scanStarted') {
-                            let titleText = '📡 系统扫描已启动';
-                            let contentText = `当前并发：${msg.payload.workers} 个线程\n扫描目标：共 ${msg.payload.dirs.length} 个目录`;
-
-                            if (msg.payload.trigger === 'auto') {
-                                titleText = '⏱️ 定时扫描执行中';
-                                contentText = `定时周期：${msg.payload.interval} 分钟/次\n` + contentText;
-                            } else if (msg.payload.trigger === 'start') {
-                                titleText = '▶️ 系统已恢复运行';
-                            } else if (msg.payload.trigger === 'rescan') {
-                                titleText = '🔍 手动深度扫描启动';
-                            } else if (msg.payload.trigger === 'config-update') {
-                                titleText = '⚙️ 配置重载扫描';
-                            }
-
-                            Notification.info({
-                                title: titleText,
-                                content: contentText,
-                                position: 'bottomRight',
-                                duration: 4000,
-                                style: { whiteSpace: 'pre-wrap', lineHeight: '1.6' }
-                            });
+                            let titleText = '📡 系统扫描已启动'; let contentText = `当前并发：${msg.payload.workers} 个线程\n扫描目标：共 ${msg.payload.dirs.length} 个目录`;
+                            if (msg.payload.trigger === 'auto') { titleText = '⏱️ 定时扫描执行中'; contentText = `定时周期：${msg.payload.interval} 分钟/次\n` + contentText; } else if (msg.payload.trigger === 'start') { titleText = '▶️ 系统已恢复运行'; } else if (msg.payload.trigger === 'rescan') { titleText = '🔍 手动深度扫描启动'; } else if (msg.payload.trigger === 'config-update') { titleText = '⚙️ 配置重载扫描'; }
+                            Notification.info({ title: titleText, content: contentText, position: 'bottomRight', duration: 4000, style: { whiteSpace: 'pre-wrap', lineHeight: '1.6' } });
                         } else if (msg.type === 'scanFinished') {
-                            Notification.success({
-                                title: '✅ 扫描侦测完毕',
-                                content: `本轮深度比惊完成，共发现并压入 ${msg.payload.added} 个新文件至队列中。`,
-                                position: 'bottomRight',
-                                duration: 4000
-                            });
+                            Notification.success({ title: '✅ 扫描侦测完毕', content: `本轮深度比对完成，共发现并压入 ${msg.payload.added} 个新文件至队列中。`, position: 'bottomRight', duration: 4000 });
+                        } else if (msg.type === 'builtinTasks') {
+                            const currentSwitching = {};
+                            builtinTasks.value.forEach(t => { if(t.switching) currentSwitching[`${t.platform}_${t.room_id}`] = true; });
+                            builtinTasks.value = (msg.payload || []).map(t => ({ ...t, switching: !!currentSwitching[`${t.platform}_${t.room_id}`] }));
                         }
                     } catch (e) {}
                 };
 
-                ws.onclose = () => {
-                    wsStatus.value = 'disconnected';
-                    wsLatency.value = 0;
-                    if (pingTimer) clearInterval(pingTimer);
-                    if (isLoggedIn.value) setTimeout(connectWS, 5000);
-                };
-
-                ws.onerror = () => {
-                    wsStatus.value = 'disconnected';
-                };
+                ws.onclose = () => { wsStatus.value = 'disconnected'; wsLatency.value = 0; if (pingTimer) clearInterval(pingTimer); if (isLoggedIn.value) setTimeout(connectWS, 5000); };
+                ws.onerror = () => { wsStatus.value = 'disconnected'; };
             };
 
             const control = (action) => {
-                const actionText = {
-                    'start': '确定要启动系统，开始扫描并上传文件吗？',
-                    'pause': '确定要暂停系统吗？\n(注意：正在上传的文件会继续，但不会处理新任务)',
-                    'stop': '危险操作：确定要强行停止系统吗？\n(这可能会打断当前的上传任务)',
-                    'rescan': '确定要立刻手动触发一轮完整的深度扫描吗？',
-                    'relogin': '确定要强制刷新远端服务器的授权 Token 吗？',
-                    'clear-fail-queue': '确定要清空所有【失败记录】吗？此操作不可恢复。',
-                    'retry-fail-queue': '确定要将所有失败任务重新放入队列执行吗？',
-                    'clear-success-queue': '确定要清空所有【成功记录】吗？此操作不可恢复。'
-                };
-
+                const actionText = { 'start': '确定要启动系统吗？', 'pause': '确定要暂停吗？', 'stop': '危险操作：强行停止系统吗？', 'rescan': '立刻触发深度扫描吗？', 'relogin': '刷新远端授权？', 'clear-fail-queue': '清空失败记录？', 'retry-fail-queue': '重试失败任务？', 'clear-success-queue': '清空成功记录？' };
                 Modal.confirm({
-                    title: '系统操作确认',
-                    content: actionText[action] || '确定要执行此操作吗？',
-                    okText: '确认执行',
-                    cancelText: '取消',
-                    onOk: async () => {
-                        try {
-                            await api.post(`/control/${action}`);
-                            Message.success('指令已成功下发');
-                        } catch (e) {}
-                    }
+                    title: '操作确认', content: actionText[action] || '确定要执行吗？', okText: '执行', cancelText: '取消',
+                    onOk: async () => { try { await api.post(`/control/${action}`); Message.success('指令已下发'); } catch (e) {} }
                 });
             };
 
-            const fetchHistory = async () => {
-                try {
-                    const res = await api.get('/tasks/history', { params: historyQuery });
-                    historyData.items = res.data.items || []; historyData.total = res.data.total || 0;
-                } catch (e) {}
-            };
+            const fetchHistory = async () => { try { const res = await api.get('/tasks/history', { params: historyQuery }); historyData.items = res.data.items || []; historyData.total = res.data.total || 0; } catch (e) {} };
             const onPageChange = (page) => { historyQuery.page = page; fetchHistory(); };
+            const fetchLogs = async () => { try { const res = await api.get('/logs', { params: logQuery }); logData.items = res.data.items || []; logData.total = res.data.total || 0; } catch (e) {} };
+            const downloadLogs = () => { window.open(`/api/v1/logs/download?level=${logQuery.level}&keyword=${logQuery.keyword}&limit=${logExportLimit.value}`, '_blank'); };
 
-            const fetchLogs = async () => {
-                try {
-                    const res = await api.get('/logs', { params: logQuery });
-                    logData.items = res.data.items || [];
-                    logData.total = res.data.total || 0;
-                } catch (e) {}
-            };
-
-            const downloadLogs = () => {
-                const url = `/api/v1/logs/download?level=${logQuery.level}&keyword=${logQuery.keyword}&limit=${logExportLimit.value}`;
-                window.open(url, '_blank');
-            };
-
-            const fetchConfig = async () => {
-                try {
-                    const res = await api.get('/config');
-                    configForm.value = res.data || {};
-                    originalConfigSnapshot = JSON.parse(JSON.stringify(res.data || {}));
-                    configDirsString.value = (res.data.dirs || []).join(', ');
-                } catch (e) {}
-            };
-
+            const fetchConfig = async () => { try { const res = await api.get('/config'); configForm.value = res.data || {}; originalConfigSnapshot = JSON.parse(JSON.stringify(res.data || {})); configDirsString.value = (res.data.dirs || []).join(', '); } catch (e) {} };
             const saveConfig = async () => {
                 try {
                     configForm.value.dirs = configDirsString.value.split(',').map(s => s.trim()).filter(s => s);
                     await api.put('/config', configForm.value);
-
-                    let changes = [];
-                    if (configForm.value.liveConfigPath !== originalConfigSnapshot.liveConfigPath) changes.push(`📄 录制名单路径已更新`);
-                    if (configForm.value.recorderConfigPath !== originalConfigSnapshot.recorderConfigPath) changes.push(`⚙️ 引擎配置 config.ini 路径已更新`);
-                    if (configForm.value.recorderContainer !== originalConfigSnapshot.recorderContainer) changes.push(`💻 容器名已更新`);
-                    if (configForm.value.remoteServer !== originalConfigSnapshot.remoteServer) changes.push(`🔗 API 地址已更新`);
-                    // 追加：邮箱配置更新提醒
-                    if (configForm.value.mailFrom !== originalConfigSnapshot.mailFrom || configForm.value.mailTo !== originalConfigSnapshot.mailTo) changes.push(`📧 邮箱推送配置已更新`);
-
-                    const oldDirs = (originalConfigSnapshot.dirs || []).join(',');
-                    const newDirs = (configForm.value.dirs || []).join(',');
-                    if (oldDirs !== newDirs) changes.push(`📁 监控目录已变更为 ${configForm.value.dirs.length} 个`);
-
-                    let changeText = changes.length > 0 ? changes.join('\n') : '本次保存无数值变动，已触发重载。';
-
-                    Notification.success({
-                        title: '⚙️ 系统参数已生效并下发',
-                        content: changeText,
-                        position: 'bottomRight',
-                        duration: 5000,
-                        style: { whiteSpace: 'pre-wrap', lineHeight: '1.6' }
-                    });
-
+                    Notification.success({ title: '⚙️ 参数已生效', content: '配置项已热更新', position: 'bottomRight', duration: 5000 });
                     originalConfigSnapshot = JSON.parse(JSON.stringify(configForm.value));
                 } catch (e) {}
             };
 
-            const formatSize = (bytes) => {
-                if (!bytes) return '0 B';
-                const k = 1024, sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-                const i = Math.floor(Math.log(bytes) / Math.log(k));
-                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-            };
-
+            const formatSize = (bytes) => { if (!bytes) return '0 B'; const k = 1024, sizes = ['B', 'KB', 'MB', 'GB', 'TB']; const i = Math.floor(Math.log(bytes) / Math.log(k)); return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]; };
             const formatSpeed = (bps) => formatSize(bps) + '/s';
             const calculatePercent = (up, tot) => (!tot ? 0 : Number((up / tot).toFixed(2)));
-
-            const formatDurationSeconds = (sec) => {
-                if (!sec && sec !== 0) return '-';
-                if (sec === 0) return '< 1s';
-                const m = Math.floor(sec / 60);
-                const s = sec % 60;
-                return m > 0 ? `${m}m ${s}s` : `${s}s`;
-            };
-
-            const formatDuration = (seconds) => {
-                const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60);
-                return `${h}h ${m}m`;
-            };
-
-            const getElapsedTime = (startTime) => {
-                if (!startTime) return '0s';
-                return formatDurationSeconds(Math.floor((clientTime.value - startTime) / 1000));
-            };
-
-            const formatStatusText = (status) => {
-                if (!status) return '未知';
-                const lower = status.toLowerCase();
-                if (lower.includes('success(秒传)')) return '成功 (秒传)';
-                if (lower.includes('success')) return '成功';
-                if (lower.includes('fail')) return '失败';
-                if (lower === 'uploading') return '处理中';
-                if (lower === 'waiting') return '等待中';
-                return status;
-            };
-
-            const getStatusColor = (status) => {
-                if (status.includes('success')) return 'green';
-                if (status.includes('fail')) return 'red';
-                if (status === 'uploading') return 'arcoblue';
-                return 'orange';
-            };
+            const formatDurationSeconds = (sec) => { if (!sec && sec !== 0) return '-'; if (sec === 0) return '< 1s'; const m = Math.floor(sec / 60); const s = sec % 60; return m > 0 ? `${m}m ${s}s` : `${s}s`; };
+            const formatDuration = (seconds) => { const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60); return `${h}h ${m}m`; };
+            const getElapsedTime = (startTime) => { if (!startTime) return '0s'; return formatDurationSeconds(Math.floor((clientTime.value - startTime) / 1000)); };
+            const formatStatusText = (status) => { if (!status) return '未知'; const lower = status.toLowerCase(); if (lower.includes('success(秒传)')) return '成功 (秒传)'; if (lower.includes('success')) return '成功'; if (lower.includes('fail')) return '失败'; if (lower === 'uploading') return '处理中'; if (lower === 'waiting') return '等待中'; return status; };
+            const getStatusColor = (status) => { if (status.includes('success')) return 'green'; if (status.includes('fail')) return 'red'; if (status === 'uploading') return 'arcoblue'; return 'orange'; };
             const getLogLevelColor = (level) => ({ 'info': '#00b42a', 'error': '#f53f3f', 'warn': '#ff7d00' }[level] || 'var(--color-text-3)');
 
             const initDashboard = () => {
                 fetchStatus(); fetchQueue(); fetchLiveTasks(); fetchHistory(); fetchLogs(); fetchConfig();
                 connectWS();
                 if (pollingTimer) clearInterval(pollingTimer);
-                pollingTimer = setInterval(() => {
-                    clientTime.value = Date.now();
-                }, 1000);
+                pollingTimer = setInterval(() => { clientTime.value = Date.now(); }, 1000);
             };
 
-            const cleanUp = () => {
-                if (pollingTimer) clearInterval(pollingTimer);
-                if (pingTimer) clearInterval(pingTimer);
-                if (ws) { ws.onclose = null; ws.close(); }
-                if (chartInstance) { chartInstance.dispose(); chartInstance = null; }
-                if (trendChartInstance) { trendChartInstance.dispose(); trendChartInstance = null; }
-            };
+            const cleanUp = () => { if (pollingTimer) clearInterval(pollingTimer); if (pingTimer) clearInterval(pingTimer); if (ws) { ws.onclose = null; ws.close(); } if (chartInstance) { chartInstance.dispose(); chartInstance = null; } if (trendChartInstance) { trendChartInstance.dispose(); trendChartInstance = null; } window.removeEventListener('resize', handleResize); };
 
-            onMounted(() => {
-                autoSetThemeByTime();
-                if (isLoggedIn.value) initDashboard();
-                window.addEventListener('keydown', handleGlobalKeydown);
-            });
-            onUnmounted(() => {
-                cleanUp();
-                window.removeEventListener('keydown', handleGlobalKeydown);
-            });
+            onMounted(() => { autoSetThemeByTime(); if (isLoggedIn.value) initDashboard(); window.addEventListener('keydown', handleGlobalKeydown); handleResize(); });
+            onUnmounted(() => { cleanUp(); window.removeEventListener('keydown', handleGlobalKeydown); });
 
             watch(activeTab, (newTab) => {
                 if (newTab === 'logs') fetchLogs();
                 if (newTab === 'history') fetchHistory();
                 if (newTab === 'cookies') fetchCookies();
-                if (newTab === 'streamers') {
-                    fetchRecorderStatus();
-                    fetchStreamers();
-                    fetchActiveStreamers();
-                }
+                if (newTab === 'streamers') { fetchRecorderStatus(); fetchStreamers(); fetchActiveStreamers(); }
+                if (newTab === 'builtin_recorder') { fetchBuiltinConfig(); }
             });
 
-            watch(() => logData.items, () => {
-                nextTick(() => {
-                    if (logContainerRef.value) {
-                        logContainerRef.value.scrollTop = logContainerRef.value.scrollHeight;
-                    }
-                });
-            }, { deep: true });
+            watch(() => logData.items, () => { nextTick(() => { if (logContainerRef.value) { logContainerRef.value.scrollTop = logContainerRef.value.scrollHeight; } }); }, { deep: true });
 
             return {
+                isMobile,
                 isDarkMode, toggleTheme, openGitHub,
                 isLoggedIn, loginLoading, loginForm, activeTab, handleLogin, handleLogout,
                 wsStatus, wsStats, wsLatency, getLatencyColor, liveTaskFilter,
@@ -1692,7 +1787,16 @@
                 recorderStatus, recorderControlLoading, showLogsModal, recorderLogsContent, dockerLogsRef, fetchRecorderStatus, controlRecorder, fetchRecorderLogs, openLogsModal,
                 formatSize, formatSpeed, calculatePercent, formatDuration, formatDurationSeconds, getElapsedTime, getStatusColor, getLogLevelColor, fetchLiveTasks, formatStatusText,
                 streamerSearchQuery, streamerSearchRef, filteredStreamers,
-                trafficMetrics, statsData, calculateRankPercent
+                trafficMetrics, statsData, calculateRankPercent,
+
+                builtinSearchQuery, showBuiltinSettingsModal, showBuiltinBatchModal,
+                builtinCurrentPage, builtinPageSize, sortedBuiltinTasks, paginatedBuiltinTasks,
+                builtinForm, builtinBatchForm, builtinSettings, builtinCookies, builtinTasks,
+                builtinActiveCount, builtinRecordingCount, isAllBuiltinActive,
+                builtinAdding, builtinBatchAdding, builtinSaving, builtinSavingCookies,
+                getBuiltinLiveUrl, fetchBuiltinConfig, saveBuiltinConfig, saveBuiltinCookies,
+                handleAddBuiltin, handleBatchAddBuiltin, handleControlBuiltin, handleSwitchBuiltin, handleMasterSwitchBuiltin, openBuiltinSettingsModal,
+                downloadBuiltinCover
             };
         }
     });

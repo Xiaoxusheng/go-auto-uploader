@@ -242,14 +242,26 @@ func main() {
 	if running {
 		_ = login() // 获取远端 token
 		activeCount := runOnce("auto", currentDynamicInterval)
-		if activeCount > 0 {
+
+		// ----------------------------------------------------
+		// ⭐ 修复点1：开机初始化时，合并读取内置录制引擎的工作状态
+		// ----------------------------------------------------
+		builtinRecordingCount := 0
+		for _, t := range GetBuiltinRecorderTasks() {
+			if t.Status == "录制中" {
+				builtinRecordingCount++
+			}
+		}
+		totalActiveCount := int(activeCount) + builtinRecordingCount // 外置变动数 + 内置引擎正在录制数
+
+		if totalActiveCount > 0 {
 			// 如果有正在录制的文件，动态加快扫描频率
-			currentDynamicInterval = baseInterval / (activeCount + 1)
+			currentDynamicInterval = baseInterval / (totalActiveCount + 1)
 			if currentDynamicInterval < 3 {
 				currentDynamicInterval = 3
 			}
 			atomic.StoreInt64(&currentDynamicIntervalGlobal, int64(currentDynamicInterval))
-			log.Printf("[SCAN][DYNAMIC] 🔥 开机检测到 %d 个文件正在录制，下次扫描已动态提速至 %d 分钟后", activeCount, currentDynamicInterval)
+			log.Printf("[SCAN][DYNAMIC] 🔥 开机检测到 %d 个文件正在录制 (外部: %d, 内置: %d)，下次扫描已动态提速至 %d 分钟后", totalActiveCount, activeCount, builtinRecordingCount, currentDynamicInterval)
 		}
 	}
 	runningMu.RUnlock()
@@ -274,13 +286,24 @@ func main() {
 
 				activeCount := runOnce("auto", currentDynamicInterval)
 
-				if activeCount > 0 {
-					newInterval := baseInterval / (activeCount + 1)
+				// ----------------------------------------------------
+				// ⭐ 修复点2：定时器超时后，合并读取内置录制引擎的工作状态
+				// ----------------------------------------------------
+				builtinRecordingCount := 0
+				for _, t := range GetBuiltinRecorderTasks() {
+					if t.Status == "录制中" {
+						builtinRecordingCount++
+					}
+				}
+				totalActiveCount := int(activeCount) + builtinRecordingCount
+
+				if totalActiveCount > 0 {
+					newInterval := baseInterval / (totalActiveCount + 1)
 					if newInterval < 3 {
 						newInterval = 3
 					}
 					if newInterval != currentDynamicInterval {
-						log.Printf("[SCAN][DYNAMIC] 🔥 当前有 %d 个主播处于录制写入状态，按比例调整下次扫描为 %d 分钟后", activeCount, newInterval)
+						log.Printf("[SCAN][DYNAMIC] 🔥 当前有 %d 个主播处于录制写入状态 (外部: %d, 内置: %d)，按比例调整下次扫描为 %d 分钟后", totalActiveCount, activeCount, builtinRecordingCount, newInterval)
 					}
 					currentDynamicInterval = newInterval
 					atomic.StoreInt64(&currentDynamicIntervalGlobal, int64(currentDynamicInterval))
@@ -303,8 +326,19 @@ func main() {
 
 				activeCount := runOnce(reason, currentDynamicInterval)
 
-				if activeCount > 0 {
-					newInterval := baseInterval / (activeCount + 1)
+				// ----------------------------------------------------
+				// ⭐ 修复点3：被打断扫描时，合并读取内置录制引擎的工作状态
+				// ----------------------------------------------------
+				builtinRecordingCount := 0
+				for _, t := range GetBuiltinRecorderTasks() {
+					if t.Status == "录制中" {
+						builtinRecordingCount++
+					}
+				}
+				totalActiveCount := int(activeCount) + builtinRecordingCount
+
+				if totalActiveCount > 0 {
+					newInterval := baseInterval / (totalActiveCount + 1)
 					if newInterval < 3 {
 						newInterval = 3
 					}
