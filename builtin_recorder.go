@@ -83,22 +83,20 @@ type BuiltinPlatform interface {
 	GetStreamURL(roomID string, quality string) (streamURL string, anchorName string, avatar string, err error)
 }
 
-// 触发内置引擎向总 WebSocket 信道发送更新广播
 func triggerBuiltinBroadcast() {
 	broadcastWS("builtinTasks", GetBuiltinRecorderTasks())
 }
 
-// ⭐ 更新任务状态 (包含中断唤醒逻辑)
 func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMsg string) {
 	key := platform + "_" + roomID
 	now := time.Now()
 	var sTime time.Time
 
-	isNewlyRecording := false // 判断是否是刚刚从非录制变成了“录制中”
+	isNewlyRecording := false
 
 	if existing, ok := builtinStatusMap.Load(key); ok {
 		oldTask := existing.(*BuiltinTaskStatus)
-		if anchorName == "" {
+		if anchorName == "" || anchorName == roomID {
 			anchorName = oldTask.AnchorName
 		}
 		if avatar == "" {
@@ -143,7 +141,6 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 
 	triggerBuiltinBroadcast()
 
-	// 💥 核心修复：一旦状态变更为“录制中”，主动发送中断信号，一脚踹醒主程序的睡眠定时器！
 	if isNewlyRecording && !isPaused {
 		go func() {
 			time.Sleep(2500 * time.Millisecond)
@@ -152,9 +149,42 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 	}
 }
 
-// ==========================================
-// ⭐ 新增：底层配置文件热重载引擎 (与外置引擎对齐)
-// ==========================================
+func updateBuiltinNameInTxt(platform, roomID, anchorName string) {
+	builtinAnchorLinesMutex.Lock()
+	defer builtinAnchorLinesMutex.Unlock()
+
+	content, err := os.ReadFile("builtin_urls.txt")
+	if err != nil {
+		return
+	}
+
+	lines := strings.Split(string(content), "\n")
+	changed := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		isP, p, rid, customName, rawURL := parseBuiltinLine(trimmed)
+		if p == platform && rid == roomID {
+			if customName != anchorName && anchorName != "" && anchorName != roomID {
+				prefix := ""
+				if isP {
+					prefix = "#"
+				}
+				safeName := strings.ReplaceAll(anchorName, "\n", "")
+				safeName = strings.ReplaceAll(safeName, "\r", "")
+				lines[i] = fmt.Sprintf("%s%s,主播:%s", prefix, rawURL, safeName)
+				changed = true
+			}
+		}
+	}
+
+	if changed {
+		os.WriteFile("builtin_urls.txt", []byte(strings.Join(lines, "\n")+"\n"), 0644)
+	}
+}
+
 func builtinHotReloadLoop() {
 	var lastModTime time.Time
 	for {
@@ -164,7 +194,6 @@ func builtinHotReloadLoop() {
 			continue
 		}
 
-		// 启动时跳过第一次触发，仅记录时间
 		if lastModTime.IsZero() {
 			lastModTime = info.ModTime()
 			continue
@@ -185,7 +214,6 @@ func builtinHotReloadLoop() {
 			currentKeys := make(map[string]bool)
 			stateChanged := false
 
-			//检测所有的主播链接
 			for _, line := range lines {
 				isPaused, platformName, roomID, customName, _ := parseBuiltinLine(line)
 				if roomID == "" || platformName == "" {
@@ -200,7 +228,6 @@ func builtinHotReloadLoop() {
 
 				state, exists := builtinTaskStates.Load(key)
 
-				// 1. 如果是底层文件手动新增的记录
 				if !exists {
 					stateChanged = true
 					var p BuiltinPlatform
@@ -228,7 +255,6 @@ func builtinHotReloadLoop() {
 						}
 					}
 				} else {
-					// 2. 如果是修改了现有的暂停/启动状态
 					if isPaused && state == "running" {
 						stateChanged = true
 						builtinTaskStates.Store(key, "paused")
@@ -266,7 +292,6 @@ func builtinHotReloadLoop() {
 				}
 			}
 
-			// 3. 检查是否有记录在底层 txt 中被手动删除了
 			builtinTaskStates.Range(func(k, v interface{}) bool {
 				key := k.(string)
 				if _, found := currentKeys[key]; !found {
@@ -283,7 +308,6 @@ func builtinHotReloadLoop() {
 				return true
 			})
 
-			// 如果底层配置确实被修改了，瞬间推送到所有前端网页
 			if stateChanged {
 				log.Println("[BUILTIN] 🔄 检测到底层监控文件发生变化，已热重载并同步至所有设备！")
 				triggerBuiltinBroadcast()
@@ -293,12 +317,11 @@ func builtinHotReloadLoop() {
 }
 
 // ==========================================
-// 初始化注册点：挂载至主系统
+// 初始化注册点
 // ==========================================
 func InitBuiltinRecorder(mux *http.ServeMux) {
 	checkFFmpegBuiltin()
 
-	// 独立配置文件
 	if _, err := os.Stat("builtin_config.json"); os.IsNotExist(err) {
 		builtinConfig = &BuiltinConfig{Quality: "uhd", CheckInterval: 30, SavePath: "./downloads"}
 		data, _ := json.MarshalIndent(builtinConfig, "", "    ")
@@ -381,7 +404,6 @@ func InitBuiltinRecorder(mux *http.ServeMux) {
 
 	log.Println("[BUILTIN] 🎥 内置轻量录制引擎已成功挂载！")
 
-	// ⭐ 启动内置系统的热重载进程
 	go builtinHotReloadLoop()
 }
 
@@ -435,7 +457,8 @@ func extractBuiltinRoomID(input string) string {
 			path := strings.Trim(u.Path, "/")
 			segments := strings.Split(path, "/")
 
-			if strings.Contains(u.Host, "sooplive.co.kr") || strings.Contains(u.Host, "afreecatv.com") {
+			// 增加对 sooplive.com (Global) 的兼容支持
+			if strings.Contains(u.Host, "sooplive.co.kr") || strings.Contains(u.Host, "afreecatv.com") || strings.Contains(u.Host, "sooplive.com") {
 				if len(segments) > 0 {
 					return segments[0]
 				}
@@ -538,7 +561,8 @@ func parseBuiltinLine(line string) (isPaused bool, platform string, roomID strin
 		platform = "Douyin"
 	} else if strings.Contains(rawURL, "kuaishou.com") {
 		platform = "Kuaishou"
-	} else if strings.Contains(rawURL, "sooplive.co.kr") || strings.Contains(rawURL, "afreecatv.com") {
+		// 增加对 sooplive.com (Global) 平台的支持
+	} else if strings.Contains(rawURL, "sooplive.co.kr") || strings.Contains(rawURL, "afreecatv.com") || strings.Contains(rawURL, "sooplive.com") {
 		platform = "Soop"
 	}
 
@@ -923,8 +947,10 @@ func builtinGenerateABogus(params, userAgent string) string {
 }
 
 // ==========================================
-// 🚀 完全还原的原版平台抓取实现
+// 🚀 平台抓取实现
 // ==========================================
+
+// ---------------- Douyin ----------------
 type DouyinBuiltinPlatform struct{}
 
 func (d *DouyinBuiltinPlatform) GetPlatformName() string { return "Douyin" }
@@ -996,14 +1022,13 @@ func (d *DouyinBuiltinPlatform) GetStreamURL(roomID string, quality string) (str
 	}
 
 	json.Unmarshal(body, &data)
-	if len(data.Data.Data) == 0 {
-		return "", "", "", nil
+
+	anchorName := roomID
+	if data.Data.User.Nickname != "" {
+		anchorName = data.Data.User.Nickname
 	}
 
-	roomData := data.Data.Data[0]
-	anchorName := data.Data.User.Nickname
 	avatar := ""
-
 	coverRe := regexp.MustCompile(`(?s)"(?:dynamic_cover|cover|room_cover)"\s*:\s*\{[^}]*"url_list"\s*:\s*\[\s*"([^"]+)"`)
 	if m := coverRe.FindSubmatch(body); len(m) >= 2 {
 		avatar = strings.ReplaceAll(string(m[1]), `\u002F`, "/")
@@ -1011,6 +1036,11 @@ func (d *DouyinBuiltinPlatform) GetStreamURL(roomID string, quality string) (str
 		avatar = data.Data.User.AvatarThumb.UrlList[0]
 	}
 
+	if len(data.Data.Data) == 0 {
+		return "", anchorName, avatar, nil
+	}
+
+	roomData := data.Data.Data[0]
 	if roomData.Status != 2 {
 		return "", anchorName, avatar, nil
 	}
@@ -1036,11 +1066,119 @@ func (d *DouyinBuiltinPlatform) GetStreamURL(roomID string, quality string) (str
 	return streamURL, anchorName, avatar, nil
 }
 
+// ---------------- Kuaishou ----------------
 type KuaishouBuiltinPlatform struct{}
 
 func (k *KuaishouBuiltinPlatform) GetPlatformName() string { return "Kuaishou" }
 
 func (k *KuaishouBuiltinPlatform) GetStreamURL(roomID string, quality string) (string, string, string, error) {
+	// 1. 首选高稳定性方案：使用移动端 API 获取数据 (极难被风控)
+	apiURL := "https://livev.m.chenzhongtech.com/rest/k/live/byUser?kpn=GAME_ZONE&captchaToken="
+
+	reqData := map[string]interface{}{
+		"source":      5,
+		"eid":         roomID,
+		"shareMethod": "card",
+		"clientType":  "WEB_OUTSIDE_SHARE_H5",
+	}
+	jsonData, _ := json.Marshal(reqData)
+
+	req, err := http.NewRequest("POST", apiURL, strings.NewReader(string(jsonData)))
+	if err != nil {
+		return k.fallbackWeb(roomID, quality)
+	}
+
+	req.Header.Set("User-Agent", "ios/7.830 (ios 17.0; ; iPhone 15 (A2846/A3089/A3090/A3092))")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
+	req.Header.Set("Content-Type", "application/json")
+	// ⭐ 突破防爬：注入 Python 里的短视频魔法分享链接作为 Referer，完美绕过快手 WAF
+	req.Header.Set("Referer", "https://www.kuaishou.com/short-video/3x224rwabjmuc9y?fid=1712760877&cc=share_copylink&followRefer=151&shareMethod=TOKEN&docId=9&kpn=KUAISHOU&subBiz=BROWSE_SLIDE_PHOTO&photoId=3x224rwabjmuc9y&shareId=17144298796566&shareToken=X-6FTMeYTsY97qYL&shareResourceType=PHOTO_OTHER&userId=3xtnuitaz2982eg&shareType=1&et=1_i/2000048330179867715_h3052&shareMode=APP&originShareId=17144298796566&appType=21&shareObjectId=5230086626478274600&shareUrlOpened=0&timestamp=1663833792288&utm_source=app_share&utm_medium=app_share&utm_campaign=app_share&location=app_share")
+
+	builtinCookieMutex.RLock()
+	myCookie := builtinCookies.Kuaishou
+	builtinCookieMutex.RUnlock()
+	if myCookie != "" {
+		req.Header.Set("Cookie", myCookie)
+	} else {
+		req.Header.Set("Cookie", "did=web_e988652e11b545469633396abe85a89f; didv=1796004001000")
+	}
+
+	resp, err := builtinHTTPClient.Do(req)
+	if err != nil {
+		return k.fallbackWeb(roomID, quality)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return k.fallbackWeb(roomID, quality)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return k.fallbackWeb(roomID, quality)
+	}
+
+	liveStream, ok := result["liveStream"].(map[string]interface{})
+	if !ok || liveStream == nil {
+		return k.fallbackWeb(roomID, quality)
+	}
+
+	anchorName := roomID
+	avatar := ""
+	if userMap, ok := liveStream["user"].(map[string]interface{}); ok {
+		if userName, ok := userMap["user_name"].(string); ok && userName != "" {
+			anchorName = userName
+		}
+		if headUrl, ok := userMap["headUrl"].(string); ok && headUrl != "" {
+			avatar = headUrl
+		}
+	}
+
+	living, _ := liveStream["living"].(bool)
+	if !living {
+		return "", anchorName, avatar, nil
+	}
+
+	var finalStreamURL string
+
+	if multiUrls, ok := liveStream["multiResolutionPlayUrls"].([]interface{}); ok && len(multiUrls) > 0 {
+		idx := 0
+		if quality == "sd" {
+			idx = len(multiUrls) - 1
+		} else if quality == "hd" && len(multiUrls) > 1 {
+			idx = 1
+		}
+		if firstObj, ok := multiUrls[idx].(map[string]interface{}); ok {
+			if urls, ok := firstObj["urls"].([]interface{}); ok && len(urls) > 0 {
+				if urlObj, ok := urls[0].(map[string]interface{}); ok {
+					if urlStr, ok := urlObj["url"].(string); ok {
+						finalStreamURL = urlStr
+					}
+				}
+			}
+		}
+	}
+
+	if finalStreamURL == "" {
+		if playUrls, ok := liveStream["playUrls"].([]interface{}); ok && len(playUrls) > 0 {
+			if urlObj, ok := playUrls[0].(map[string]interface{}); ok {
+				if urlStr, ok := urlObj["url"].(string); ok {
+					finalStreamURL = urlStr
+				}
+			}
+		}
+	}
+
+	if finalStreamURL == "" {
+		return k.fallbackWeb(roomID, quality)
+	}
+
+	return finalStreamURL, anchorName, avatar, nil
+}
+
+// 2. 备用方案：当移动端 API 解析失败时，自动回退到原有的 PC 网页端解析
+func (k *KuaishouBuiltinPlatform) fallbackWeb(roomID string, quality string) (string, string, string, error) {
 	reqURL := fmt.Sprintf("https://live.kuaishou.com/u/%s", roomID)
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
@@ -1092,7 +1230,7 @@ func (k *KuaishouBuiltinPlatform) GetStreamURL(roomID string, quality string) (s
 	re := regexp.MustCompile(`window\.__INITIAL_STATE__=({.*?});\(function`)
 	matches := re.FindSubmatch(body)
 	if len(matches) < 2 {
-		return "", anchorName, avatar, fmt.Errorf("无法获取快手数据")
+		return "", anchorName, avatar, fmt.Errorf("移动端/PC端均无法获取快手数据，可能被防爬拦截")
 	}
 
 	streamRe := regexp.MustCompile(`"url":"([^"]+\.flv[^"]*)"`)
@@ -1107,11 +1245,84 @@ func (k *KuaishouBuiltinPlatform) GetStreamURL(roomID string, quality string) (s
 	return "", anchorName, avatar, nil
 }
 
+// ---------------- Soop ----------------
 type SoopBuiltinPlatform struct{}
 
 func (s *SoopBuiltinPlatform) GetPlatformName() string { return "Soop" }
 
 func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (string, string, string, error) {
+	// ⭐️ 1. 新增：优先尝试 Soop Global API (对应 sooplive.com 的逻辑)
+	globalApi := fmt.Sprintf("https://api.sooplive.com/v2/stream/info/%s", roomID)
+	reqGlobal, err := http.NewRequest("GET", globalApi, nil)
+	if err == nil {
+		// 生成一个伪 UUID 作为 client-id 绕过限制
+		clientId := fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", rand.Uint32(), rand.Uint32()>>16, rand.Uint32()>>16, rand.Uint32()>>16, uint64(rand.Uint32())<<32|uint64(rand.Uint32()))
+		reqGlobal.Header.Set("client-id", clientId)
+		reqGlobal.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1 Edg/141.0.0.0")
+
+		builtinCookieMutex.RLock()
+		if builtinCookies.Soop != "" {
+			reqGlobal.Header.Set("Cookie", builtinCookies.Soop)
+		}
+		builtinCookieMutex.RUnlock()
+
+		respGlobal, err := builtinHTTPClient.Do(reqGlobal)
+		if err == nil {
+			bodyGlobal, _ := io.ReadAll(respGlobal.Body)
+			respGlobal.Body.Close()
+			var globalResult map[string]interface{}
+			if json.Unmarshal(bodyGlobal, &globalResult) == nil {
+				// 检查是否成功返回了 valid data
+				if dataMap, ok := globalResult["data"].(map[string]interface{}); ok && dataMap != nil {
+					// 确认是 Global 平台的主播，根据 'isStream' 字段判断是否开播
+					isStream, _ := dataMap["isStream"].(bool)
+
+					// 获取 Global 平台主播昵称和头像
+					anchorName := roomID
+					avatar := ""
+					infoApi := fmt.Sprintf("https://api.sooplive.com/v2/channel/info/%s", roomID)
+					reqInfo, _ := http.NewRequest("GET", infoApi, nil)
+					reqInfo.Header.Set("client-id", clientId)
+					reqInfo.Header.Set("User-Agent", reqGlobal.Header.Get("User-Agent"))
+
+					builtinCookieMutex.RLock()
+					if builtinCookies.Soop != "" {
+						reqInfo.Header.Set("Cookie", builtinCookies.Soop)
+					}
+					builtinCookieMutex.RUnlock()
+
+					if respInfo, err := builtinHTTPClient.Do(reqInfo); err == nil {
+						infoBody, _ := io.ReadAll(respInfo.Body)
+						respInfo.Body.Close()
+						var infoRes map[string]interface{}
+						if json.Unmarshal(infoBody, &infoRes) == nil {
+							if infoData, ok := infoRes["data"].(map[string]interface{}); ok {
+								if channelInfo, ok := infoData["streamerChannelInfo"].(map[string]interface{}); ok {
+									if nick, ok := channelInfo["nickname"].(string); ok {
+										anchorName = fmt.Sprintf("%s-%s", nick, roomID)
+									}
+									if profileImg, ok := channelInfo["profileImage"].(string); ok {
+										avatar = profileImg
+									}
+								}
+							}
+						}
+					}
+
+					if isStream {
+						// 直接返回全球版平台的 HLS 流地址
+						streamURL := fmt.Sprintf("https://global-media.sooplive.com/live/%s/master.m3u8", roomID)
+						return streamURL, anchorName, avatar, nil
+					} else {
+						// 已确认是全球版主播，但未开播，直接返回等待
+						return "", anchorName, avatar, nil
+					}
+				}
+			}
+		}
+	}
+
+	// ⭐️ 2. 如果 Global 接口无数据或者请求失败，无缝回退到旧版韩国区逻辑 (sooplive.co.kr / afreecatv.com)
 	apiURL := "http://api.m.sooplive.co.kr/broad/a/watch"
 	formData := url.Values{}
 	formData.Set("bj_id", roomID)
@@ -1170,27 +1381,25 @@ func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (strin
 		}
 	}
 
-	resCode, ok := result["result"].(float64)
-	if !ok || resCode != 1 {
-		if dataMap != nil {
-			if code, ok := dataMap["code"].(float64); ok {
-				if code == -6001 {
-					return "", anchorName, "", nil
-				} else if code == -3001 {
-					return "", anchorName, "", nil
-				} else if code == -3002 || code == -3004 {
-					return "", anchorName, "", fmt.Errorf("该直播需要19+登录或验证，请在配置中提供对应 Cookie (code: %v)", code)
-				}
-			}
-		}
-		return "", anchorName, "", fmt.Errorf("未知异常或开播请求失败")
-	}
-
 	avatar := ""
 	if dataMap != nil {
 		if bjID, ok := dataMap["bj_id"].(string); ok && len(bjID) >= 2 {
 			avatar = fmt.Sprintf("https://stimg.afreecatv.com/LOGO/%s/%s/%s.jpg", bjID[:2], bjID, bjID)
 		}
+	}
+
+	resCode, ok := result["result"].(float64)
+	if !ok || resCode != 1 {
+		if dataMap != nil {
+			if code, ok := dataMap["code"].(float64); ok {
+				if code == -6001 || code == -3001 {
+					return "", anchorName, avatar, nil
+				} else if code == -3002 || code == -3004 {
+					return "", anchorName, avatar, fmt.Errorf("该直播需要19+登录或验证，请更新 Cookie (code: %v)", code)
+				}
+			}
+		}
+		return "", anchorName, avatar, nil
 	}
 
 	broadNoStr := ""
@@ -1209,40 +1418,57 @@ func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (strin
 		return "", anchorName, avatar, fmt.Errorf("提取 broad_no 或 aid 失败")
 	}
 
-	cdnURL := fmt.Sprintf("http://livestream-manager.sooplive.co.kr/broad_stream_assign.html?return_type=gcp_cdn&use_cors=false&cors_origin_url=play.sooplive.co.kr&broad_key=%s-common-master-hls&time=8361.086329376785", broadNoStr)
-
-	reqCdn, err := http.NewRequest("GET", cdnURL, nil)
-	if err != nil {
-		return "", anchorName, avatar, err
+	cdns := []string{"gcp_cdn", "kt_cdn", "cf_cdn", "ak_cdn", "rmc_cdn"}
+	var suffixes []string
+	if quality == "hd" {
+		suffixes = []string{"-common-hd-hls", "-common-master-hls", "-common-original-hls", "-default-hls"}
+	} else if quality == "sd" {
+		suffixes = []string{"-common-sd-hls", "-common-hd-hls", "-common-master-hls", "-default-hls"}
+	} else {
+		suffixes = []string{"-common-original-hls", "-common-master-hls", "-default-hls", "-common-hd-hls"}
 	}
 
-	reqCdn.Header.Set("User-Agent", "Mozilla/5.0")
-	reqCdn.Header.Set("Origin", "https://play.sooplive.co.kr")
-	reqCdn.Header.Set("Referer", "https://play.sooplive.co.kr/")
-	reqCdn.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	var finalStreamURL string
 
-	respCdn, err := builtinHTTPClient.Do(reqCdn)
-	if err != nil {
-		return "", anchorName, avatar, err
+OuterLoop:
+	for _, cdn := range cdns {
+		for _, suffix := range suffixes {
+			cdnURL := fmt.Sprintf("http://livestream-manager.sooplive.co.kr/broad_stream_assign.html?return_type=%s&use_cors=false&cors_origin_url=play.sooplive.co.kr&broad_key=%s%s&time=%d", cdn, broadNoStr, suffix, time.Now().UnixMilli())
+
+			reqCdn, err := http.NewRequest("GET", cdnURL, nil)
+			if err != nil {
+				continue
+			}
+
+			reqCdn.Header.Set("User-Agent", "Mozilla/5.0")
+			reqCdn.Header.Set("Origin", "https://play.sooplive.co.kr")
+			reqCdn.Header.Set("Referer", "https://play.sooplive.co.kr/")
+			reqCdn.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			respCdn, err := builtinHTTPClient.Do(reqCdn)
+			if err != nil {
+				continue
+			}
+
+			bodyCdn, err := io.ReadAll(respCdn.Body)
+			respCdn.Body.Close()
+			if err != nil {
+				continue
+			}
+
+			var cdnResult map[string]interface{}
+			if err := json.Unmarshal(bodyCdn, &cdnResult); err == nil {
+				if viewURL, ok := cdnResult["view_url"].(string); ok && viewURL != "" {
+					finalStreamURL = viewURL + "?aid=" + aid
+					break OuterLoop
+				}
+			}
+		}
 	}
-	defer respCdn.Body.Close()
 
-	bodyCdn, err := io.ReadAll(respCdn.Body)
-	if err != nil {
-		return "", anchorName, avatar, err
+	if finalStreamURL == "" {
+		return "", anchorName, avatar, fmt.Errorf("遍历 CDN 节点提取 view_url 失败")
 	}
-
-	var cdnResult map[string]interface{}
-	if err := json.Unmarshal(bodyCdn, &cdnResult); err != nil {
-		return "", anchorName, avatar, fmt.Errorf("CDN响应 JSON 解析失败: %v", err)
-	}
-
-	viewURL, ok := cdnResult["view_url"].(string)
-	if !ok || viewURL == "" {
-		return "", anchorName, avatar, fmt.Errorf("从 CDN 节点提取 view_url 失败")
-	}
-
-	finalStreamURL := fmt.Sprintf("%s?aid=%s", viewURL, aid)
 
 	return finalStreamURL, anchorName, avatar, nil
 }
@@ -1258,13 +1484,26 @@ func captureBuiltinCover(platform, roomID, streamURL string) {
 	fileName := fmt.Sprintf("%s_%s.jpg", platform, roomID)
 	coverPath := filepath.Join(".", "covers", fileName)
 
-	cmd := exec.CommandContext(ctx, builtinFfmpegPath, "-y",
+	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	var args []string
+	args = append(args, "-y", "-user_agent", ua)
+
+	if platform == "Douyin" {
+		args = append(args, "-headers", "Referer: https://live.douyin.com/\r\n")
+	} else if platform == "Soop" {
+		args = append(args, "-headers", "Referer: https://play.sooplive.co.kr/\r\n")
+	}
+	// ⭐ 快手故意不传 Referer，防止 CDN 的严格反代校验拦截
+
+	args = append(args,
 		"-analyzeduration", "1000000",
 		"-probesize", "1000000",
 		"-i", streamURL,
 		"-vframes", "1",
 		"-q:v", "2",
 		coverPath)
+
+	cmd := exec.CommandContext(ctx, builtinFfmpegPath, args...)
 
 	if err := cmd.Run(); err == nil {
 		key := platform + "_" + roomID
@@ -1309,15 +1548,28 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 
 	var args []string
 	var outPath string
+
+	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	args = append(args, "-y", "-user_agent", ua)
+
+	if platformName == "Douyin" {
+		args = append(args, "-headers", "Referer: https://live.douyin.com/\r\n")
+	} else if platformName == "Soop" {
+		args = append(args, "-headers", "Referer: https://play.sooplive.co.kr/\r\n")
+	}
+	// ⭐ 取消快手的 Referer 绑定，解决快手 CDN 403 踢出问题！
+
+	args = append(args, "-analyzeduration", "2000000", "-probesize", "2000000", "-i", streamURL)
+
 	if segmentTime > 0 {
 		outPath = filepath.Join(outDir, fmt.Sprintf("%s_%s_%%03d.mp4", safeName, timestamp))
-		args = []string{"-y", "-analyzeduration", "2000000", "-probesize", "2000000", "-i", streamURL, "-c", "copy", "-f", "segment", "-segment_time", fmt.Sprintf("%d", segmentTime*60), "-reset_timestamps", "1", "-movflags", "frag_keyframe+empty_moov", outPath}
+		args = append(args, "-c", "copy", "-f", "segment", "-segment_time", fmt.Sprintf("%d", segmentTime*60), "-reset_timestamps", "1", "-movflags", "frag_keyframe+empty_moov", outPath)
 	} else {
 		outPath = filepath.Join(outDir, fmt.Sprintf("%s_%s.mp4", safeName, timestamp))
-		args = []string{"-y", "-analyzeduration", "2000000", "-probesize", "2000000", "-i", streamURL, "-c", "copy", "-f", "mp4", "-movflags", "frag_keyframe+empty_moov", outPath}
+		args = append(args, "-c", "copy", "-f", "mp4", "-movflags", "frag_keyframe+empty_moov", outPath)
 	}
 
-	log.Printf("\n🟢 [开始录制] 平台: %s | 主播: %s | 画质: %s\n   📂 路径: %s", platformName, anchorName, formatBuiltinQualityName(quality), outPath)
+	log.Printf("\n🟢 [开始录制] 平台: %s | 主播: %s | 画质: %s\n   🔗 直播流: %s\n   📂 存至: %s", platformName, anchorName, formatBuiltinQualityName(quality), streamURL, outPath)
 
 	startTime := time.Now()
 
@@ -1379,7 +1631,7 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 		log.Printf("👀 [启动监控] %s 房间: %s", platformName, roomID)
 		updateBuiltinStatus(platformName, roomID, "", "", "-", "监控中")
 
-		rand.NewSource(time.Now().UnixNano())
+		rand.Seed(time.Now().UnixNano())
 
 		for {
 			state, _ := builtinTaskStates.Load(key)
@@ -1405,8 +1657,15 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 
 			url, name, avatar, err := p.GetStreamURL(roomID, q)
 
-			if custom, ok := builtinCustomNames.Load(key); ok && custom.(string) != "" {
-				name = custom.(string)
+			if name != "" && name != roomID && !strings.Contains(name, "未命名") {
+				if custom, ok := builtinCustomNames.Load(key); !ok || custom.(string) != name {
+					builtinCustomNames.Store(key, name)
+					updateBuiltinNameInTxt(platformName, roomID, name)
+				}
+			} else {
+				if custom, ok := builtinCustomNames.Load(key); ok && custom.(string) != "" {
+					name = custom.(string)
+				}
 			}
 
 			if err != nil {
@@ -1446,11 +1705,6 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 					}
 				}
 			} else {
-				if name == "" {
-					if custom, ok := builtinCustomNames.Load(key); ok && custom.(string) != "" {
-						name = custom.(string)
-					}
-				}
 				if name != "" {
 					updateBuiltinStatus(platformName, roomID, name, avatar, q, "监控中")
 				}
