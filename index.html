@@ -914,7 +914,7 @@
                                         <icon-sync :spin="uploadingTasks.length > 0"></icon-sync> 正在处理中的文件
                                     </span>
                             </template>
-                            <a-table :data="uploadingTasks" size="small" :pagination="false"
+                            <a-table row-key="id" :data="uploadingTasks" size="small" :pagination="false"
                                      :scroll="{ x: 800 }"
                                      style="min-height: 400px;"
                                      bordered stripe hoverable column-resizable>
@@ -961,7 +961,7 @@
                                         <icon-check-circle-fill></icon-check-circle-fill> 近期已处理完成的文件
                                     </span>
                             </template>
-                            <a-table :data="completedTasks" size="small" :pagination="false"
+                            <a-table row-key="id" :data="completedTasks" size="small" :pagination="false"
                                      :scroll="{ x: 800 }"
                                      style="min-height: 400px;"
                                      bordered stripe hoverable column-resizable>
@@ -1080,7 +1080,7 @@
                     </a-card>
 
                     <a-card class="apple-glass hover-effect" bordered>
-                        <a-table :data="paginatedBuiltinTasks" :pagination="false" bordered stripe hoverable
+                        <a-table row-key="room_id" :data="paginatedBuiltinTasks" :pagination="false" bordered stripe hoverable
                                  column-resizable
                                  :scroll="{ x: 740 }"
                                  style="min-height: 450px;" size="small">
@@ -1096,14 +1096,16 @@
                                     <template #cell="{ record }">
                                         <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
                                             <div class="image-wrapper"
-                                                 style="position: relative; display: inline-block; flex-shrink: 0; line-height: 0;">
+                                                 style="position: relative; display: inline-block; flex-shrink: 0; line-height: 0; cursor: pointer;"
+                                                 @click="openPreview(record)">
+
                                                 <a-image
-                                                        :key="record.avatar"
                                                         v-if="record.avatar"
                                                         :src="record.avatar"
                                                         width="80" height="45" fit="cover"
                                                         style="border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);"
-                                                        alt="直播画面">
+                                                        alt="直播画面"
+                                                        :preview="false">
                                                     <template #error>
                                                         <div style="width: 80px; height: 45px; background: #f2f3f5; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #86909c;">
                                                             封面失效
@@ -1300,7 +1302,7 @@
                     </a-card>
 
                     <a-card class="apple-glass hover-effect" bordered>
-                        <a-table :data="filteredStreamers" size="small" :pagination="{ pageSize: 20, simple: isMobile }"
+                        <a-table row-key="name" :data="filteredStreamers" size="small" :pagination="{ pageSize: 20, simple: isMobile }"
                                  :scroll="{ x: 700 }"
                                  style="min-height: 450px;"
                                  bordered stripe hoverable column-resizable>
@@ -1392,7 +1394,7 @@
                         </a-button>
                     </div>
                     <a-card class="apple-glass hover-effect" bordered>
-                        <a-table :data="historyData.items" size="small" :pagination="pagination"
+                        <a-table row-key="id" :data="historyData.items" size="small" :pagination="pagination"
                                  @page-change="onPageChange"
                                  :scroll="{ x: 800 }"
                                  style="min-height: 450px;"
@@ -1860,6 +1862,12 @@
                     :auto-size="{minRows: 6, maxRows: 12}">
             </a-textarea>
         </a-modal>
+
+        <a-image-preview
+                v-model:visible="globalPreview.visible"
+                :src="globalPreview.src"
+        />
+
     </template>
 </div>
 
@@ -1983,7 +1991,6 @@
                 return streamers.value.filter(s => activeRecordingStreamers.value.includes(s.name) && s.active).length;
             });
 
-            // ⭐ 增加极度变态的强力容错：强制转String，且添加Try Catch包裹，失败时返回原列表而非空白
             const filteredStreamers = computed(() => {
                 try {
                     let list = [...(streamers.value || [])];
@@ -1997,7 +2004,6 @@
                         }
                     }
 
-                    // 确保 activeRecordingStreamers 是数组，防止 includes 报错
                     const activeList = Array.isArray(activeRecordingStreamers.value) ? activeRecordingStreamers.value : [];
 
                     return list.sort((a, b) => {
@@ -2011,10 +2017,25 @@
                     });
                 } catch (e) {
                     console.error("外部引擎搜索/排序错误:", e);
-                    // ⭐️ 绝对不能返回 []，否则页面直接白板！返回最原始的安全数据
                     return streamers.value || [];
                 }
             });
+
+            // ⭐ 全局独立大图预览状态管理
+            const globalPreview = reactive({
+                visible: false,
+                src: '',
+                roomId: '',
+                platform: ''
+            });
+
+            const openPreview = (record) => {
+                if (!record.avatar) return;
+                globalPreview.src = record.avatar;
+                globalPreview.roomId = record.room_id;
+                globalPreview.platform = record.platform;
+                globalPreview.visible = true;
+            };
 
             const builtinSearchQuery = ref('');
             const showBuiltinSettingsModal = ref(false);
@@ -2025,13 +2046,14 @@
             const builtinBatchForm = ref({platform: 'Douyin', urls: ''});
             const builtinSettings = ref({quality: 'uhd', segment_time: 0, save_path: './downloads'});
             const builtinCookies = ref({douyin: '', kuaishou: '', soop: ''});
+
             const builtinTasks = ref([]);
+
             const builtinAdding = ref(false);
             const builtinBatchAdding = ref(false);
             const builtinSaving = ref(false);
             const builtinSavingCookies = ref(false);
 
-            // ⭐ 内置引擎搜索容错
             const sortedBuiltinTasks = computed(() => {
                 try {
                     let list = [...(builtinTasks.value || [])];
@@ -2053,7 +2075,7 @@
                     return list;
                 } catch (e) {
                     console.error("内置引擎搜索/排序错误:", e);
-                    return builtinTasks.value || []; // ⭐️ 防止报错导致白板
+                    return builtinTasks.value || [];
                 }
             });
 
@@ -2783,14 +2805,34 @@
                                 duration: 4000
                             });
                         } else if (msg.type === 'builtinTasks') {
-                            const currentSwitching = {};
-                            builtinTasks.value.forEach(t => {
-                                if (t.switching) currentSwitching[`${t.platform}_${t.room_id}`] = true;
+                            const payloadTasks = msg.payload || [];
+                            const newTasks = [];
+
+                            payloadTasks.forEach(pTask => {
+                                // 查找原有的任务对象
+                                const existing = builtinTasks.value.find(t => t.platform === pTask.platform && t.room_id === pTask.room_id);
+                                if (existing) {
+                                    existing.anchor_name = pTask.anchor_name;
+                                    existing.status = pTask.status;
+                                    existing.duration = pTask.duration;
+                                    existing.file_size = pTask.file_size;
+                                    existing.is_paused = pTask.is_paused;
+
+                                    // ⭐ 永远更新缩略图，确保列表中看到的永远是最新的
+                                    existing.avatar = pTask.avatar;
+
+                                    // ⭐ 核心逻辑：如果当前用户正开着这个主播的大图预览，那么同时把大图查看器里的图片也给换掉，实现全自动幻灯片式刷新！
+                                    if (globalPreview.visible && globalPreview.platform === pTask.platform && globalPreview.roomId === pTask.room_id) {
+                                        globalPreview.src = pTask.avatar;
+                                    }
+
+                                    newTasks.push(existing);
+                                } else {
+                                    pTask.switching = false;
+                                    newTasks.push(pTask);
+                                }
                             });
-                            builtinTasks.value = (msg.payload || []).map(t => ({
-                                ...t,
-                                switching: !!currentSwitching[`${t.platform}_${t.room_id}`]
-                            }));
+                            builtinTasks.value = newTasks;
                         }
                     } catch (e) {
                     }
@@ -2904,7 +2946,7 @@
                 if (!startTime) return '0s';
                 return formatDurationSeconds(Math.floor((clientTime.value - startTime) / 1000));
             };
-            // ⭐ 增加类型转换保护，防止 status.toLowerCase 抛错
+
             const formatStatusText = (status) => {
                 if (!status) return '未知';
                 const lower = String(status).toLowerCase();
@@ -3104,7 +3146,10 @@
                 handleSwitchBuiltin,
                 handleMasterSwitchBuiltin,
                 openBuiltinSettingsModal,
-                downloadBuiltinCover
+                downloadBuiltinCover,
+
+                globalPreview,
+                openPreview
             };
         }
     });

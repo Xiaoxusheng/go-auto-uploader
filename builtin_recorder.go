@@ -1631,12 +1631,13 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 		return
 	}
 
-	// ⭐ 修复点：去掉 break，变成持续伴随整个录制周期的死循环轮询！
-	// 只要 FFmpeg 每 20 秒覆写一次本地文件，这里就能检测到，并瞬间推送给前端
 	go func() {
 		var lastModTime time.Time
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
+
+		// ⭐ 新增：截图全量归档计数器
+		coverCount := 1
 
 		for {
 			select {
@@ -1645,20 +1646,31 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 			case <-ticker.C:
 				if info, err := os.Stat(coverPath); err == nil && info.Size() > 0 {
 					modTime := info.ModTime()
-					// 只有当文件发生更新（比如FFmpeg新切了一帧），才向前端发推送
 					if modTime.After(lastModTime) {
 						lastModTime = modTime
+
+						// ⭐ 将截图单独放进一个专属的文件夹中，保持整洁，同时 main.go 依然会自动递归扫描上传它！
+						data, readErr := os.ReadFile(coverPath)
+						if readErr == nil && len(data) > 0 {
+							// 在录像同级目录下，单独建一个名为 Screenshots 的独立文件夹存放所有截图
+							imgArchiveDir := filepath.Join(outDir, "Screenshots")
+							os.MkdirAll(imgArchiveDir, os.ModePerm)
+
+							// 存入独立文件夹，命名格式：主播名_时间戳_cover_0001.jpg
+							archiveCoverPath := filepath.Join(imgArchiveDir, fmt.Sprintf("%s_%s_cover_%04d.jpg", safeName, timestamp, coverCount))
+							_ = os.WriteFile(archiveCoverPath, data, 0644)
+							log.Printf("[BUILTIN] 📸 第 %d 次截帧已保存至独立截图目录，等待自动上传: %s", coverCount, archiveCoverPath)
+							coverCount++
+						}
 
 						key := platformName + "_" + roomID
 						if existing, ok := builtinStatusMap.Load(key); ok {
 							task := existing.(*BuiltinTaskStatus)
 
-							// 只在开播捕获到第一帧的时候打印日志，避免每分钟刷屏
 							if task.Avatar == "" || strings.Contains(task.Avatar, "proxy_image") {
-								log.Printf("[BUILTIN] 📸 完美！引擎已在底层解码推流时，顺手生成了实时高清封面！")
+								log.Printf("[BUILTIN] 📺 引擎已从底层解码流中提取出首帧实时画面并更新大屏！")
 							}
 
-							// 核心：每次都带上全新的时间戳，强制前端丢弃缓存！
 							task.Avatar = fmt.Sprintf("/covers/%s?t=%d", fileName, time.Now().UnixMilli())
 							builtinStatusMap.Store(key, task)
 							triggerBuiltinBroadcast()
