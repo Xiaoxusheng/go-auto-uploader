@@ -243,9 +243,7 @@ func main() {
 		_ = login() // 获取远端 token
 		activeCount := runOnce("auto", currentDynamicInterval)
 
-		// ----------------------------------------------------
-		// ⭐ 修复点1：开机初始化时，合并读取内置录制引擎的工作状态
-		// ----------------------------------------------------
+		// 合并读取内置录制引擎的工作状态
 		builtinRecordingCount := 0
 		for _, t := range GetBuiltinRecorderTasks() {
 			if t.Status == "录制中" {
@@ -286,9 +284,7 @@ func main() {
 
 				activeCount := runOnce("auto", currentDynamicInterval)
 
-				// ----------------------------------------------------
-				// ⭐ 修复点2：定时器超时后，合并读取内置录制引擎的工作状态
-				// ----------------------------------------------------
+				// 合并读取内置录制引擎的工作状态
 				builtinRecordingCount := 0
 				for _, t := range GetBuiltinRecorderTasks() {
 					if t.Status == "录制中" {
@@ -316,7 +312,6 @@ func main() {
 				}
 
 			case reason := <-triggerScanCh:
-				// ⭐ 恢复了被删掉的打断日志
 				_ = login()
 				log.Printf("[SYSTEM] ⚡ 收到指令打断，执行扫描 (触发源: %s)", reason)
 
@@ -326,9 +321,6 @@ func main() {
 
 				activeCount := runOnce(reason, currentDynamicInterval)
 
-				// ----------------------------------------------------
-				// ⭐ 修复点3：被打断扫描时，合并读取内置录制引擎的工作状态
-				// ----------------------------------------------------
 				builtinRecordingCount := 0
 				for _, t := range GetBuiltinRecorderTasks() {
 					if t.Status == "录制中" {
@@ -397,12 +389,10 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	runningMu.RUnlock()
 
 	if !isRunning {
-		// ⭐ 恢复了被删掉的暂停提示日志
 		log.Println("[UPLOAD][PAUSED] 系统处于暂停状态，跳过本轮扫描")
 		return 0
 	}
 
-	// ⭐ 恢复了被删掉的扫描启动日志
 	log.Printf("[SCAN][START] 🔍 启动目录探测，并发Workers:[%d] 目标路径:[%s]", currentWorkers, strings.Join(currentDirs, " | "))
 
 	// 广播给前端
@@ -435,7 +425,6 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 				start := time.Now()
 				handleFile(path) // 处理文件上传
 
-				// ⭐ 恢复了被删掉的任务完成耗时日志
 				log.Printf("[UPLOAD][DONE][W%d] 文件:%s 耗时:%s",
 					id, filepath.Base(path), time.Since(start).Truncate(time.Millisecond))
 
@@ -519,7 +508,6 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	close(taskCh)
 	wg.Wait() // 等待所有 Worker 完成
 
-	// ⭐ 恢复了被删掉的扫描结束日志
 	log.Printf("[SCAN][END] 🏁 本轮扫描完毕。发现新文件: %d 个 | 仍在录制中文件: %d 个", newlyAddedFiles, activeRecordingCount)
 
 	broadcastWS("scanFinished", map[string]interface{}{
@@ -577,7 +565,6 @@ func handleFile(path string) {
 	// 检测秒传机制 (Hash)
 	hash := fileHash(path)
 	if hashExists(hash) {
-		// ⭐ 恢复了被删掉的秒传日志
 		log.Println("[SKIP][HASH] 文件已存在于记录中 (秒传触发):", path)
 
 		taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
@@ -901,7 +888,6 @@ func currentRate() int {
 	return appConfig.NightRate
 }
 
-// ⭐ 恢复了被删掉的完善版特殊字符清理逻辑
 func cleanFileName(name string) string {
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
@@ -984,7 +970,7 @@ func reportLoop() {
 	}
 }
 
-// ⭐ 恢复了完整的 HTML 邮件发送格式逻辑
+// ⭐ 恢复了完整的 HTML 邮件发送格式逻辑，并新增【周期内时间过滤】
 func sendReport() {
 	data, _ := os.ReadFile(successLogFile)
 	var list []UploadRecord
@@ -992,10 +978,28 @@ func sendReport() {
 		return
 	}
 
+	appConfigMu.RLock()
+	repMinutes := appConfig.EmailInterval
+	appConfigMu.RUnlock()
+
+	// ⭐ 核心过滤：计算周期截止时间，只发送最近这个周期内（如6小时内）的记录
+	cutoffTime := time.Now().Add(-time.Duration(repMinutes) * time.Minute)
+	var recentList []UploadRecord
+	for _, r := range list {
+		if r.Time.After(cutoffTime) {
+			recentList = append(recentList, r)
+		}
+	}
+
+	if len(recentList) == 0 {
+		log.Printf("[REPORT] 📦 过去 %d 分钟内无新上传成功记录，跳过本次邮件推送", repMinutes)
+		return
+	}
+
 	group := map[string][]UploadRecord{}
 	var totalBytes int64
 
-	for _, r := range list {
+	for _, r := range recentList {
 		group[r.Streamer] = append(group[r.Streamer], r)
 		totalBytes += r.Size
 	}
@@ -1010,10 +1014,6 @@ func sendReport() {
 <tr><td align="center"><table width="760" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial;">
 `)
 
-	appConfigMu.RLock()
-	repMinutes := appConfig.EmailInterval
-	appConfigMu.RUnlock()
-
 	html.WriteString(fmt.Sprintf(`
 <tr><td style="padding:24px;border-bottom:1px solid #e5e7eb;">
 <h2 style="margin:0;font-size:20px;color:#111827;">📦 上传成功报告</h2>
@@ -1025,12 +1025,12 @@ func sendReport() {
 <tr><td style="padding:20px;">
 <table width="100%%" cellpadding="12" cellspacing="0" style="background:#f8fafc;border-radius:10px;">
 <tr>
-<td><div style="font-size:12px;color:#6b7280;">文件数量</div><div style="font-size:22px;color:#111827;"><b>%d</b></div></td>
+<td><div style="font-size:12px;color:#6b7280;">新增文件数</div><div style="font-size:22px;color:#111827;"><b>%d</b></div></td>
 <td><div style="font-size:12px;color:#6b7280;">消耗流量</div><div style="font-size:22px;color:#111827;"><b>%.2f MB</b></div></td>
-<td><div style="font-size:12px;color:#6b7280;">主播数量</div><div style="font-size:22px;color:#111827;"><b>%d</b></div></td>
+<td><div style="font-size:12px;color:#6b7280;">涉及主播数</div><div style="font-size:22px;color:#111827;"><b>%d</b></div></td>
 </tr>
 </table></td></tr>
-`, len(list), totalMB, len(group)))
+`, len(recentList), totalMB, len(group)))
 
 	for streamer, files := range group {
 		html.WriteString(fmt.Sprintf(`<tr><td style="padding:20px 20px 8px 20px;"><h3 style="margin:0;font-size:15px;color:#2563eb;">🎬 %s</h3></td></tr>
@@ -1048,11 +1048,11 @@ func sendReport() {
 
 	html.WriteString(`<tr><td style="padding:16px 24px;border-top:1px dashed #e5e7eb;font-size:12px;color:#9ca3af;">本邮件由自动上传系统生成，请勿回复</td></tr></table></td></tr></table>`)
 
-	log.Printf("[REPORT] 📤 正在发送本周期统计邮件，包含 %d 个文件记录", len(list))
+	log.Printf("[REPORT] 📤 正在发送本周期统计邮件，包含 %d 个文件记录", len(recentList))
 	sendQQMail("📦 上传成功报告", html.String())
 }
 
-// 修改后的邮件发送函数，通过读取配置来加载邮箱参数
+// 通过读取配置来加载邮箱参数
 func sendQQMail(subject, body string) {
 	appConfigMu.RLock()
 	mailFrom := appConfig.MailFrom
@@ -1163,7 +1163,7 @@ func detectStreamer(remote string) string {
 	return "未知"
 }
 
-// ⭐ 这里是触发记录的地方，只要 enableLogs 开关打开就会投递进 WebSocket
+// 这里是触发记录的地方，只要 enableLogs 开关打开就会投递进 WebSocket
 func addLog(level, message, errorMsg string) {
 	appConfigMu.RLock()
 	enabled := appConfig.EnableLogs

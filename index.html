@@ -914,7 +914,8 @@
                                         <icon-sync :spin="uploadingTasks.length > 0"></icon-sync> 正在处理中的文件
                                     </span>
                             </template>
-                            <a-table row-key="id" :data="uploadingTasks" size="small" :pagination="false"
+                            <a-table row-key="id" :data="uploadingTasks" size="small"
+                                     :pagination="{ pageSize: 15, simple: isMobile, hideOnSinglePage: true }"
                                      :scroll="{ x: 800 }"
                                      style="min-height: 400px;"
                                      bordered stripe hoverable column-resizable>
@@ -961,7 +962,8 @@
                                         <icon-check-circle-fill></icon-check-circle-fill> 近期已处理完成的文件
                                     </span>
                             </template>
-                            <a-table row-key="id" :data="completedTasks" size="small" :pagination="false"
+                            <a-table row-key="id" :data="completedTasks" size="small"
+                                     :pagination="{ defaultPageSize: 15, showTotal: !isMobile, simple: isMobile, showPageSize: !isMobile, pageSizeOptions: [15, 50, 100, 200, 500], hideOnSinglePage: false }"
                                      :scroll="{ x: 800 }"
                                      style="min-height: 400px;"
                                      bordered stripe hoverable column-resizable>
@@ -1396,6 +1398,7 @@
                     <a-card class="apple-glass hover-effect" bordered>
                         <a-table row-key="id" :data="historyData.items" size="small" :pagination="pagination"
                                  @page-change="onPageChange"
+                                 @page-size-change="onPageSizeChange"
                                  :scroll="{ x: 800 }"
                                  style="min-height: 450px;"
                                  bordered stripe hoverable column-resizable>
@@ -2021,7 +2024,6 @@
                 }
             });
 
-            // ⭐ 全局独立大图预览状态管理
             const globalPreview = reactive({
                 visible: false,
                 src: '',
@@ -2324,11 +2326,17 @@
 
             const historyQuery = reactive({page: 1, limit: 15, filename: '', status: ''});
             const historyData = reactive({items: [], total: 0});
+
+            // ⭐ 修复：强制显示分页，并开启页码条数切换与总数显示
             const pagination = computed(() => ({
                 total: historyData.total,
                 current: historyQuery.page,
                 pageSize: historyQuery.limit,
-                size: 'small'
+                size: 'small',
+                showTotal: !isMobile.value,
+                showPageSize: !isMobile.value,
+                pageSizeOptions: [15, 50, 100, 200],
+                hideOnSinglePage: false
             }));
 
             const logQuery = reactive({page: 1, limit: 50, level: '', keyword: ''});
@@ -2416,7 +2424,7 @@
                         textStyle: {color: isDark ? '#fff' : '#000'}
                     },
                     legend: {
-                        data: ['上传流量 (GB)', '文件数量 (个)'],
+                        data: ['上传流量 (GB)', '文件数量 (个）'],
                         textStyle: {color: textColor},
                         top: '0%',
                         right: 10
@@ -2459,7 +2467,7 @@
                             lineStyle: {width: 3}
                         },
                         {
-                            name: '文件数量 (个)',
+                            name: '文件数量',
                             type: 'line',
                             smooth: true,
                             yAxisIndex: 1,
@@ -2887,6 +2895,14 @@
                 historyQuery.page = page;
                 fetchHistory();
             };
+
+            // ⭐ 新增：处理每页条数切换
+            const onPageSizeChange = (size) => {
+                historyQuery.limit = size;
+                historyQuery.page = 1;
+                fetchHistory();
+            };
+
             const fetchLogs = async () => {
                 try {
                     const res = await api.get('/logs', {params: logQuery});
@@ -3063,6 +3079,7 @@
                 pagination,
                 fetchHistory,
                 onPageChange,
+                onPageSizeChange, // ⭐ 必须暴露出来才能被模板调用
                 logQuery,
                 logData,
                 logExportLimit,
