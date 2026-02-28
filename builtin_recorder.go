@@ -396,6 +396,7 @@ func InitBuiltinRecorder(mux *http.ServeMux) {
 	os.MkdirAll("./covers", os.ModePerm)
 	mux.Handle("/covers/", http.StripPrefix("/covers/", http.FileServer(http.Dir("./covers"))))
 
+	mux.HandleFunc("/api/v1/builtin_recorder/proxy_image", apiProxyImage)
 	mux.HandleFunc("/api/v1/builtin_recorder/config", apiRecorderConfig)
 	mux.HandleFunc("/api/v1/builtin_recorder/cookies", apiRecorderCookies)
 	mux.HandleFunc("/api/v1/builtin_recorder/add", apiRecorderAdd)
@@ -457,7 +458,6 @@ func extractBuiltinRoomID(input string) string {
 			path := strings.Trim(u.Path, "/")
 			segments := strings.Split(path, "/")
 
-			// 增加对 sooplive.com (Global) 的兼容支持
 			if strings.Contains(u.Host, "sooplive.co.kr") || strings.Contains(u.Host, "afreecatv.com") || strings.Contains(u.Host, "sooplive.com") {
 				if len(segments) > 0 {
 					return segments[0]
@@ -561,7 +561,6 @@ func parseBuiltinLine(line string) (isPaused bool, platform string, roomID strin
 		platform = "Douyin"
 	} else if strings.Contains(rawURL, "kuaishou.com") {
 		platform = "Kuaishou"
-		// 增加对 sooplive.com (Global) 平台的支持
 	} else if strings.Contains(rawURL, "sooplive.co.kr") || strings.Contains(rawURL, "afreecatv.com") || strings.Contains(rawURL, "sooplive.com") {
 		platform = "Soop"
 	}
@@ -1036,6 +1035,10 @@ func (d *DouyinBuiltinPlatform) GetStreamURL(roomID string, quality string) (str
 		avatar = data.Data.User.AvatarThumb.UrlList[0]
 	}
 
+	if avatar != "" {
+		avatar = "/api/v1/builtin_recorder/proxy_image?url=" + url.QueryEscape(avatar)
+	}
+
 	if len(data.Data.Data) == 0 {
 		return "", anchorName, avatar, nil
 	}
@@ -1072,7 +1075,6 @@ type KuaishouBuiltinPlatform struct{}
 func (k *KuaishouBuiltinPlatform) GetPlatformName() string { return "Kuaishou" }
 
 func (k *KuaishouBuiltinPlatform) GetStreamURL(roomID string, quality string) (string, string, string, error) {
-	// 1. 首选高稳定性方案：使用移动端 API 获取数据 (极难被风控)
 	apiURL := "https://livev.m.chenzhongtech.com/rest/k/live/byUser?kpn=GAME_ZONE&captchaToken="
 
 	reqData := map[string]interface{}{
@@ -1091,7 +1093,6 @@ func (k *KuaishouBuiltinPlatform) GetStreamURL(roomID string, quality string) (s
 	req.Header.Set("User-Agent", "ios/7.830 (ios 17.0; ; iPhone 15 (A2846/A3089/A3090/A3092))")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
 	req.Header.Set("Content-Type", "application/json")
-	// ⭐ 突破防爬：注入 Python 里的短视频魔法分享链接作为 Referer，完美绕过快手 WAF
 	req.Header.Set("Referer", "https://www.kuaishou.com/short-video/3x224rwabjmuc9y?fid=1712760877&cc=share_copylink&followRefer=151&shareMethod=TOKEN&docId=9&kpn=KUAISHOU&subBiz=BROWSE_SLIDE_PHOTO&photoId=3x224rwabjmuc9y&shareId=17144298796566&shareToken=X-6FTMeYTsY97qYL&shareResourceType=PHOTO_OTHER&userId=3xtnuitaz2982eg&shareType=1&et=1_i/2000048330179867715_h3052&shareMode=APP&originShareId=17144298796566&appType=21&shareObjectId=5230086626478274600&shareUrlOpened=0&timestamp=1663833792288&utm_source=app_share&utm_medium=app_share&utm_campaign=app_share&location=app_share")
 
 	builtinCookieMutex.RLock()
@@ -1133,6 +1134,10 @@ func (k *KuaishouBuiltinPlatform) GetStreamURL(roomID string, quality string) (s
 		if headUrl, ok := userMap["headUrl"].(string); ok && headUrl != "" {
 			avatar = headUrl
 		}
+	}
+
+	if avatar != "" {
+		avatar = "/api/v1/builtin_recorder/proxy_image?url=" + url.QueryEscape(avatar)
 	}
 
 	living, _ := liveStream["living"].(bool)
@@ -1177,7 +1182,6 @@ func (k *KuaishouBuiltinPlatform) GetStreamURL(roomID string, quality string) (s
 	return finalStreamURL, anchorName, avatar, nil
 }
 
-// 2. 备用方案：当移动端 API 解析失败时，自动回退到原有的 PC 网页端解析
 func (k *KuaishouBuiltinPlatform) fallbackWeb(roomID string, quality string) (string, string, string, error) {
 	reqURL := fmt.Sprintf("https://live.kuaishou.com/u/%s", roomID)
 	req, err := http.NewRequest("GET", reqURL, nil)
@@ -1227,6 +1231,10 @@ func (k *KuaishouBuiltinPlatform) fallbackWeb(roomID string, quality string) (st
 		}
 	}
 
+	if avatar != "" {
+		avatar = "/api/v1/builtin_recorder/proxy_image?url=" + url.QueryEscape(avatar)
+	}
+
 	re := regexp.MustCompile(`window\.__INITIAL_STATE__=({.*?});\(function`)
 	matches := re.FindSubmatch(body)
 	if len(matches) < 2 {
@@ -1251,11 +1259,9 @@ type SoopBuiltinPlatform struct{}
 func (s *SoopBuiltinPlatform) GetPlatformName() string { return "Soop" }
 
 func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (string, string, string, error) {
-	// ⭐️ 1. 新增：优先尝试 Soop Global API (对应 sooplive.com 的逻辑)
 	globalApi := fmt.Sprintf("https://api.sooplive.com/v2/stream/info/%s", roomID)
 	reqGlobal, err := http.NewRequest("GET", globalApi, nil)
 	if err == nil {
-		// 生成一个伪 UUID 作为 client-id 绕过限制
 		clientId := fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", rand.Uint32(), rand.Uint32()>>16, rand.Uint32()>>16, rand.Uint32()>>16, uint64(rand.Uint32())<<32|uint64(rand.Uint32()))
 		reqGlobal.Header.Set("client-id", clientId)
 		reqGlobal.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1 Edg/141.0.0.0")
@@ -1272,12 +1278,9 @@ func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (strin
 			respGlobal.Body.Close()
 			var globalResult map[string]interface{}
 			if json.Unmarshal(bodyGlobal, &globalResult) == nil {
-				// 检查是否成功返回了 valid data
 				if dataMap, ok := globalResult["data"].(map[string]interface{}); ok && dataMap != nil {
-					// 确认是 Global 平台的主播，根据 'isStream' 字段判断是否开播
 					isStream, _ := dataMap["isStream"].(bool)
 
-					// 获取 Global 平台主播昵称和头像
 					anchorName := roomID
 					avatar := ""
 					infoApi := fmt.Sprintf("https://api.sooplive.com/v2/channel/info/%s", roomID)
@@ -1309,12 +1312,14 @@ func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (strin
 						}
 					}
 
+					if avatar != "" {
+						avatar = "/api/v1/builtin_recorder/proxy_image?url=" + url.QueryEscape(avatar)
+					}
+
 					if isStream {
-						// 直接返回全球版平台的 HLS 流地址
 						streamURL := fmt.Sprintf("https://global-media.sooplive.com/live/%s/master.m3u8", roomID)
 						return streamURL, anchorName, avatar, nil
 					} else {
-						// 已确认是全球版主播，但未开播，直接返回等待
 						return "", anchorName, avatar, nil
 					}
 				}
@@ -1322,7 +1327,6 @@ func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (strin
 		}
 	}
 
-	// ⭐️ 2. 如果 Global 接口无数据或者请求失败，无缝回退到旧版韩国区逻辑 (sooplive.co.kr / afreecatv.com)
 	apiURL := "http://api.m.sooplive.co.kr/broad/a/watch"
 	formData := url.Values{}
 	formData.Set("bj_id", roomID)
@@ -1386,6 +1390,10 @@ func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (strin
 		if bjID, ok := dataMap["bj_id"].(string); ok && len(bjID) >= 2 {
 			avatar = fmt.Sprintf("https://stimg.afreecatv.com/LOGO/%s/%s/%s.jpg", bjID[:2], bjID, bjID)
 		}
+	}
+
+	if avatar != "" {
+		avatar = "/api/v1/builtin_recorder/proxy_image?url=" + url.QueryEscape(avatar)
 	}
 
 	resCode, ok := result["result"].(float64)
@@ -1473,61 +1481,81 @@ OuterLoop:
 	return finalStreamURL, anchorName, avatar, nil
 }
 
-// ==========================================
-// FFmpeg 录制引擎调度
-// ==========================================
-func captureBuiltinCover(platform, roomID, streamURL string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	os.MkdirAll("./covers", os.ModePerm)
-	fileName := fmt.Sprintf("%s_%s.jpg", platform, roomID)
-	coverPath := filepath.Join(".", "covers", fileName)
-
-	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-	var args []string
-	args = append(args, "-y", "-user_agent", ua)
-
-	if platform == "Douyin" {
-		args = append(args, "-headers", "Referer: https://live.douyin.com/\r\n")
-	} else if platform == "Soop" {
-		args = append(args, "-headers", "Referer: https://play.sooplive.co.kr/\r\n")
+func apiProxyImage(w http.ResponseWriter, r *http.Request) {
+	targetURL := r.URL.Query().Get("url")
+	if targetURL == "" {
+		http.Error(w, "missing url", http.StatusBadRequest)
+		return
 	}
-	// ⭐ 快手故意不传 Referer，防止 CDN 的严格反代校验拦截
 
-	args = append(args,
-		"-analyzeduration", "1000000",
-		"-probesize", "1000000",
-		"-i", streamURL,
-		"-vframes", "1",
-		"-q:v", "2",
-		coverPath)
+	doProxy := func(withReferer bool) (*http.Response, error) {
+		req, err := http.NewRequest("GET", targetURL, nil)
+		if err != nil {
+			return nil, err
+		}
 
-	cmd := exec.CommandContext(ctx, builtinFfmpegPath, args...)
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+		req.Header.Set("Cache-Control", "no-cache")
 
-	if err := cmd.Run(); err == nil {
-		key := platform + "_" + roomID
-		if existing, ok := builtinStatusMap.Load(key); ok {
-			task := existing.(*BuiltinTaskStatus)
-			task.Avatar = fmt.Sprintf("/covers/%s?t=%d", fileName, time.Now().UnixMilli())
-			builtinStatusMap.Store(key, task)
-			triggerBuiltinBroadcast()
+		if withReferer {
+			if strings.Contains(targetURL, "douyinpic.com") || strings.Contains(targetURL, "douyincdn.com") || strings.Contains(targetURL, "byteimg.com") {
+				req.Header.Set("Referer", "https://live.douyin.com/")
+			} else if strings.Contains(targetURL, "kuaishou") || strings.Contains(targetURL, "yximgs.com") {
+				req.Header.Set("Referer", "https://live.kuaishou.com/")
+			}
+		}
+
+		return builtinHTTPClient.Do(req)
+	}
+
+	resp, err := doProxy(true)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	if resp.StatusCode == 403 || resp.StatusCode == 401 {
+		resp.Body.Close()
+		resp, err = doProxy(false)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
 		}
 	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		w.WriteHeader(resp.StatusCode)
+		return
+	}
+
+	for k, v := range resp.Header {
+		w.Header()[k] = v
+	}
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
-func updateBuiltinCoverLoop(ctx context.Context, platform, roomID, streamURL string) {
-	captureBuiltinCover(platform, roomID, streamURL)
-	ticker := time.NewTicker(20 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			captureBuiltinCover(platform, roomID, streamURL)
-		}
+// ==========================================
+// 🌟 终极截帧黑科技：内存级多路分发截帧
+// ==========================================
+
+type builtinTailBuffer struct {
+	buf []byte
+	mu  sync.Mutex
+}
+
+func (t *builtinTailBuffer) Write(p []byte) (n int, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > 2048 {
+		t.buf = t.buf[len(t.buf)-2048:]
 	}
+	return len(p), nil
 }
 
 func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, anchorName, avatar, quality string, segmentTime int) {
@@ -1557,23 +1585,40 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 	} else if platformName == "Soop" {
 		args = append(args, "-headers", "Referer: https://play.sooplive.co.kr/\r\n")
 	}
-	// ⭐ 取消快手的 Referer 绑定，解决快手 CDN 403 踢出问题！
 
-	args = append(args, "-analyzeduration", "2000000", "-probesize", "2000000", "-i", streamURL)
+	args = append(args, "-rw_timeout", "15000000", "-analyzeduration", "2000000", "-probesize", "2000000", "-i", streamURL)
 
+	// ===============================================
+	// 🌟 输出通道 1：持久化保存到本地硬盘 (MP4录像)
+	// ===============================================
+	args = append(args, "-map", "0")
 	if segmentTime > 0 {
 		outPath = filepath.Join(outDir, fmt.Sprintf("%s_%s_%%03d.mp4", safeName, timestamp))
-		args = append(args, "-c", "copy", "-f", "segment", "-segment_time", fmt.Sprintf("%d", segmentTime*60), "-reset_timestamps", "1", "-movflags", "frag_keyframe+empty_moov", outPath)
+		args = append(args, "-c:v", "copy", "-c:a", "copy", "-f", "segment", "-segment_time", fmt.Sprintf("%d", segmentTime*60), "-reset_timestamps", "1", "-movflags", "frag_keyframe+empty_moov", outPath)
 	} else {
 		outPath = filepath.Join(outDir, fmt.Sprintf("%s_%s.mp4", safeName, timestamp))
-		args = append(args, "-c", "copy", "-f", "mp4", "-movflags", "frag_keyframe+empty_moov", outPath)
+		args = append(args, "-c:v", "copy", "-c:a", "copy", "-f", "mp4", "-movflags", "frag_keyframe+empty_moov", outPath)
 	}
 
-	log.Printf("\n🟢 [开始录制] 平台: %s | 主播: %s | 画质: %s\n   🔗 直播流: %s\n   📂 存至: %s", platformName, anchorName, formatBuiltinQualityName(quality), streamURL, outPath)
+	// ===============================================
+	// 🌟 输出通道 2：无缝提取内存帧 (每 20 秒刷新一次)
+	// ===============================================
+	fileName := fmt.Sprintf("%s_%s.jpg", platformName, roomID)
+	coverDir := filepath.Join(".", "covers")
+	os.MkdirAll(coverDir, os.ModePerm)
+	coverPath := filepath.Join(coverDir, fileName)
+
+	args = append(args, "-map", "0:v:0?", "-c:v", "mjpeg", "-r", "1/20", "-f", "image2", "-update", "1", "-y", coverPath)
+
+	log.Printf("\n🟢 [开始录制] 平台: %s | 主播: %s | 画质: %s\n   📂 视频存至: %s\n   📸 封面内存抽帧至: %s", platformName, anchorName, formatBuiltinQualityName(quality), outPath, coverPath)
 
 	startTime := time.Now()
 
 	cmd := exec.Command(builtinFfmpegPath, args...)
+
+	var stderrBuf builtinTailBuffer
+	cmd.Stderr = &stderrBuf
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		log.Printf("获取ffmpeg stdin失败: %v", err)
@@ -1585,6 +1630,44 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 		updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "未开播等待中")
 		return
 	}
+
+	// ⭐ 修复点：去掉 break，变成持续伴随整个录制周期的死循环轮询！
+	// 只要 FFmpeg 每 20 秒覆写一次本地文件，这里就能检测到，并瞬间推送给前端
+	go func() {
+		var lastModTime time.Time
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return // 录制结束，退出监控
+			case <-ticker.C:
+				if info, err := os.Stat(coverPath); err == nil && info.Size() > 0 {
+					modTime := info.ModTime()
+					// 只有当文件发生更新（比如FFmpeg新切了一帧），才向前端发推送
+					if modTime.After(lastModTime) {
+						lastModTime = modTime
+
+						key := platformName + "_" + roomID
+						if existing, ok := builtinStatusMap.Load(key); ok {
+							task := existing.(*BuiltinTaskStatus)
+
+							// 只在开播捕获到第一帧的时候打印日志，避免每分钟刷屏
+							if task.Avatar == "" || strings.Contains(task.Avatar, "proxy_image") {
+								log.Printf("[BUILTIN] 📸 完美！引擎已在底层解码推流时，顺手生成了实时高清封面！")
+							}
+
+							// 核心：每次都带上全新的时间戳，强制前端丢弃缓存！
+							task.Avatar = fmt.Sprintf("/covers/%s?t=%d", fileName, time.Now().UnixMilli())
+							builtinStatusMap.Store(key, task)
+							triggerBuiltinBroadcast()
+						}
+					}
+				}
+			}
+		}
+	}()
 
 	done := make(chan error, 1)
 	go func() {
@@ -1608,7 +1691,7 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 	case err := <-done:
 		duration := time.Since(startTime)
 		if err != nil {
-			log.Printf("\n🔴 [录制异常/断流] %s | %s | 时长: %s\n", platformName, anchorName, formatBuiltinDuration(duration))
+			log.Printf("\n🔴 [录制异常/断流] %s | %s | 时长: %s | 错误: %v\n🔥 FFmpeg 底层真实报错:\n%s\n", platformName, anchorName, formatBuiltinDuration(duration), err, string(stderrBuf.buf))
 		} else {
 			log.Printf("\n🔴 [录制结束] %s | %s | 时长: %s (自然完成)\n", platformName, anchorName, formatBuiltinDuration(duration))
 		}
@@ -1685,12 +1768,7 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 			} else if url != "" {
 				updateBuiltinStatus(platformName, roomID, name, avatar, q, "录制中")
 
-				coverCtx, coverCancel := context.WithCancel(context.Background())
-				go updateBuiltinCoverLoop(coverCtx, platformName, roomID, url)
-
 				BuiltinRecordStream(ctx, url, platformName, roomID, name, avatar, q, st)
-
-				coverCancel()
 
 				state, _ = builtinTaskStates.Load(key)
 				if state != "deleted" && state != "paused" {
@@ -1778,6 +1856,9 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&d)
 
 	lines := strings.Split(d.URL, "\n")
+	addedCount := 0
+	duplicateCount := 0
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "//") {
@@ -1795,7 +1876,9 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 		if customName != "" {
 			builtinCustomNames.Store(key, customName)
 		}
+
 		if _, exists := builtinActiveTasks.Load(key); exists {
+			duplicateCount++
 			continue
 		}
 
@@ -1823,8 +1906,16 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 			updateBuiltinStatus(platformName, roomID, displayName, "", builtinConfig.Quality, "初始化中")
 			wrapperStartMonitorIfNotRunning(p, roomID)
 		}
+		addedCount++
 	}
+
 	triggerBuiltinBroadcast()
+
+	if addedCount == 0 && duplicateCount > 0 {
+		sendJSONError(w, http.StatusBadRequest, "该主播/直播间已存在于列表中，请勿重复添加！")
+		return
+	}
+
 	sendJSONSuccess(w, nil)
 }
 
