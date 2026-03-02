@@ -1945,6 +1945,7 @@
 
             const wsLatency = ref(0);
             let pingTimer = null;
+            let lastPongTime = Date.now(); // 【新增】用于记录最后一次收到服务器消息的时间
 
             const getLatencyColor = (ms) => {
                 if (ms === 0) return 'var(--color-text-3)';
@@ -2327,7 +2328,7 @@
             const historyQuery = reactive({page: 1, limit: 15, filename: '', status: ''});
             const historyData = reactive({items: [], total: 0});
 
-            // ⭐ 修复：强制显示分页，并开启页码条数切换与总数显示
+            // ⭐ 强制显示分页，并开启页码条数切换与总数显示
             const pagination = computed(() => ({
                 total: historyData.total,
                 current: historyQuery.page,
@@ -2682,6 +2683,7 @@
                 }, 150);
             };
 
+            // 【核心修复一】：心跳假死超时处理与 WebSocket 重连重构
             const connectWS = () => {
                 if (ws) {
                     ws.onclose = null;
@@ -2691,23 +2693,36 @@
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
 
+                lastPongTime = Date.now(); // 初始化心跳时间
+
                 ws.onopen = () => {
                     wsStatus.value = 'connected';
+                    lastPongTime = Date.now(); // 连接成功时重置时间
                     if (pingTimer) clearInterval(pingTimer);
                     pingTimer = setInterval(() => {
                         if (ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({type: 'ping', payload: Date.now()}));
+                            // 【核心修复】：主动心跳检测。如果 15 秒没收到服务器任何消息，说明连接已假死，强制杀掉并重连
+                            if (Date.now() - lastPongTime > 15000) {
+                                console.warn("[WS] 心跳超时，连接已假死，强制触发断开重连...");
+                                ws.close();
+                                return;
+                            }
+                            ws.send(JSON.stringify({ type: 'ping', payload: Date.now() }));
                         }
                     }, 5000);
                 };
 
                 ws.onmessage = (event) => {
                     try {
+                        // 【核心修复】：只要收到服务器任何数据，说明连接畅通，更新时间戳
+                        lastPongTime = Date.now();
+
                         const msg = JSON.parse(event.data);
                         if (msg.type === 'pong') {
                             wsLatency.value = Date.now() - msg.payload;
                             return;
                         }
+
                         triggerWsPulse(msg.type);
 
                         if (msg.type === 'systemAlert') {
@@ -2718,7 +2733,7 @@
                                 duration: 0,
                                 closable: true,
                                 position: 'bottomRight',
-                                style: {whiteSpace: 'pre-wrap', wordBreak: 'break-all', lineHeight: '1.6'}
+                                style: { whiteSpace: 'pre-wrap', wordBreak: 'break-all', lineHeight: '1.6' }
                             });
                         } else if (msg.type === 'trafficMetrics') {
                             trafficMetrics.speed = msg.payload.speed;
@@ -2803,7 +2818,7 @@
                                 content: contentText,
                                 position: 'bottomRight',
                                 duration: 4000,
-                                style: {whiteSpace: 'pre-wrap', lineHeight: '1.6'}
+                                style: { whiteSpace: 'pre-wrap', lineHeight: '1.6' }
                             });
                         } else if (msg.type === 'scanFinished') {
                             Notification.success({
@@ -2817,7 +2832,6 @@
                             const newTasks = [];
 
                             payloadTasks.forEach(pTask => {
-                                // 查找原有的任务对象
                                 const existing = builtinTasks.value.find(t => t.platform === pTask.platform && t.room_id === pTask.room_id);
                                 if (existing) {
                                     existing.anchor_name = pTask.anchor_name;
@@ -2825,15 +2839,11 @@
                                     existing.duration = pTask.duration;
                                     existing.file_size = pTask.file_size;
                                     existing.is_paused = pTask.is_paused;
-
-                                    // ⭐ 永远更新缩略图，确保列表中看到的永远是最新的
                                     existing.avatar = pTask.avatar;
 
-                                    // ⭐ 核心逻辑：如果当前用户正开着这个主播的大图预览，那么同时把大图查看器里的图片也给换掉，实现全自动幻灯片式刷新！
                                     if (globalPreview.visible && globalPreview.platform === pTask.platform && globalPreview.roomId === pTask.room_id) {
                                         globalPreview.src = pTask.avatar;
                                     }
-
                                     newTasks.push(existing);
                                 } else {
                                     pTask.switching = false;
@@ -2850,7 +2860,8 @@
                     wsStatus.value = 'disconnected';
                     wsLatency.value = 0;
                     if (pingTimer) clearInterval(pingTimer);
-                    if (isLoggedIn.value) setTimeout(connectWS, 5000);
+                    // 【核心修改】：断开后 3 秒内尝试重连，比原来的 5 秒更灵敏
+                    if (isLoggedIn.value) setTimeout(connectWS, 3000);
                 };
                 ws.onerror = () => {
                     wsStatus.value = 'disconnected';
@@ -2896,7 +2907,6 @@
                 fetchHistory();
             };
 
-            // ⭐ 新增：处理每页条数切换
             const onPageSizeChange = (size) => {
                 historyQuery.limit = size;
                 historyQuery.page = 1;
@@ -2987,6 +2997,7 @@
                 'warn': '#ff7d00'
             }[level] || 'var(--color-text-3)');
 
+            // 【核心修复二】：解决移动端瞬间并发导致的请求阻塞
             const initDashboard = () => {
                 fetchStatus();
                 fetchQueue();
@@ -2994,7 +3005,12 @@
                 fetchHistory();
                 fetchLogs();
                 fetchConfig();
-                connectWS();
+
+                // 【核心修复】：延迟 1 秒建立 WebSocket，避开移动端并发网络请求风暴
+                setTimeout(() => {
+                    connectWS();
+                }, 1000);
+
                 if (pollingTimer) clearInterval(pollingTimer);
                 pollingTimer = setInterval(() => {
                     clientTime.value = Date.now();
@@ -3019,12 +3035,28 @@
                 window.removeEventListener('resize', handleResize);
             };
 
+            // 【核心修复三】：监听页面唤醒，解决休眠/切后台导致的断连假死
             onMounted(() => {
                 autoSetThemeByTime();
                 if (isLoggedIn.value) initDashboard();
                 window.addEventListener('keydown', handleGlobalKeydown);
                 handleResize();
+
+                // 【核心修复】：页面可见性监听。当电脑休眠唤醒、或手机切后台重新切回网页时触发
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible' && isLoggedIn.value) {
+                        // 如果发现断开，立刻补救重连
+                        if (wsStatus.value === 'disconnected' || !ws || ws.readyState !== WebSocket.OPEN) {
+                            console.log("[Mobile/Desktop] 页面唤醒，执行 WebSocket 补救重连...");
+                            connectWS();
+                        } else {
+                            // 即使状态显示连着，也立刻发一个心跳测试，如果不通，上面的 15 秒机制会秒杀它
+                            ws.send(JSON.stringify({ type: 'ping', payload: Date.now() }));
+                        }
+                    }
+                });
             });
+
             onUnmounted(() => {
                 cleanUp();
                 window.removeEventListener('keydown', handleGlobalKeydown);
@@ -3079,7 +3111,7 @@
                 pagination,
                 fetchHistory,
                 onPageChange,
-                onPageSizeChange, // ⭐ 必须暴露出来才能被模板调用
+                onPageSizeChange,
                 logQuery,
                 logData,
                 logExportLimit,

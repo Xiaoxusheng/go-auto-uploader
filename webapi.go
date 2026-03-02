@@ -31,7 +31,7 @@ var (
 		},
 	}
 
-	// ⭐ 修复点1：将 WebSocket 客户端名单改为存储自定义的客户端结构体
+	// 将 WebSocket 客户端名单改为存储自定义的客户端结构体
 	wsClients   = make(map[*WSClient]bool)
 	wsMutex     sync.RWMutex // 改用读写锁，提升并发性能
 	wsBroadcast = make(chan WSMessage, 100)
@@ -48,7 +48,7 @@ var (
 	logChan = make(chan *LogEntry, 1000)
 )
 
-// ⭐ 修复点2：为每个独立的 WebSocket 连接分配专属的锁，防止 I/O 阻塞引发全局假死
+// 为每个独立的 WebSocket 连接分配专属的锁，防止 I/O 阻塞引发全局假死
 type WSClient struct {
 	conn *websocket.Conn
 	mu   sync.Mutex
@@ -198,14 +198,12 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, indexHTML)
 }
 
+// 优化点：使用全局缓存替换直接读取硬盘文件，大幅降低刷新看板带来的负担
 func buildStatsTrendData() map[string]interface{} {
-	data, err := os.ReadFile(successLogFile)
-	if err != nil {
-		return map[string]interface{}{"trend": []TrendPoint{}, "rank": []StreamerRank{}}
-	}
-
-	var list []UploadRecord
-	json.Unmarshal(data, &list)
+	successLogMu.Lock()
+	list := make([]UploadRecord, len(successRecords))
+	copy(list, successRecords)
+	successLogMu.Unlock()
 
 	trendMap := make(map[string]*TrendPoint)
 	now := time.Now()
@@ -252,7 +250,6 @@ func buildStatsTrendData() map[string]interface{} {
 	}
 }
 
-// ⭐ 修复点3：将写操作彻底与全局锁解耦
 func wsBroadcastLoop() {
 	for {
 		msg := <-wsBroadcast
@@ -268,6 +265,7 @@ func wsBroadcastLoop() {
 		// 第二步：拿着快照，挨个去发消息，并且只锁每个连接自己的小锁
 		for _, client := range clientsCopy {
 			client.mu.Lock()
+			client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 			err := client.conn.WriteJSON(msg)
 			client.mu.Unlock()
 
@@ -327,7 +325,6 @@ func broadcastWS(msgType string, payload interface{}) {
 	}
 }
 
-// ⭐ 修复点4：独立的 WSClient 声明周期管理
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -358,6 +355,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		// 客户端 Ping 心跳保活回复也同样只锁自己的小锁
 		if msg.Type == "ping" {
 			client.mu.Lock()
+			client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 			_ = client.conn.WriteJSON(WSMessage{Type: "pong", Payload: msg.Payload})
 			client.mu.Unlock()
 		}
@@ -1083,16 +1081,14 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, map[string]interface{}{"items": result, "total": total})
 }
 
+// 优化点：从内存缓存恢复历史任务计数，免除了对磁盘文件的解析
 func restoreQueueCounts() {
-	data, err := os.ReadFile(successLogFile)
-	if err != nil {
-		return
-	}
-	var list []UploadRecord
-	json.Unmarshal(data, &list)
+	successLogMu.Lock()
+	listLen := len(successRecords)
+	successLogMu.Unlock()
 
 	queueMu.Lock()
-	for i := 0; i < len(list); i++ {
+	for i := 0; i < listLen; i++ {
 		queueSuccess = append(queueSuccess, fmt.Sprintf("hist-%d", i))
 	}
 	queueMu.Unlock()

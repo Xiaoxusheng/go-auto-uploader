@@ -492,12 +492,15 @@ func formatBuiltinDuration(d time.Duration) string {
 
 func getBuiltinDirSizeStr(path string) string {
 	var size int64
-	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(path, func(_ string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() {
-			size += info.Size()
+		if !d.IsDir() {
+			info, err := d.Info()
+			if err == nil {
+				size += info.Size()
+			}
 		}
 		return nil
 	})
@@ -557,9 +560,9 @@ func parseBuiltinLine(line string) (isPaused bool, platform string, roomID strin
 		rawURL = line
 	}
 
-	if strings.Contains(rawURL, "douyin.com") {
+	if strings.Contains(rawURL, "douyin.com") || strings.Contains(rawURL, "amemv.com") || strings.Contains(rawURL, "iesdouyin.com") || strings.Contains(rawURL, "douyin") {
 		platform = "Douyin"
-	} else if strings.Contains(rawURL, "kuaishou.com") {
+	} else if strings.Contains(rawURL, "kuaishou.com") || strings.Contains(rawURL, "chenzhongtech.com") {
 		platform = "Kuaishou"
 	} else if strings.Contains(rawURL, "sooplive.co.kr") || strings.Contains(rawURL, "afreecatv.com") || strings.Contains(rawURL, "sooplive.com") {
 		platform = "Soop"
@@ -1552,10 +1555,67 @@ func (t *builtinTailBuffer) Write(p []byte) (n int, err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.buf = append(t.buf, p...)
-	if len(t.buf) > 2048 {
-		t.buf = t.buf[len(t.buf)-2048:]
+	if len(t.buf) > 4096 {
+		copy(t.buf, t.buf[len(t.buf)-2048:])
+		t.buf = t.buf[:2048]
 	}
 	return len(p), nil
+}
+
+// [优化] 旁路抽帧大法：通过 Go 读取硬盘上最新写入的 3MB 视频块送到 ffmpeg 快速提取一张图片，0 CPU，0 重复拉流。
+func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	var latestFile string
+	var maxTime time.Time
+	for _, f := range files {
+		// [优化] 我们已经把录像从 mp4 换成了 ts 格式，防视频损坏的同时也方便我们直接抽帧
+		if !f.IsDir() && strings.HasPrefix(f.Name(), prefix) && strings.HasSuffix(f.Name(), ".ts") {
+			info, err := f.Info()
+			// 确保文件超过 512KB (否则可能全是表头没有视频关键帧)
+			if err == nil && info.ModTime().After(maxTime) && info.Size() > 512*1024 {
+				maxTime = info.ModTime()
+				latestFile = filepath.Join(dir, f.Name())
+			}
+		}
+	}
+	if latestFile == "" {
+		return false
+	}
+
+	file, err := os.Open(latestFile)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	stat, _ := file.Stat()
+	size := stat.Size()
+	readSize := int64(3 * 1024 * 1024) // 读取最后 3MB 数据（足够遇到一个 I 帧）
+	if size < readSize {
+		readSize = size
+	}
+	file.Seek(-readSize, 2)
+	buf := make([]byte, readSize)
+	_, err = io.ReadFull(file, buf)
+	if err != nil && err != io.ErrUnexpectedEOF {
+		return false
+	}
+
+	// 将内存中读取到的 3MB 二进制流喂给微型 ffmpeg
+	cmd := exec.Command(builtinFfmpegPath, "-y", "-i", "pipe:0", "-frames:v", "1", "-q:v", "2", "-f", "image2", coverPath)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return false
+	}
+	cmd.Start()
+	stdin.Write(buf)
+	stdin.Close()
+	cmd.Wait() // 瞬间执行完毕，CPU 几乎不跳动
+
+	return true
 }
 
 func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, anchorName, avatar, quality string, segmentTime int) {
@@ -1589,28 +1649,23 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 	args = append(args, "-rw_timeout", "15000000", "-analyzeduration", "2000000", "-probesize", "2000000", "-i", streamURL)
 
 	// ===============================================
-	// 🌟 输出通道 1：持久化保存到本地硬盘 (MP4录像)
+	// 🌟 [优化] 视频抗损坏技术：把输出格式由 mp4 改为追加型 mpegts (.ts)。断电不毁，强退不花！
 	// ===============================================
 	args = append(args, "-map", "0")
 	if segmentTime > 0 {
-		outPath = filepath.Join(outDir, fmt.Sprintf("%s_%s_%%03d.mp4", safeName, timestamp))
-		args = append(args, "-c:v", "copy", "-c:a", "copy", "-f", "segment", "-segment_time", fmt.Sprintf("%d", segmentTime*60), "-reset_timestamps", "1", "-movflags", "frag_keyframe+empty_moov", outPath)
+		outPath = filepath.Join(outDir, fmt.Sprintf("%s_%s_%%03d.ts", safeName, timestamp))
+		args = append(args, "-c:v", "copy", "-c:a", "copy", "-f", "segment", "-segment_time", fmt.Sprintf("%d", segmentTime*60), "-reset_timestamps", "1", outPath)
 	} else {
-		outPath = filepath.Join(outDir, fmt.Sprintf("%s_%s.mp4", safeName, timestamp))
-		args = append(args, "-c:v", "copy", "-c:a", "copy", "-f", "mp4", "-movflags", "frag_keyframe+empty_moov", outPath)
+		outPath = filepath.Join(outDir, fmt.Sprintf("%s_%s.ts", safeName, timestamp))
+		args = append(args, "-c:v", "copy", "-c:a", "copy", "-f", "mpegts", outPath)
 	}
 
-	// ===============================================
-	// 🌟 输出通道 2：无缝提取内存帧 (每 20 秒刷新一次)
-	// ===============================================
 	fileName := fmt.Sprintf("%s_%s.jpg", platformName, roomID)
 	coverDir := filepath.Join(".", "covers")
 	os.MkdirAll(coverDir, os.ModePerm)
 	coverPath := filepath.Join(coverDir, fileName)
 
-	args = append(args, "-map", "0:v:0?", "-c:v", "mjpeg", "-r", "1/20", "-f", "image2", "-update", "1", "-y", coverPath)
-
-	log.Printf("\n🟢 [开始录制] 平台: %s | 主播: %s | 画质: %s\n   📂 视频存至: %s\n   📸 封面内存抽帧至: %s", platformName, anchorName, formatBuiltinQualityName(quality), outPath, coverPath)
+	log.Printf("\n🟢 [开始录制] 平台: %s | 主播: %s | 画质: %s\n   📂 TS视频存至: %s\n   📸 旁路截图机制已启动", platformName, anchorName, formatBuiltinQualityName(quality), outPath)
 
 	startTime := time.Now()
 
@@ -1633,47 +1688,49 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 
 	go func() {
 		var lastModTime time.Time
-		ticker := time.NewTicker(2 * time.Second)
+		// [优化] 独立的每20秒截图定时器（完全不消耗主录制进程资源，不额外拉流）
+		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
 
-		// ⭐ 新增：截图全量归档计数器
 		coverCount := 1
+		filePrefix := fmt.Sprintf("%s_%s", safeName, timestamp)
+
+		// 刚开播的时候先等 5 秒，让本地录像攒点数据，截取第一张图
+		time.Sleep(5 * time.Second)
+		extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath)
 
 		for {
 			select {
 			case <-ctx.Done():
 				return // 录制结束，退出监控
 			case <-ticker.C:
-				if info, err := os.Stat(coverPath); err == nil && info.Size() > 0 {
-					modTime := info.ModTime()
-					if modTime.After(lastModTime) {
-						lastModTime = modTime
+				// [优化] 每20秒去硬盘读取一下正在录像的尾部 3MB 数据截屏，零网络成本
+				extracted := extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath)
 
-						// ⭐ 将截图单独放进一个专属的文件夹中，保持整洁，同时 main.go 依然会自动递归扫描上传它！
-						data, readErr := os.ReadFile(coverPath)
-						if readErr == nil && len(data) > 0 {
-							// 在录像同级目录下，单独建一个名为 Screenshots 的独立文件夹存放所有截图
-							imgArchiveDir := filepath.Join(outDir, "Screenshots")
-							os.MkdirAll(imgArchiveDir, os.ModePerm)
+				if extracted {
+					if info, err := os.Stat(coverPath); err == nil && info.Size() > 0 {
+						modTime := info.ModTime()
+						if modTime.After(lastModTime) {
+							lastModTime = modTime
 
-							// 存入独立文件夹，命名格式：主播名_时间戳_cover_0001.jpg
-							archiveCoverPath := filepath.Join(imgArchiveDir, fmt.Sprintf("%s_%s_cover_%04d.jpg", safeName, timestamp, coverCount))
-							_ = os.WriteFile(archiveCoverPath, data, 0644)
-							log.Printf("[BUILTIN] 📸 第 %d 次截帧已保存至独立截图目录，等待自动上传: %s", coverCount, archiveCoverPath)
-							coverCount++
-						}
+							data, readErr := os.ReadFile(coverPath)
+							if readErr == nil && len(data) > 0 {
+								imgArchiveDir := filepath.Join(outDir, "Screenshots")
+								os.MkdirAll(imgArchiveDir, os.ModePerm)
 
-						key := platformName + "_" + roomID
-						if existing, ok := builtinStatusMap.Load(key); ok {
-							task := existing.(*BuiltinTaskStatus)
-
-							if task.Avatar == "" || strings.Contains(task.Avatar, "proxy_image") {
-								log.Printf("[BUILTIN] 📺 引擎已从底层解码流中提取出首帧实时画面并更新大屏！")
+								archiveCoverPath := filepath.Join(imgArchiveDir, fmt.Sprintf("%s_%s_cover_%04d.jpg", safeName, timestamp, coverCount))
+								_ = os.WriteFile(archiveCoverPath, data, 0644)
+								log.Printf("[BUILTIN] 📸 旁路截帧 (第 %d 次) 已保存至独立截图目录，等待自动上传: %s", coverCount, archiveCoverPath)
+								coverCount++
 							}
 
-							task.Avatar = fmt.Sprintf("/covers/%s?t=%d", fileName, time.Now().UnixMilli())
-							builtinStatusMap.Store(key, task)
-							triggerBuiltinBroadcast()
+							key := platformName + "_" + roomID
+							if existing, ok := builtinStatusMap.Load(key); ok {
+								task := existing.(*BuiltinTaskStatus)
+								task.Avatar = fmt.Sprintf("/covers/%s?t=%d", fileName, time.Now().UnixMilli())
+								builtinStatusMap.Store(key, task)
+								triggerBuiltinBroadcast()
+							}
 						}
 					}
 				}
@@ -1726,7 +1783,7 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 		log.Printf("👀 [启动监控] %s 房间: %s", platformName, roomID)
 		updateBuiltinStatus(platformName, roomID, "", "", "-", "监控中")
 
-		rand.Seed(time.Now().UnixNano())
+		rand.NewSource(time.Now().UnixNano())
 
 		for {
 			state, _ := builtinTaskStates.Load(key)

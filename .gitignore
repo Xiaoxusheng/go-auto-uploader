@@ -2,12 +2,20 @@
 # 构建产物
 # =========================
 uploader
+downloads/
+ffmpeg-master-latest-win64-gpl-shared/
+covers/
 dist/
 .trae
 *.exe
 *.out
 .idea/
 文档.md
+/builtin_config.json
+/builtin_cookies.json
+/config.json
+builtin_urls.txt
+upload_success.json
 
 # =========================
 # 运行时生成文件
@@ -48,4 +56,4 @@ config.local.yaml
 .env
 .env.*
 
-upload_success.json
+

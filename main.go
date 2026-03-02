@@ -40,7 +40,15 @@ var (
 	token   string
 	tokenMu sync.Mutex
 
-	httpCli = &http.Client{Timeout: 0}
+	// 优化点：为 httpCli 配置连接池，复用空闲连接，极大减少频繁新建 TCP 请求带来的内存和 CPU 消耗
+	httpCli = &http.Client{
+		Timeout: 1200 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,              // 最大空闲连接数
+			MaxIdleConnsPerHost: 20,               // 每个 host 最大空闲连接
+			IdleConnTimeout:     90 * time.Second, // 空闲连接保活时间
+		},
+	}
 
 	hashFile = "uploaded_hash.db" // 已经上传的文件哈希记录（秒传用）
 
@@ -72,6 +80,11 @@ var (
 
 	history   = make([]*HistoryRecord, 0)
 	historyMu sync.RWMutex
+
+	// 优化点：专门用于保护 successRecords 内存数据和 json 文件并发读写的互斥锁
+	successLogMu sync.Mutex
+	// 优化点：在内存中常驻成功记录，消除前端轮询及 Worker 追加数据时对磁盘和 GC 产生的巨大压力
+	successRecords []UploadRecord
 )
 
 var (
@@ -193,6 +206,13 @@ func main() {
 	// 启用日志拦截器，将日志传回网页
 	log.SetOutput(&logInterceptor{original: os.Stdout})
 
+	// 优化点：启动时仅读取一次本地上传成功记录，将其缓存到内存中，后续只操作内存，避免磁盘读取阻塞
+	if data, err := os.ReadFile(successLogFile); err == nil {
+		json.Unmarshal(data, &successRecords)
+	} else {
+		successRecords = make([]UploadRecord, 0)
+	}
+
 	// 初始化系统参数：优先从 config.json 读取；如果文件不存在，则使用启动参数进行填充
 	appConfigMu.Lock()
 	data, err := os.ReadFile("config.json")
@@ -290,6 +310,7 @@ func main() {
 					if t.Status == "录制中" {
 						builtinRecordingCount++
 					}
+
 				}
 				totalActiveCount := int(activeCount) + builtinRecordingCount
 
@@ -463,7 +484,9 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 		if root == "." || root == "" {
 			continue
 		}
-		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+
+		// 优化点：使用 filepath.WalkDir 代替 filepath.Walk。WalkDir 不会自动获取 FileInfo，在扫略海量文件目录时能大幅降低内存消耗
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			runningMu.RLock()
 			isRunning := running
 			runningMu.RUnlock()
@@ -475,7 +498,13 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 				log.Printf("[SCAN][ERR] 访问路径出错 %s: %v", path, err)
 				return nil
 			}
-			if info.IsDir() {
+			if d.IsDir() {
+				return nil
+			}
+
+			// 手动调用 Info 仅在确认是文件后获取信息，节省内存
+			info, err := d.Info()
+			if err != nil {
 				return nil
 			}
 
@@ -498,6 +527,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 			taskCh <- path
 			return nil
 		})
+
 		if err != nil && err.Error() != "scan canceled by user" {
 			// 如果目录扫描报错，发送前端强提醒
 			SendAlert("warning", "目录扫描异常", "无法访问部分路径: "+err.Error())
@@ -920,13 +950,13 @@ type UploadRecord struct {
 	Size     int64
 }
 
-// 记录成功上传日志，用于大屏统计展示
+// 记录成功上传日志，加入内存缓存机制以提高性能并消除读写冲突
 func recordSuccess(remote, name string, size int64) {
-	var list []UploadRecord
-	data, _ := os.ReadFile(successLogFile)
-	json.Unmarshal(data, &list)
+	successLogMu.Lock()
+	defer successLogMu.Unlock()
 
-	list = append(list, UploadRecord{
+	// 优化点：直接向常驻内存的 Slice 追加数据，完全摆脱 `json.Unmarshal(data, &list)` 的 CPU/GC 消耗
+	successRecords = append(successRecords, UploadRecord{
 		Time:     time.Now(),
 		Streamer: detectStreamer(remote),
 		Name:     name,
@@ -934,7 +964,13 @@ func recordSuccess(remote, name string, size int64) {
 		Size:     size,
 	})
 
-	b, _ := json.MarshalIndent(list, "", "  ")
+	// 优化点：限制最多保留 50000 条历史记录，防止内存无限膨胀
+	if len(successRecords) > 50000 {
+		successRecords = successRecords[len(successRecords)-50000:]
+	}
+
+	// 写入磁盘动作依然保留用于持久化
+	b, _ := json.MarshalIndent(successRecords, "", "  ")
 	if err := os.WriteFile(successLogFile, b, 0644); err != nil {
 		log.Printf("[CLEAN][SUCCESS_LOG][ERR] 写入日志失败: %v", err)
 	}
@@ -972,11 +1008,15 @@ func reportLoop() {
 
 // ⭐ 恢复了完整的 HTML 邮件发送格式逻辑，并新增【周期内时间过滤】
 func sendReport() {
-	data, _ := os.ReadFile(successLogFile)
-	var list []UploadRecord
-	if json.Unmarshal(data, &list) != nil || len(list) == 0 {
+	successLogMu.Lock()
+	if len(successRecords) == 0 {
+		successLogMu.Unlock()
 		return
 	}
+	// 优化点：直接复制内存副本来处理，脱离磁盘读取
+	list := make([]UploadRecord, len(successRecords))
+	copy(list, successRecords)
+	successLogMu.Unlock()
 
 	appConfigMu.RLock()
 	repMinutes := appConfig.EmailInterval
