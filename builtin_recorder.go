@@ -474,15 +474,28 @@ func extractBuiltinRoomID(input string) string {
 	return input
 }
 
+// ✨【核心修复】彻底清洗文件名，防止因为不可见字符或非法字符导致产生重复的文件夹
 func sanitizeBuiltinFileName(name string) string {
+	// 1. 清理所有的控制字符（回车、换行、制表符）
+	name = strings.ReplaceAll(name, "\r", "")
+	name = strings.ReplaceAll(name, "\n", "")
+	name = strings.ReplaceAll(name, "\t", "")
+
+	// 顺手把常见的全角空格替换成半角空格，防止被当作文字保留
+	name = strings.ReplaceAll(name, "　", " ")
+
+	// 2. 剔除非法字符（这里直接删除，不再替换为"_"，防止产生变种名称）
 	invalidChars := []string{"\\", "/", ":", "*", "?", "\"", "<", ">", "|"}
 	for _, char := range invalidChars {
-		name = strings.ReplaceAll(name, char, "_")
+		name = strings.ReplaceAll(name, char, "")
 	}
+
+	// 3. 去除两端所有多余的空白字符
 	name = strings.TrimSpace(name)
 
-	// ✨【修复核心】: 彻底剥离会导致云盘报错 500 的非法前缀字符
+	// 4. 彻底剥离会导致云盘报错 500 的非法前缀字符
 	name = strings.TrimLeft(name, "-_.")
+
 	if name == "" {
 		return "未命名主播"
 	}
