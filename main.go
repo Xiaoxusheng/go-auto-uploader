@@ -58,6 +58,9 @@ var (
 	// 暴露给前端的动态扫描周期与倒计时时间戳
 	currentDynamicIntervalGlobal int64
 	nextScanTimeGlobal           int64
+
+	// 【新增】熔断保护机制：连续失败次数计数器
+	consecutiveFailures int32
 )
 
 // 动态应用配置
@@ -179,6 +182,20 @@ func saveConfigToFile() {
 		os.WriteFile("config.json", data, 0644)
 	} else {
 		log.Printf("[CONFIG][ERR] 无法保存配置文件 config.json: %v", err)
+	}
+}
+
+// 自动熔断挂起函数
+func pauseSystemOnFailure(reason string) {
+	runningMu.Lock()
+	wasRunning := running
+	running = false
+	runningMu.Unlock()
+
+	if wasRunning {
+		log.Printf("[SYSTEM][AUTO-PAUSE] 🚨 触发安全熔断机制: %s", reason)
+		// 向前端下发最高优先级的系统强弹窗警告
+		SendAlert("error", "🛑 触发系统熔断保护", reason+"\n为防止本地任务大量报错，上传引擎已自动挂起！请检查远端服务器状态后，手动点击【启动扫描】恢复运行。")
 	}
 }
 
@@ -368,7 +385,7 @@ func main() {
 			select {
 			case <-time.After(5 * time.Second):
 			case <-triggerScanCh:
-				log.Println("[SYSTEM] ⚡ 系统热重载完成")
+				log.Println("[SYSTEM] ⚡ 系统重新启动或热重载完成")
 			}
 		}
 	}
@@ -395,6 +412,11 @@ func queueStatusLoop() {
 // 执行单次扫描与任务分发
 func runOnce(triggerReason string, currentDynamicInterval int) int {
 	atomic.StoreInt64(&nextScanTimeGlobal, -1) // -1 表示前端显示"正在扫描中"
+
+	// 一旦用户下达手动开始、或重新扫描的指令，认为人为介入，重置熔断计数器
+	if triggerReason == "start" || triggerReason == "rescan" {
+		atomic.StoreInt32(&consecutiveFailures, 0)
+	}
 
 	appConfigMu.RLock()
 	currentWorkers := appConfig.Workers
@@ -436,8 +458,9 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 				runningMu.RUnlock()
 
 				if !isRunning {
-					log.Printf("[UPLOAD][W%d] 接收到暂停指令，终止任务处理", id)
-					return
+					// 如果系统被熔断或暂停，必须要 continue 把 channel 里的数据排空防止死锁
+					atomic.AddInt64(&queueCount, -1)
+					continue
 				}
 
 				atomic.AddInt64(&queueCount, -1)
@@ -485,7 +508,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 			continue
 		}
 
-		// 优化点：使用 filepath.WalkDir 代替 filepath.Walk。WalkDir 不会自动获取 FileInfo，在扫略海量文件目录时能大幅降低内存消耗
+		// 使用 filepath.WalkDir 代替 filepath.Walk。降低内存消耗
 		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			runningMu.RLock()
 			isRunning := running
@@ -502,7 +525,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 				return nil
 			}
 
-			// 手动调用 Info 仅在确认是文件后获取信息，节省内存
+			// 手动调用 Info 仅在确认是文件后获取信息
 			info, err := d.Info()
 			if err != nil {
 				return nil
@@ -529,7 +552,6 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 		})
 
 		if err != nil && err.Error() != "scan canceled by user" {
-			// 如果目录扫描报错，发送前端强提醒
 			SendAlert("warning", "目录扫描异常", "无法访问部分路径: "+err.Error())
 			addLog("error", "文件遍历失败", err.Error())
 		}
@@ -589,8 +611,21 @@ func handleFile(path string) {
 	}
 
 	dir := filepath.Dir(rel)
+
+	// ✨【修复核心】: 过滤文件夹路径中的非法前缀，防止生成类似 `_safe_uploads/-可奈` 这种导致 500 的非法云端目录
+	dirParts := strings.Split(filepath.ToSlash(dir), "/")
+	for i, part := range dirParts {
+		// 剥离开头的所有横杠、下划线、点
+		cleanPart := strings.TrimLeft(part, "-_.")
+		if cleanPart == "" {
+			cleanPart = "streamer_dir"
+		}
+		dirParts[i] = cleanPart
+	}
+	cleanDir := strings.Join(dirParts, "/")
+
 	name := cleanFileName(filepath.Base(rel))
-	remote := filepath.ToSlash(filepath.Join(safeBaseDir, dir, name))
+	remote := filepath.ToSlash(filepath.Join(safeBaseDir, cleanDir, name))
 
 	// 检测秒传机制 (Hash)
 	hash := fileHash(path)
@@ -740,6 +775,13 @@ func upload(local, remote string, size int64) bool {
 			"status": "fail",
 			"error":  err.Error(),
 		})
+
+		// 判断网络不通或宕机级别的熔断
+		fails := atomic.AddInt32(&consecutiveFailures, 1)
+		if fails >= 30 {
+			pauseSystemOnFailure(fmt.Sprintf("已连续 %d 次无法连接到远端服务器，网络可能断开或远端已宕机。", fails))
+		}
+
 		return false
 	}
 	defer resp.Body.Close()
@@ -773,6 +815,9 @@ func upload(local, remote string, size int64) bool {
 		})
 
 		cleanupFailedTasksByPath(local)
+
+		// 一旦成功立刻清零失败熔断计数器，证明服务器健康
+		atomic.StoreInt32(&consecutiveFailures, 0)
 		return true
 
 	} else {
@@ -780,7 +825,7 @@ func upload(local, remote string, size int64) bool {
 		errMsg := fmt.Sprintf("远端拒绝接收 (Code: %d)", r.Code)
 
 		// Token 失效发送通知
-		SendAlert("error", "上传遭拒绝", fmt.Sprintf("文件: %s\n原因: 远端返回 Code %d，可能 Token 已过期或配置错误。", filepath.Base(local), r.Code))
+		SendAlert("error", "上传遭拒绝", fmt.Sprintf("文件: %s\n原因: 远端返回 Code %d，可能 Token 已过期或因文件名包含非法字符被拦截。", filepath.Base(local), r.Code))
 
 		liveTasksMu.Lock()
 		if task, exists := liveTasks[taskID]; exists {
@@ -802,6 +847,12 @@ func upload(local, remote string, size int64) bool {
 			"status": "fail",
 			"error":  errMsg,
 		})
+
+		// 判断 Token 失效或服务器磁盘已满的逻辑熔断
+		fails := atomic.AddInt32(&consecutiveFailures, 1)
+		if fails >= 30 {
+			pauseSystemOnFailure(fmt.Sprintf("连续 %d 个文件被远端服务器拒绝接收 (状态码: %d)，可能是 Token 失效、云端存储空间已满、或目标存在非法文件夹。", fails, r.Code))
+		}
 
 		return false
 	}
@@ -1006,7 +1057,6 @@ func reportLoop() {
 	}
 }
 
-// ⭐ 恢复了完整的 HTML 邮件发送格式逻辑，并新增【周期内时间过滤】
 func sendReport() {
 	successLogMu.Lock()
 	if len(successRecords) == 0 {

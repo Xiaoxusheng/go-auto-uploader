@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chromedp/chromedp" // ✨ 引入无头浏览器库
 )
 
 // ==========================================
@@ -477,7 +479,15 @@ func sanitizeBuiltinFileName(name string) string {
 	for _, char := range invalidChars {
 		name = strings.ReplaceAll(name, char, "_")
 	}
-	return strings.TrimSpace(name)
+	name = strings.TrimSpace(name)
+
+	// ✨【修复核心】: 彻底剥离会导致云盘报错 500 的非法前缀字符
+	name = strings.TrimLeft(name, "-_.")
+	if name == "" {
+		return "未命名主播"
+	}
+
+	return name
 }
 
 func formatBuiltinDuration(d time.Duration) string {
@@ -619,6 +629,127 @@ func syncBuiltinAnchorToTxt(action string, platform, roomID string, rawLine stri
 	}
 
 	os.WriteFile("builtin_urls.txt", []byte(strings.Join(newLines, "\n")+"\n"), 0644)
+}
+
+// ==========================================
+// ✨ 新增：抖音短链接无头浏览器深度解析 + HTTP 保底
+// ==========================================
+
+func ExtractBuiltinDouyinLiveURL(text string) (string, error) {
+	re := regexp.MustCompile(`https?://v\.douyin\.com/[a-zA-Z0-9]+/?`)
+	shortURL := re.FindString(text)
+
+	if shortURL == "" {
+		return "", fmt.Errorf("未在文本中找到抖音分享短链接")
+	}
+	log.Printf("\n🔍 [解析引擎] 提取到纯净短链接: %s\n", shortURL)
+
+	// 1. 无头浏览器深度解析 (加入终极防风控参数)
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", true),
+		// ✨ 核心防风控 1：禁用 webdriver 特征，防止被抖音识别为机器人弹出滑块
+		chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		// ✨ 核心防风控 2：排除不必要的后台加载项加速渲染
+		chromedp.Flag("disable-extensions", true),
+		chromedp.Flag("mute-audio", true),
+		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+	)
+	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancel()
+
+	ctx, cancel2 := chromedp.NewContext(allocCtx)
+	defer cancel2()
+
+	// ✨ 核心优化：将超时时间从 8 秒延长到 15 秒，给网络和 JS 充分的执行时间
+	ctx, cancel3 := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel3()
+
+	var finalURL string
+	var htmlContent string
+
+	log.Println("⏳ [解析引擎] 正在启动无头 Chrome 进行深度穿透 (最长等待15秒)...")
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(shortURL),
+		chromedp.WaitReady("body"),
+		chromedp.Sleep(3*time.Second), // 等待 JS 充分执行重定向
+		chromedp.Location(&finalURL),
+		chromedp.OuterHTML("html", &htmlContent),
+	)
+
+	if err == nil {
+		// ✨ 状态识别：如果重定向到了个人主页，说明主播已经下播了
+		if strings.Contains(finalURL, "douyin.com/user/") {
+			return "", fmt.Errorf("解析失败: 该主播当前未开播 (重定向至个人主页)")
+		}
+
+		idRe := regexp.MustCompile(`live\.douyin\.com/(\d+)`)
+		urlMatches := idRe.FindStringSubmatch(finalURL)
+		if len(urlMatches) > 1 {
+			idStr := urlMatches[1]
+			if len(idStr) < 18 {
+				return fmt.Sprintf("https://live.douyin.com/%s", idStr), nil
+			}
+		}
+		webRid := extractBuiltinWebRid(htmlContent)
+		if webRid != "" {
+			return fmt.Sprintf("https://live.douyin.com/%s", webRid), nil
+		}
+	} else {
+		log.Printf("err:", err)
+		log.Printf("⚠️ [解析引擎] 无头浏览器超时或未安装，触发底层 HTTP 拦截器保底...")
+	}
+
+	// 2. HTTP 拦截器保底
+	fallbackClient := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	req, _ := http.NewRequest("GET", shortURL, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+	resp, fallbackErr := fallbackClient.Do(req)
+	if fallbackErr == nil {
+		defer resp.Body.Close()
+		resolvedURL := resp.Request.URL.String()
+
+		// 同样拦截下播状态
+		if strings.Contains(resolvedURL, "douyin.com/user/") {
+			return "", fmt.Errorf("解析失败: 该主播当前未开播 (重定向至个人主页)")
+		}
+
+		longIDRe := regexp.MustCompile(`\d{18,20}`)
+		longID := longIDRe.FindString(resolvedURL)
+		if longID != "" {
+			return fmt.Sprintf("https://live.douyin.com/%s", longID), nil
+		}
+		return strings.Split(resolvedURL, "?")[0], nil
+	}
+
+	return "", fmt.Errorf("双重解析方案均未拿到有效房间号，可能是网络受限或滑块拦截")
+}
+
+func extractBuiltinWebRid(html string) string {
+	patterns := []string{
+		`"web_rid"\s*:\s*"(\d+)"`,
+		`\\"web_rid\\"\s*:\s*\\"(\d+)\\"`,
+		`%22web_rid%22%3A%22(\d+)%22`,
+		`"short_id"\s*:\s*"(\d+)"`,
+		`\\"short_id\\"\s*:\s*\\"(\d+)\\"`,
+		`%22short_id%22%3A%22(\d+)%22`,
+		`"web_rid"\s*:\s*(\d+)`,
+		`"short_id"\s*:\s*(\d+)`,
+	}
+
+	for _, p := range patterns {
+		re := regexp.MustCompile(p)
+		matches := re.FindAllStringSubmatch(html, -1)
+		for _, match := range matches {
+			idStr := match[1]
+			if len(idStr) > 4 && len(idStr) < 18 {
+				return idStr
+			}
+		}
+	}
+	return ""
 }
 
 // ==========================================
@@ -1571,10 +1702,8 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
 	var latestFile string
 	var maxTime time.Time
 	for _, f := range files {
-		// [优化] 我们已经把录像从 mp4 换成了 ts 格式，防视频损坏的同时也方便我们直接抽帧
 		if !f.IsDir() && strings.HasPrefix(f.Name(), prefix) && strings.HasSuffix(f.Name(), ".ts") {
 			info, err := f.Info()
-			// 确保文件超过 512KB (否则可能全是表头没有视频关键帧)
 			if err == nil && info.ModTime().After(maxTime) && info.Size() > 512*1024 {
 				maxTime = info.ModTime()
 				latestFile = filepath.Join(dir, f.Name())
@@ -1613,7 +1742,7 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
 	cmd.Start()
 	stdin.Write(buf)
 	stdin.Close()
-	cmd.Wait() // 瞬间执行完毕，CPU 几乎不跳动
+	cmd.Wait()
 
 	return true
 }
@@ -1646,12 +1775,16 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 		args = append(args, "-headers", "Referer: https://play.sooplive.co.kr/\r\n")
 	}
 
-	args = append(args, "-rw_timeout", "15000000", "-analyzeduration", "2000000", "-probesize", "2000000", "-i", streamURL)
+	// ✨ [终极修复] 延长探测时间与大小，防止断层与 H.265 获取不到头部信息
+	args = append(args, "-rw_timeout", "15000000", "-analyzeduration", "5000000", "-probesize", "5000000", "-i", streamURL)
 
 	// ===============================================
-	// 🌟 [优化] 视频抗损坏技术：把输出格式由 mp4 改为追加型 mpegts (.ts)。断电不毁，强退不花！
+	// 🌟 [终极修复] 视频抗损坏技术：严格过滤杂流 + TS追加封装
 	// ===============================================
-	args = append(args, "-map", "0")
+	// 原版 -map 0 会把平台私有的弹幕/礼物等无法识别的“数据流”强行塞进 TS，导致文件直接报废。
+	// 现在改为 -map 0:v? -map 0:a? 并且 -ignore_unknown，只提取纯净的视频和音频。
+	args = append(args, "-map", "0:v?", "-map", "0:a?", "-ignore_unknown")
+
 	if segmentTime > 0 {
 		outPath = filepath.Join(outDir, fmt.Sprintf("%s_%s_%%03d.ts", safeName, timestamp))
 		args = append(args, "-c:v", "copy", "-c:a", "copy", "-f", "segment", "-segment_time", fmt.Sprintf("%d", segmentTime*60), "-reset_timestamps", "1", outPath)
@@ -1688,14 +1821,12 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 
 	go func() {
 		var lastModTime time.Time
-		// [优化] 独立的每20秒截图定时器（完全不消耗主录制进程资源，不额外拉流）
 		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
 
 		coverCount := 1
 		filePrefix := fmt.Sprintf("%s_%s", safeName, timestamp)
 
-		// 刚开播的时候先等 5 秒，让本地录像攒点数据，截取第一张图
 		time.Sleep(5 * time.Second)
 		extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath)
 
@@ -1704,7 +1835,6 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 			case <-ctx.Done():
 				return // 录制结束，退出监控
 			case <-ticker.C:
-				// [优化] 每20秒去硬盘读取一下正在录像的尾部 3MB 数据截屏，零网络成本
 				extracted := extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath)
 
 				if extracted {
@@ -1930,10 +2060,56 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
+
 		if line == "" || strings.HasPrefix(line, "//") {
 			continue
 		}
-		isP, platformName, roomID, customName, rawURL := parseBuiltinLine(line)
+
+		var customNameFromSuffix string
+		if idx := strings.LastIndex(line, ",主播:"); idx != -1 {
+			customNameFromSuffix = strings.TrimSpace(line[idx+len(",主播:"):])
+			line = line[:idx]
+		} else if idx := strings.LastIndex(line, ", 主播:"); idx != -1 {
+			customNameFromSuffix = strings.TrimSpace(line[idx+len(", 主播:"):])
+			line = line[:idx]
+		}
+
+		if customNameFromSuffix == "" {
+			nameRe := regexp.MustCompile(`【([^】]+)】`)
+			if m := nameRe.FindStringSubmatch(line); len(m) > 1 {
+				customNameFromSuffix = m[1]
+			}
+		}
+
+		urlRe := regexp.MustCompile(`https?://[^\s,]+`)
+		foundURL := urlRe.FindString(line)
+		if foundURL != "" {
+			line = foundURL
+		}
+
+		shortURLRe := regexp.MustCompile(`https?://v\.douyin\.com/[a-zA-Z0-9]+/?`)
+		if shortURLRe.MatchString(line) {
+			log.Printf("[BUILTIN] 检测到抖音短链接，正在解析: %s", line)
+			realURL, err := ExtractBuiltinDouyinLiveURL(line)
+			if err == nil && realURL != "" {
+				log.Printf("[BUILTIN] ✅ 最终解析成功: %s", realURL)
+				line = realURL
+			} else {
+				log.Printf("[BUILTIN] ❌ 短链接解析失败: %v", err)
+			}
+		}
+
+		if idx := strings.Index(line, "?"); idx != -1 {
+			line = line[:idx]
+		}
+		line = strings.TrimSuffix(line, "/")
+
+		fullLineToSave := line
+		if customNameFromSuffix != "" {
+			fullLineToSave = line + ",主播:" + customNameFromSuffix
+		}
+
+		isP, platformName, roomID, customName, _ := parseBuiltinLine(fullLineToSave)
 		if roomID == "" {
 			continue
 		}
@@ -1963,7 +2139,8 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		syncBuiltinAnchorToTxt("add", platformName, roomID, rawURL)
+		syncBuiltinAnchorToTxt("add", platformName, roomID, fullLineToSave)
+
 		displayName := customName
 		if displayName == "" {
 			displayName = roomID
