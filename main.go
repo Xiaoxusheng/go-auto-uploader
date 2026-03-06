@@ -95,7 +95,7 @@ var (
 	triggerReportCh = make(chan struct{}, 1) // 触发报告重置的通道
 )
 
-// 触发目录扫描
+// triggerScan 触发强行跨越休眠阶段的强制目录扫描
 func triggerScan(reason string) {
 	select {
 	case triggerScanCh <- reason:
@@ -103,7 +103,7 @@ func triggerScan(reason string) {
 	}
 }
 
-// 触发报告发送通道重置
+// triggerReportReset 触发邮件报告倒计时及生成逻辑的通道重置操作
 func triggerReportReset() {
 	select {
 	case triggerReportCh <- struct{}{}:
@@ -111,7 +111,7 @@ func triggerReportReset() {
 	}
 }
 
-// Task 定义了单个上传任务的属性
+// Task 定义了单个上传任务运行时的动态属性和状态
 type Task struct {
 	ID         string
 	Name       string
@@ -128,7 +128,7 @@ type Task struct {
 	Error      string
 }
 
-// HistoryRecord 定义了历史上传记录
+// HistoryRecord 定义了长期沉淀入库的历史文件上传记录
 type HistoryRecord struct {
 	UploadTime string `json:"uploadTime"`
 	Name       string `json:"name"`
@@ -140,17 +140,18 @@ type HistoryRecord struct {
 	ErrorMsg   string `json:"errorMsg"`
 }
 
-// 常量定义，已将邮箱硬编码参数剔除
+// 常量定义，包含安全的前置远端目录与本地磁盘化缓存文件
 const (
 	safeBaseDir    = "/_safe_uploads"      // 远端安全目录
 	successLogFile = "upload_success.json" // 本地成功日志，用于图表统计
 )
 
-// logInterceptor 拦截标准日志并同步给前端 WebSocket
+// logInterceptor 拦截系统内部各类标准打印流，并实现同步推送到前端 WebSocket 展示
 type logInterceptor struct {
 	original io.Writer
 }
 
+// Write 实现接口拦截标准日志，并组装投递给面板日志监控系统
 func (l *logInterceptor) Write(p []byte) (n int, err error) {
 	n, err = l.original.Write(p)
 	msg := strings.TrimSpace(string(p))
@@ -172,7 +173,7 @@ func (l *logInterceptor) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-// saveConfigToFile 将当前内存中的应用配置保存至 config.json
+// saveConfigToFile 将当前内存中的应用运行时设置持久化落盘至 config.json 文件
 func saveConfigToFile() {
 	appConfigMu.RLock()
 	defer appConfigMu.RUnlock()
@@ -185,7 +186,7 @@ func saveConfigToFile() {
 	}
 }
 
-// 自动熔断挂起函数
+// pauseSystemOnFailure 当网络故障或远端拒绝频繁到达阈值时，触发系统自动保护熔断挂起功能
 func pauseSystemOnFailure(reason string) {
 	runningMu.Lock()
 	wasRunning := running
@@ -199,6 +200,7 @@ func pauseSystemOnFailure(reason string) {
 	}
 }
 
+// main 程序的入口执行点，处理命令行传参，初始化并发模型与开启事件轮询死循环
 func main() {
 	// 解析命令行参数
 	flag.StringVar(&dirs, "dirs", "", "扫描目录(逗号分隔)")
@@ -220,7 +222,7 @@ func main() {
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	// 启用日志拦截器，将日志传回网页
+	// 启用日志拦截器，将日志传回加密网页
 	log.SetOutput(&logInterceptor{original: os.Stdout})
 
 	// 优化点：启动时仅读取一次本地上传成功记录，将其缓存到内存中，后续只操作内存，避免磁盘读取阻塞
@@ -264,7 +266,7 @@ func main() {
 
 	addLog("info", "系统初始化完成，启动中...", "")
 
-	// 启动 WebAPI 服务器与后台常驻任务
+	// 启动并挂载具有商业级加密防护特征的 API 服务容器和各项异步常驻任务
 	go StartWebServer(webPort)
 	go queueStatusLoop()
 	go reportLoop()
@@ -301,7 +303,7 @@ func main() {
 	}
 	runningMu.RUnlock()
 
-	// 主扫描轮询
+	// 主扫描时间调度轮询死循环，利用管道与定时器响应系统心跳
 	for {
 		runningMu.RLock()
 		isRunning := running
@@ -391,7 +393,7 @@ func main() {
 	}
 }
 
-// 打印队列状态日志
+// queueStatusLoop 定时收集并行阻塞与空转统计等运行期监控参数向日志推流展示
 func queueStatusLoop() {
 	start := time.Now()
 	ticker := time.NewTicker(10 * time.Second)
@@ -409,7 +411,7 @@ func queueStatusLoop() {
 	}
 }
 
-// 执行单次扫描与任务分发
+// runOnce 发起对本地全部监控目录树枝条叶的深度检索、合法过滤，并将任务下发推送给多线程池
 func runOnce(triggerReason string, currentDynamicInterval int) int {
 	atomic.StoreInt64(&nextScanTimeGlobal, -1) // -1 表示前端显示"正在扫描中"
 
@@ -570,6 +572,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	return int(activeRecordingCount)
 }
 
+// cleanupFailedTasksByPath 根据给定路径定位并清理缓存队列中残留的失败态记录
 func cleanupFailedTasksByPath(targetPath string) {
 	liveTasksMu.Lock()
 	defer liveTasksMu.Unlock()
@@ -590,7 +593,7 @@ func cleanupFailedTasksByPath(targetPath string) {
 	}
 }
 
-// 处理单个文件的上传逻辑
+// handleFile 负责调度单一目标文件的生命周期，包括名称净洗、秒传对比、上报排队及执行下层上传操作
 func handleFile(path string) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -694,7 +697,7 @@ func handleFile(path string) {
 	}
 }
 
-// 执行 HTTP PUT 上传
+// upload 建立与远端 API 的长连接将流数据打包为 HTTP PUT 方法传输，并承载错误重试及异常鉴权上报
 func upload(local, remote string, size int64) bool {
 	f, err := os.Open(local)
 	if err != nil {
@@ -858,6 +861,7 @@ func upload(local, remote string, size int64) bool {
 	}
 }
 
+// addHistoryRecord 将最终确定状态的上传操作以标准格式记录至系统的长驻内存历史队列中
 func addHistoryRecord(local, remote string, size int64, status string, duration float64, errorMsg string) {
 	record := HistoryRecord{
 		UploadTime: time.Now().Format("2006-01-02 15:04:05"),
@@ -878,6 +882,7 @@ func addHistoryRecord(local, remote string, size int64, status string, duration 
 	historyMu.Unlock()
 }
 
+// removeTask 对指定数组内通过游标匹对将其中的特定 ID 的任务进行剪裁和丢弃
 func removeTask(tasks []string, taskID string) []string {
 	for i, t := range tasks {
 		if t == taskID {
@@ -887,7 +892,7 @@ func removeTask(tasks []string, taskID string) []string {
 	return tasks
 }
 
-// ProgressReader 带速率限制和进度通知的流读取器
+// ProgressReader 带速率限制和进度通知的自定义文件读取数据结构
 type ProgressReader struct {
 	name        string
 	r           io.Reader
@@ -899,6 +904,7 @@ type ProgressReader struct {
 	lastLogProg int
 }
 
+// NewProgressReaderWithID 封装系统的流处理组件，绑定文件与进程
 func NewProgressReaderWithID(name string, r io.Reader, total int64, taskID string) *ProgressReader {
 	return &ProgressReader{
 		name:        name,
@@ -910,6 +916,7 @@ func NewProgressReaderWithID(name string, r io.Reader, total int64, taskID strin
 	}
 }
 
+// Read 实现核心 io.Reader 接口并劫持每一次小片数据读写用于上报进度与速率休眠拦截
 func (p *ProgressReader) Read(b []byte) (int, error) {
 	startRead := time.Now()
 	n, err := p.r.Read(b)
@@ -957,7 +964,7 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 	return n, err
 }
 
-// 根据时间动态计算限速
+// currentRate 根据预设在应用配置里的时间节点自动切换与判定所处小时数的限流值
 func currentRate() int {
 	appConfigMu.RLock()
 	defer appConfigMu.RUnlock()
@@ -969,6 +976,7 @@ func currentRate() int {
 	return appConfig.NightRate
 }
 
+// cleanFileName 对文件命中可能包含表情符、敏感词或导致 500 异常的不规则符号进行剔除修剪
 func cleanFileName(name string) string {
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
@@ -1001,7 +1009,7 @@ type UploadRecord struct {
 	Size     int64
 }
 
-// 记录成功上传日志，加入内存缓存机制以提高性能并消除读写冲突
+// recordSuccess 专门记录最终通过网络被写入目标端存储系统的文件日志以供统计
 func recordSuccess(remote, name string, size int64) {
 	successLogMu.Lock()
 	defer successLogMu.Unlock()
@@ -1027,7 +1035,7 @@ func recordSuccess(remote, name string, size int64) {
 	}
 }
 
-// 邮件发送循环
+// reportLoop 长驻于后台的死循环机制，依靠时间计算判断向指定电子信箱推送数据的恰当时间
 func reportLoop() {
 	appConfigMu.RLock()
 	intervalMinutes := appConfig.EmailInterval
@@ -1057,6 +1065,7 @@ func reportLoop() {
 	}
 }
 
+// sendReport 获取固定周期跨度内的所有成功提交资料，编排为精致富文本并交给邮件 SMTP 系统
 func sendReport() {
 	successLogMu.Lock()
 	if len(successRecords) == 0 {
@@ -1142,7 +1151,7 @@ func sendReport() {
 	sendQQMail("📦 上传成功报告", html.String())
 }
 
-// 通过读取配置来加载邮箱参数
+// sendQQMail 利用 SMTP 将带有授权码的主体信息发给外网腾讯服务器
 func sendQQMail(subject, body string) {
 	appConfigMu.RLock()
 	mailFrom := appConfig.MailFrom
@@ -1171,6 +1180,7 @@ func sendQQMail(subject, body string) {
 	}
 }
 
+// login 携带后台配置内配置账号及加密体密码向存储总机做 HTTP POST 请求并提取令牌回传
 func login() error {
 	appConfigMu.RLock()
 	targetServer := appConfig.RemoteServer
@@ -1203,6 +1213,7 @@ func login() error {
 	return nil
 }
 
+// fileHash 读取文件二进制流将其哈希压缩为无碰撞的 SHA-256 签名用于唯一身份核对
 func fileHash(p string) string {
 	f, err := os.Open(p)
 	if err != nil {
@@ -1216,17 +1227,20 @@ func fileHash(p string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// hashExists 将待检索字符遍历对比已有离线数据库用于避免重传
 func hashExists(h string) bool {
 	data, _ := os.ReadFile(hashFile)
 	return strings.Contains(string(data), h)
 }
 
+// saveHash 向库内追加全新的防重复哈希值字符串
 func saveHash(h string) {
 	f, _ := os.OpenFile(hashFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	defer f.Close()
 	f.WriteString(h + "\n")
 }
 
+// detectRoot 提供针对底层物理目录映射的反推机制从而确定文件属主节点
 func detectRoot(path string) string {
 	path = filepath.Clean(path)
 
@@ -1245,6 +1259,7 @@ func detectRoot(path string) string {
 	return ""
 }
 
+// detectStreamer 切割并归类服务器返回的远程文件树节点获得流数据所属的主播用户名
 func detectStreamer(remote string) string {
 	parts := strings.Split(remote, "/")
 	if len(parts) > 2 {
@@ -1253,7 +1268,7 @@ func detectStreamer(remote string) string {
 	return "未知"
 }
 
-// 这里是触发记录的地方，只要 enableLogs 开关打开就会投递进 WebSocket
+// addLog 作为业务和展示系统隔离的桥梁，负责筛选后将指定等级事件装箱并经加密投递到浏览器
 func addLog(level, message, errorMsg string) {
 	appConfigMu.RLock()
 	enabled := appConfig.EnableLogs

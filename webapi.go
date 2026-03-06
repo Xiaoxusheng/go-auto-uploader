@@ -1,11 +1,19 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	cryptorand "crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -31,9 +39,8 @@ var (
 		},
 	}
 
-	// 将 WebSocket 客户端名单改为存储自定义的客户端结构体
 	wsClients   = make(map[*WSClient]bool)
-	wsMutex     sync.RWMutex // 改用读写锁，提升并发性能
+	wsMutex     sync.RWMutex
 	wsBroadcast = make(chan WSMessage, 100)
 
 	running   = false
@@ -46,12 +53,21 @@ var (
 	logs    = make([]*LogEntry, 0, 1000)
 	logsMu  sync.RWMutex
 	logChan = make(chan *LogEntry, 1000)
+
+	// ==========================================
+	// 动态密钥交换中心 (RSA + AES PFS 完美前向保密)
+	// ==========================================
+	rsaPrivateKey      *rsa.PrivateKey
+	rsaPublicKeyBase64 string
+	sessionKeys        = make(map[string][]byte) // 存放每个客户端独有的 AES 密钥
+	sessionKeysMu      sync.RWMutex
 )
 
-// 为每个独立的 WebSocket 连接分配专属的锁，防止 I/O 阻塞引发全局假死
+// WSClient 增加专属的 AES 密钥字段，实现独立加密广播
 type WSClient struct {
-	conn *websocket.Conn
-	mu   sync.Mutex
+	conn   *websocket.Conn
+	mu     sync.Mutex
+	AESKey []byte
 }
 
 type WSMessage struct {
@@ -122,7 +138,209 @@ type StreamerRank struct {
 	Size float64 `json:"size"`
 }
 
+type EncryptedRequest struct {
+	Encrypted string `json:"encrypted"`
+}
+
+// ==========================================
+// 核心加解密与 Session 管理逻辑
+// ==========================================
+
+// getSessionKey 从请求头或 URL Query 中提取客户端的动态分配 AES 密钥
+func getSessionKey(r *http.Request) ([]byte, error) {
+	sid := r.Header.Get("X-Session-Id")
+	if sid == "" {
+		sid = r.URL.Query().Get("session_id")
+	}
+	if sid == "" {
+		return nil, fmt.Errorf("missing session id")
+	}
+	sessionKeysMu.RLock()
+	key, ok := sessionKeys[sid]
+	sessionKeysMu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("invalid or expired session id")
+	}
+	return key, nil
+}
+
+// encryptPayload 使用客户端专属的动态 AES 密钥进行载荷加密
+func encryptPayload(plaintext []byte, key []byte) (string, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, aesGCM.NonceSize())
+	if _, err = io.ReadFull(cryptorand.Reader, nonce); err != nil {
+		return "", err
+	}
+	ciphertext := aesGCM.Seal(nonce, nonce, plaintext, nil)
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+// decryptPayload 使用客户端专属的动态 AES 密钥进行载荷解密
+func decryptPayload(cryptoText string, key []byte) ([]byte, error) {
+	ciphertext, err := base64.StdEncoding.DecodeString(cryptoText)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonceSize := aesGCM.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return nil, fmt.Errorf("密文格式被破坏或长度不足")
+	}
+	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	return aesGCM.Open(nil, nonce, ciphertext, nil)
+}
+
+// parseEncryptedRequest 拦截密文请求，并使用动态分配的密钥将其还原为实际业务结构体
+func parseEncryptedRequest(r *http.Request, target interface{}) error {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	if len(body) == 0 {
+		return nil // 允许空载荷的 GET 请求通过
+	}
+
+	var encReq EncryptedRequest
+	if err := json.Unmarshal(body, &encReq); err != nil {
+		return fmt.Errorf("拦截器告警：强制要求使用商业级加密格式通信")
+	}
+	if encReq.Encrypted == "" {
+		return fmt.Errorf("拦截器告警：加密载荷缺失")
+	}
+
+	key, err := getSessionKey(r)
+	if err != nil {
+		return fmt.Errorf("Session Invalid: %v", err)
+	}
+
+	decryptedData, err := decryptPayload(encReq.Encrypted, key)
+	if err != nil {
+		return fmt.Errorf("动态安全网关解密失败: %v", err)
+	}
+
+	return json.Unmarshal(decryptedData, target)
+}
+
+// sendJSONSuccess 统一成功响应，并使用对应客户端的临时 AES 密钥对结果进行端到端加密
+func sendJSONSuccess(w http.ResponseWriter, r *http.Request, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	resp := APIResponse{Code: 200, Message: "success", Data: data}
+	rawJSON, _ := json.Marshal(resp)
+
+	key, err := getSessionKey(r)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"code":401,"message":"Session Invalid"}`))
+		return
+	}
+
+	encryptedStr, err := encryptPayload(rawJSON, key)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"code":500,"message":"动态加密服务异常"}`))
+		return
+	}
+	json.NewEncoder(w).Encode(EncryptedRequest{Encrypted: encryptedStr})
+}
+
+// sendJSONError 统一错误响应，使用客户端临时 AES 密钥下发加密报错信息
+func sendJSONError(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	resp := APIResponse{Code: statusCode, Message: message}
+	rawJSON, _ := json.Marshal(resp)
+
+	key, err := getSessionKey(r)
+	if err != nil {
+		w.Write([]byte(fmt.Sprintf(`{"code":%d,"message":"%s"}`, statusCode, message))) // 降级策略
+		return
+	}
+
+	encryptedStr, err := encryptPayload(rawJSON, key)
+	if err != nil {
+		w.Write([]byte(fmt.Sprintf(`{"code":%d,"message":"%s"}`, statusCode, message))) // 降级策略
+		return
+	}
+	json.NewEncoder(w).Encode(EncryptedRequest{Encrypted: encryptedStr})
+}
+
+// ==========================================
+// 密钥交换前置 API
+// ==========================================
+
+// handleGetPubKey 前端获取系统的随机 RSA 公钥
+func handleGetPubKey(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"code": 200,
+		"data": rsaPublicKeyBase64,
+	})
+}
+
+// handleExchangeKey 前端发送用 RSA 加密过的临时 AES 密钥，后端接管并分发 SessionID
+func handleExchangeKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		EncKey string `json:"enc_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", 400)
+		return
+	}
+
+	ciphertext, err := base64.StdEncoding.DecodeString(req.EncKey)
+	if err != nil {
+		http.Error(w, "invalid base64", 400)
+		return
+	}
+
+	// 使用 RSA-OAEP 对前端传来的专属 AES 密钥进行解密
+	aesKey, err := rsa.DecryptOAEP(sha256.New(), cryptorand.Reader, rsaPrivateKey, ciphertext, nil)
+	if err != nil || len(aesKey) != 32 {
+		http.Error(w, "decryption failed", 400)
+		return
+	}
+
+	sessionID := fmt.Sprintf("sess-%d-%d", time.Now().UnixNano(), rand.Intn(1000000))
+	sessionKeysMu.Lock()
+	sessionKeys[sessionID] = aesKey
+	sessionKeysMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"code": 200,
+		"data": map[string]string{"session_id": sessionID},
+	})
+}
+
+// StartWebServer 启动商业级加密 Web 服务器
 func StartWebServer(port int) {
+	// 系统启动时动态生成 RSA-2048 密钥对，彻底抛弃硬编码密钥
+	priv, err := rsa.GenerateKey(cryptorand.Reader, 2048)
+	if err != nil {
+		log.Fatalf("[SEC] 生成 RSA 密钥失败: %v", err)
+	}
+	rsaPrivateKey = priv
+	pubASN1, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		log.Fatalf("[SEC] 导出公钥失败: %v", err)
+	}
+	rsaPublicKeyBase64 = base64.StdEncoding.EncodeToString(pubASN1)
+	log.Println("[SEC] 🛡️ 商业级动态 RSA+AES 混合加密中心已初始化")
+
 	runningMu.Lock()
 	restoreQueueCounts()
 	running = true
@@ -131,6 +349,11 @@ func StartWebServer(port int) {
 
 	mux := http.NewServeMux()
 
+	// 安全握手前置路由
+	mux.HandleFunc("/api/v1/sec/pubkey", handleGetPubKey)
+	mux.HandleFunc("/api/v1/sec/exchange", handleExchangeKey)
+
+	// 核心业务路由
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/v1/auth/login", handleLogin)
 	mux.HandleFunc("/api/v1/auth/logout", handleLogout)
@@ -175,6 +398,7 @@ func StartWebServer(port int) {
 	}
 }
 
+// SendAlert 向前端发送系统弹窗级别的警告通知
 func SendAlert(level string, title string, message string) {
 	broadcastWS("systemAlert", map[string]interface{}{
 		"level":   level,
@@ -184,6 +408,7 @@ func SendAlert(level string, title string, message string) {
 	})
 }
 
+// handleIndex 处理根路径请求，返回前端页面基础结构
 func handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -198,7 +423,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, indexHTML)
 }
 
-// 优化点：使用全局缓存替换直接读取硬盘文件，大幅降低刷新看板带来的负担
+// buildStatsTrendData 构建统计趋势图表的数据，利用内存缓存加速访问
 func buildStatsTrendData() map[string]interface{} {
 	successLogMu.Lock()
 	list := make([]UploadRecord, len(successRecords))
@@ -250,11 +475,12 @@ func buildStatsTrendData() map[string]interface{} {
 	}
 }
 
+// wsBroadcastLoop 处理 WebSocket 广播队列，实时向所有连接客户端下发专属的加密载荷
 func wsBroadcastLoop() {
 	for {
 		msg := <-wsBroadcast
+		rawBytes, _ := json.Marshal(msg)
 
-		// 第一步：用极短的读锁获取当前在线客户端的一份快照（避免阻塞新客户端接入）
 		wsMutex.RLock()
 		clientsCopy := make([]*WSClient, 0, len(wsClients))
 		for client := range wsClients {
@@ -262,14 +488,16 @@ func wsBroadcastLoop() {
 		}
 		wsMutex.RUnlock()
 
-		// 第二步：拿着快照，挨个去发消息，并且只锁每个连接自己的小锁
 		for _, client := range clientsCopy {
 			client.mu.Lock()
 			client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-			err := client.conn.WriteJSON(msg)
+
+			// ✨ 核心：为每个不同的客户端，使用他们独自协商的 AES 密钥进行隔离加密
+			encryptedPayload, _ := encryptPayload(rawBytes, client.AESKey)
+			err := client.conn.WriteJSON(EncryptedRequest{Encrypted: encryptedPayload})
+
 			client.mu.Unlock()
 
-			// 如果因为网页刷新导致连接断开，发生报错，独立地清理掉它，不会影响其他存活的页面
 			if err != nil {
 				client.conn.Close()
 				wsMutex.Lock()
@@ -280,6 +508,7 @@ func wsBroadcastLoop() {
 	}
 }
 
+// wsDashboardBroadcaster 定时向面板广播系统实时状态数据、系统负载及图表
 func wsDashboardBroadcaster() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -318,6 +547,7 @@ func wsDashboardBroadcaster() {
 	}
 }
 
+// broadcastWS 将指定类型的消息压入广播队列，待加密发送给各个前端页面
 func broadcastWS(msgType string, payload interface{}) {
 	select {
 	case wsBroadcast <- WSMessage{Type: msgType, Payload: payload}:
@@ -325,20 +555,25 @@ func broadcastWS(msgType string, payload interface{}) {
 	}
 }
 
+// handleWebSocket 处理 WebSocket 升级及接收逻辑，增加双向报文解密与加密环节
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	key, err := getSessionKey(r)
+	if err != nil {
+		http.Error(w, "Unauthorized Session", 401)
+		return
+	}
+
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 
-	// 初始化附带专属小锁的客户端对象
-	client := &WSClient{conn: conn}
+	client := &WSClient{conn: conn, AESKey: key}
 
 	wsMutex.Lock()
 	wsClients[client] = true
 	wsMutex.Unlock()
 
-	// 确保不论发生什么异常，最终清理现场
 	defer func() {
 		client.conn.Close()
 		wsMutex.Lock()
@@ -347,49 +582,69 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	for {
-		var msg WSMessage
-		err := client.conn.ReadJSON(&msg)
+		var encMsg EncryptedRequest
+		err := client.conn.ReadJSON(&encMsg)
 		if err != nil {
 			break
 		}
-		// 客户端 Ping 心跳保活回复也同样只锁自己的小锁
+
+		// 商业级网络入口处立刻使用客户端专属密钥解密报文
+		decryptedBytes, err := decryptPayload(encMsg.Encrypted, client.AESKey)
+		if err != nil {
+			log.Printf("[WS][ERR] WebSocket 密文非法或解密失败: %v", err)
+			continue
+		}
+
+		var msg WSMessage
+		if err := json.Unmarshal(decryptedBytes, &msg); err != nil {
+			continue
+		}
+
 		if msg.Type == "ping" {
+			pongRaw, _ := json.Marshal(WSMessage{Type: "pong", Payload: msg.Payload})
+			pongEnc, _ := encryptPayload(pongRaw, client.AESKey)
+
 			client.mu.Lock()
 			client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-			_ = client.conn.WriteJSON(WSMessage{Type: "pong", Payload: msg.Payload})
+			_ = client.conn.WriteJSON(EncryptedRequest{Encrypted: pongEnc})
 			client.mu.Unlock()
 		}
 	}
 }
 
+// handleLogin 处理登录请求，从解密体中验证凭据并下发 Token
 func handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		sendJSONError(w, r, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	body, _ := io.ReadAll(r.Body)
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		OTP      string `json:"otp"`
 	}
-	json.Unmarshal(body, &req)
+	if err := parseEncryptedRequest(r, &req); err != nil {
+		sendJSONError(w, r, http.StatusBadRequest, "无法解析加密的凭据载荷")
+		return
+	}
 
 	if req.Username != dashboardUsername || req.Password != dashboardPassword {
-		sendJSONError(w, http.StatusUnauthorized, "Invalid credentials")
+		sendJSONError(w, r, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 	expiry := time.Now().Add(24 * time.Hour).UnixMilli()
 	if token == "" {
 		token = "test-token-" + strconv.FormatInt(time.Now().Unix(), 10)
 	}
-	sendJSONSuccess(w, map[string]interface{}{"token": token, "expiry": expiry})
+	sendJSONSuccess(w, r, map[string]interface{}{"token": token, "expiry": expiry})
 }
 
+// handleLogout 处理注销请求，清除登录状态
 func handleLogout(w http.ResponseWriter, r *http.Request) {
-	sendJSONSuccess(w, nil)
+	sendJSONSuccess(w, r, nil)
 }
 
+// buildStatusData 构建系统运行参数与目录状态聚合的大宽表
 func buildStatusData() map[string]interface{} {
 	runningMu.RLock()
 	isRunning := running
@@ -455,10 +710,12 @@ func buildStatusData() map[string]interface{} {
 	}
 }
 
+// handleStatus 返回当前的系统聚合运行状态
 func handleStatus(w http.ResponseWriter, r *http.Request) {
-	sendJSONSuccess(w, buildStatusData())
+	sendJSONSuccess(w, r, buildStatusData())
 }
 
+// buildQueueData 统计并构建各个任务队列的数字分布
 func buildQueueData() map[string]interface{} {
 	queueMu.RLock()
 	defer queueMu.RUnlock()
@@ -472,10 +729,12 @@ func buildQueueData() map[string]interface{} {
 	}
 }
 
+// handleQueue 返回当前各个任务队列的长度
 func handleQueue(w http.ResponseWriter, r *http.Request) {
-	sendJSONSuccess(w, buildQueueData())
+	sendJSONSuccess(w, r, buildQueueData())
 }
 
+// handleLiveTasks 响应查询实时进行中的上传任务
 func handleLiveTasks(w http.ResponseWriter, r *http.Request) {
 	liveTasksMu.RLock()
 	tasks := make([]map[string]interface{}, 0, len(liveTasks))
@@ -503,9 +762,10 @@ func handleLiveTasks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	liveTasksMu.RUnlock()
-	sendJSONSuccess(w, tasks)
+	sendJSONSuccess(w, r, tasks)
 }
 
+// handleHistory 响应查询带分页与筛选条件的上传历史记录表
 func handleHistory(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	page, _ := strconv.Atoi(query.Get("page"))
@@ -537,7 +797,7 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	end := start + limit
 	if start >= total {
 		historyMu.RUnlock()
-		sendJSONSuccess(w, map[string]interface{}{"items": []*HistoryRecord{}, "total": total})
+		sendJSONSuccess(w, r, map[string]interface{}{"items": []*HistoryRecord{}, "total": total})
 		return
 	}
 	if end > total {
@@ -562,9 +822,10 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	sendJSONSuccess(w, map[string]interface{}{"items": items, "total": total})
+	sendJSONSuccess(w, r, map[string]interface{}{"items": items, "total": total})
 }
 
+// handleControlStart 响应用户启动系统的控制指令
 func handleControlStart(w http.ResponseWriter, r *http.Request) {
 	runningMu.Lock()
 	running = true
@@ -573,51 +834,57 @@ func handleControlStart(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("[CONTROL] 🚀 用户下发指令：启动系统，恢复扫描与上传任务")
 	triggerScan("start")
-	sendJSONSuccess(w, nil)
+	sendJSONSuccess(w, r, nil)
 }
 
+// handleControlPause 响应用户暂停系统的控制指令
 func handleControlPause(w http.ResponseWriter, r *http.Request) {
 	runningMu.Lock()
 	running = false
 	runningMu.Unlock()
 
 	log.Println("[CONTROL] ⏸️ 用户下发指令：暂停系统运行")
-	sendJSONSuccess(w, nil)
+	sendJSONSuccess(w, r, nil)
 }
 
+// handleControlStop 响应用户停止系统的控制指令
 func handleControlStop(w http.ResponseWriter, r *http.Request) {
 	runningMu.Lock()
 	running = false
 	runningMu.Unlock()
 
 	log.Println("[CONTROL] 🛑 用户下发指令：停止系统运行")
-	sendJSONSuccess(w, nil)
+	sendJSONSuccess(w, r, nil)
 }
 
+// handleControlRelogin 响应用户强制刷新远端 Token 的指令
 func handleControlRelogin(w http.ResponseWriter, r *http.Request) {
 	if err := login(); err != nil {
 		log.Println("[CONTROL][ERR] 用户尝试刷新远端授权失败:", err)
-		sendJSONError(w, http.StatusInternalServerError, "Relogin failed")
+		sendJSONError(w, r, http.StatusInternalServerError, "Relogin failed")
 		return
 	}
 	log.Println("[CONTROL] 🔑 用户下发指令：远端授权凭证已成功刷新")
-	sendJSONSuccess(w, nil)
+	sendJSONSuccess(w, r, nil)
 }
 
+// handleControlRescan 响应用户强制触发全量目录扫描的指令
 func handleControlRescan(w http.ResponseWriter, r *http.Request) {
 	log.Println("[CONTROL] 🔍 用户下发指令：手动触发深度目录重新扫描")
 	triggerScan("rescan")
-	sendJSONSuccess(w, map[string]interface{}{"message": "重新扫描已触发"})
+	sendJSONSuccess(w, r, map[string]interface{}{"message": "重新扫描已触发"})
 }
 
+// handleControlClearFailQueue 响应用户清空失败队列的指令
 func handleControlClearFailQueue(w http.ResponseWriter, r *http.Request) {
 	queueMu.Lock()
 	queueFail = make([]string, 0)
 	queueMu.Unlock()
 	log.Println("[CONTROL] 🧹 用户下发指令：已清空失败任务队列")
-	sendJSONSuccess(w, nil)
+	sendJSONSuccess(w, r, nil)
 }
 
+// handleControlRetryFailQueue 响应用户重试全部失败任务的指令
 func handleControlRetryFailQueue(w http.ResponseWriter, r *http.Request) {
 	queueMu.Lock()
 	for _, taskID := range queueFail {
@@ -626,17 +893,23 @@ func handleControlRetryFailQueue(w http.ResponseWriter, r *http.Request) {
 	queueFail = make([]string, 0)
 	queueMu.Unlock()
 	log.Println("[CONTROL] 🔄 用户下发指令：失败任务已全部压入等待队列准备重试")
-	sendJSONSuccess(w, nil)
+
+	// ✨ 核心修复：向引擎发送重扫指令，让 Worker 真正去把硬盘里残留的失败文件捡起来
+	triggerScan("rescan")
+
+	sendJSONSuccess(w, r, nil)
 }
 
+// handleControlClearSuccessQueue 响应用户清空成功展示历史的指令
 func handleControlClearSuccessQueue(w http.ResponseWriter, r *http.Request) {
 	queueMu.Lock()
 	queueSuccess = make([]string, 0)
 	queueMu.Unlock()
 	log.Println("[CONTROL] 🧹 用户下发指令：已清空成功任务队列展示历史")
-	sendJSONSuccess(w, nil)
+	sendJSONSuccess(w, r, nil)
 }
 
+// handleDirsStatus 返回所有受监控目录及其内部文件的统计快照
 func handleDirsStatus(w http.ResponseWriter, r *http.Request) {
 	appConfigMu.RLock()
 	configuredDirs := appConfig.Dirs
@@ -660,20 +933,21 @@ func handleDirsStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	dirStatusesMu.RUnlock()
 
-	sendJSONSuccess(w, statuses)
+	sendJSONSuccess(w, r, statuses)
 }
 
+// handleConfig 处理读取(GET)或全量写入(PUT)系统核心配置项的请求
 func handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		appConfigMu.RLock()
 		currentConfig := appConfig
 		appConfigMu.RUnlock()
-		sendJSONSuccess(w, currentConfig)
+		sendJSONSuccess(w, r, currentConfig)
 	case http.MethodPut:
 		var newConfig Config
-		if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
-			sendJSONError(w, http.StatusBadRequest, "Invalid request body")
+		if err := parseEncryptedRequest(r, &newConfig); err != nil {
+			sendJSONError(w, r, http.StatusBadRequest, "非法配置实体或解密异常")
 			return
 		}
 		appConfigMu.Lock()
@@ -687,26 +961,27 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		triggerScan("config-update")
 		triggerReportReset()
 
-		sendJSONSuccess(w, nil)
+		sendJSONSuccess(w, r, nil)
 	default:
-		sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		sendJSONError(w, r, http.StatusMethodNotAllowed, "Method not allowed")
 	}
 }
 
+// handleCookies 处理读取或修改外部录制引擎中 Cookie 等凭据文件的请求
 func handleCookies(w http.ResponseWriter, r *http.Request) {
 	appConfigMu.RLock()
 	configPath := appConfig.RecorderConfigPath
 	appConfigMu.RUnlock()
 
 	if configPath == "" {
-		sendJSONError(w, http.StatusBadRequest, "尚未配置录制引擎主配置文件路径 (config.ini)")
+		sendJSONError(w, r, http.StatusBadRequest, "尚未配置录制引擎主配置文件路径 (config.ini)")
 		return
 	}
 
 	if r.Method == http.MethodGet {
 		data, err := os.ReadFile(configPath)
 		if err != nil {
-			sendJSONSuccess(w, map[string]string{"douyin": "", "kuaishou": "", "sooplive": "", "liveSavePath": ""})
+			sendJSONSuccess(w, r, map[string]string{"douyin": "", "kuaishou": "", "sooplive": "", "liveSavePath": ""})
 			return
 		}
 
@@ -737,7 +1012,7 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		sendJSONSuccess(w, res)
+		sendJSONSuccess(w, r, res)
 		return
 	}
 
@@ -748,14 +1023,14 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 			Sooplive     string `json:"sooplive"`
 			LiveSavePath string `json:"liveSavePath"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, http.StatusBadRequest, "Invalid JSON body")
+		if err := parseEncryptedRequest(r, &req); err != nil {
+			sendJSONError(w, r, http.StatusBadRequest, "加密层校验失败")
 			return
 		}
 
 		data, err := os.ReadFile(configPath)
 		if err != nil {
-			sendJSONError(w, http.StatusInternalServerError, "读取配置文件失败: "+err.Error())
+			sendJSONError(w, r, http.StatusInternalServerError, "读取配置文件失败: "+err.Error())
 			return
 		}
 
@@ -815,18 +1090,19 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 		err = os.WriteFile(configPath, []byte(strings.Join(lines, "\n")), 0644)
 		if err != nil {
 			log.Printf("[CONTROL][ERR] 无法写入配置文件 %s: %v", configPath, err)
-			sendJSONError(w, http.StatusInternalServerError, "保存配置失败: "+err.Error())
+			sendJSONError(w, r, http.StatusInternalServerError, "保存配置失败: "+err.Error())
 			return
 		}
 
 		log.Printf("[CONTROL] 🍪 用户在网页端成功更新了主配置文件 %s", configPath)
-		sendJSONSuccess(w, nil)
+		sendJSONSuccess(w, r, nil)
 		return
 	}
 
-	sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	sendJSONError(w, r, http.StatusMethodNotAllowed, "Method not allowed")
 }
 
+// getStreamersData 读取并解析直播录制名单文件内容，还原为结构体数组
 func getStreamersData() []Streamer {
 	appConfigMu.RLock()
 	configPath := appConfig.LiveConfigPath
@@ -885,9 +1161,10 @@ func getStreamersData() []Streamer {
 	return streamers
 }
 
+// handleStreamers 处理读取(GET)或全量更新(PUT/POST)直播监控名单的请求
 func handleStreamers(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		sendJSONSuccess(w, getStreamersData())
+		sendJSONSuccess(w, r, getStreamersData())
 		return
 	}
 
@@ -897,8 +1174,8 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 		appConfigMu.RUnlock()
 
 		var req []Streamer
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, http.StatusBadRequest, "Invalid JSON body")
+		if err := parseEncryptedRequest(r, &req); err != nil {
+			sendJSONError(w, r, http.StatusBadRequest, "解析密文体异常")
 			return
 		}
 
@@ -923,20 +1200,21 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 		err := os.WriteFile(configPath, []byte(sb.String()), 0644)
 		if err != nil {
 			log.Printf("[CONTROL][ERR] 无法写入录制配置文件 %s: %v", configPath, err)
-			sendJSONError(w, http.StatusInternalServerError, "保存配置文件失败")
+			sendJSONError(w, r, http.StatusInternalServerError, "保存配置文件失败")
 			return
 		}
 
 		log.Printf("[CONTROL] 🎥 用户更新了直播监控名单，共 %d 条记录已写入物理文件", len(req))
 
 		broadcastWS("streamersData", getStreamersData())
-		sendJSONSuccess(w, nil)
+		sendJSONSuccess(w, r, nil)
 		return
 	}
 
-	sendJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	sendJSONError(w, r, http.StatusMethodNotAllowed, "Method not allowed")
 }
 
+// getRecorderStatus 通过调用底层 Shell 获取外部 Docker 录制引擎的运行状态
 func getRecorderStatus() string {
 	appConfigMu.RLock()
 	container := appConfig.RecorderContainer
@@ -952,10 +1230,12 @@ func getRecorderStatus() string {
 	return strings.TrimSpace(string(out))
 }
 
+// handleRecorderStatus 响应查询外部 Docker 引擎健康与运行状态的请求
 func handleRecorderStatus(w http.ResponseWriter, r *http.Request) {
-	sendJSONSuccess(w, getRecorderStatus())
+	sendJSONSuccess(w, r, getRecorderStatus())
 }
 
+// getActiveStreamers 通过探测各目录内是否存在时间较新的文件，推断当前正在处于写入(活跃录制)状态的主播名单
 func getActiveStreamers() []string {
 	appConfigMu.RLock()
 	configuredDirs := appConfig.Dirs
@@ -997,14 +1277,16 @@ func getActiveStreamers() []string {
 	return result
 }
 
+// handleActiveStreamers 响应查询正在活跃录制的主播列表接口
 func handleActiveStreamers(w http.ResponseWriter, r *http.Request) {
-	sendJSONSuccess(w, getActiveStreamers())
+	sendJSONSuccess(w, r, getActiveStreamers())
 }
 
+// handleRecorderControl 执行对宿主机底层外部 Docker 容器的启动、停止、重启指令操作
 func handleRecorderControl(w http.ResponseWriter, r *http.Request) {
 	action := r.URL.Query().Get("action")
 	if action != "start" && action != "stop" && action != "restart" {
-		sendJSONError(w, http.StatusBadRequest, "非法的控制指令")
+		sendJSONError(w, r, http.StatusBadRequest, "非法的控制指令")
 		return
 	}
 
@@ -1017,13 +1299,14 @@ func handleRecorderControl(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		log.Printf("[DOCKER][ERR] 执行失败: %s", string(out))
-		sendJSONError(w, http.StatusInternalServerError, "操作失败: "+string(out))
+		sendJSONError(w, r, http.StatusInternalServerError, "操作失败: "+string(out))
 		return
 	}
 
-	sendJSONSuccess(w, "操作成功执行")
+	sendJSONSuccess(w, r, "操作成功执行")
 }
 
+// handleRecorderLogs 调用 Docker 指令拉取外部容器尾部的 100 行日志供调试使用
 func handleRecorderLogs(w http.ResponseWriter, r *http.Request) {
 	appConfigMu.RLock()
 	container := appConfig.RecorderContainer
@@ -1031,12 +1314,13 @@ func handleRecorderLogs(w http.ResponseWriter, r *http.Request) {
 
 	out, err := exec.Command("docker", "logs", "--tail", "100", container).CombinedOutput()
 	if err != nil {
-		sendJSONError(w, http.StatusInternalServerError, "获取日志失败: "+string(out))
+		sendJSONError(w, r, http.StatusInternalServerError, "获取日志失败: "+string(out))
 		return
 	}
-	sendJSONSuccess(w, string(out))
+	sendJSONSuccess(w, r, string(out))
 }
 
+// handleLogs 提供带分页参数、等级筛选以及关键字搜索的应用层日志查询视图接口
 func handleLogs(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	level := query.Get("level")
@@ -1068,7 +1352,7 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	end := total - (page-1)*limit
 	if end <= 0 {
-		sendJSONSuccess(w, map[string]interface{}{"items": []*LogEntry{}, "total": total})
+		sendJSONSuccess(w, r, map[string]interface{}{"items": []*LogEntry{}, "total": total})
 		return
 	}
 
@@ -1078,10 +1362,10 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := filtered[start:end]
-	sendJSONSuccess(w, map[string]interface{}{"items": result, "total": total})
+	sendJSONSuccess(w, r, map[string]interface{}{"items": result, "total": total})
 }
 
-// 优化点：从内存缓存恢复历史任务计数，免除了对磁盘文件的解析
+// restoreQueueCounts 系统启动时通过对内存内日志的复用来还原历史排队数，彻底杜绝 I/O 开销
 func restoreQueueCounts() {
 	successLogMu.Lock()
 	listLen := len(successRecords)
@@ -1094,6 +1378,7 @@ func restoreQueueCounts() {
 	queueMu.Unlock()
 }
 
+// handleLogsDownload 组装导出的文本系统运行日志，并将全部文件内容进行 Base64+AES 商业级防泄露加密抛出
 func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	level := query.Get("level")
@@ -1101,7 +1386,7 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 	exportLimit, _ := strconv.Atoi(query.Get("limit"))
 
 	w.Header().Set("Content-Type", "text/plain")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=logs-%s.log", time.Now().Format("20060102-150405")))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=logs-encrypted-%s.txt", time.Now().Format("20060102-150405")))
 
 	logsMu.RLock()
 	filtered := make([]*LogEntry, 0)
@@ -1120,15 +1405,28 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 		filtered = filtered[len(filtered)-exportLimit:]
 	}
 
+	var sb strings.Builder
 	for _, entry := range filtered {
-		fmt.Fprintf(w, "[%s] [%s] %s\n", entry.Time, entry.Level, entry.Message)
+		sb.WriteString(fmt.Sprintf("[%s] [%s] %s\n", entry.Time, entry.Level, entry.Message))
 		if entry.Error != "" {
-			fmt.Fprintf(w, "  Error: %s\n", entry.Error)
+			sb.WriteString(fmt.Sprintf("  Error: %s\n", entry.Error))
 		}
 	}
-	log.Printf("[CONTROL] 📥 用户导出了 %d 条系统日志\n", len(filtered))
+
+	// 安全获取当前请求客户端的私有 AES 密钥
+	key, err := getSessionKey(r)
+	if err != nil {
+		http.Error(w, "Unauthorized Session", 401)
+		return
+	}
+
+	encryptedLogData, _ := encryptPayload([]byte(sb.String()), key)
+	w.Write([]byte(encryptedLogData))
+
+	log.Printf("[CONTROL] 📥 用户导出了 %d 条系统日志，为确保安全已在文件层全链路加密处理\n", len(filtered))
 }
 
+// logCollector 后台独立长时运行协程，将 Channel 内部抛出的各级系统日志合并缓存后广播至加密 WebSocket 流
 func logCollector() {
 	for entry := range logChan {
 		logsMu.Lock()
@@ -1140,15 +1438,4 @@ func logCollector() {
 
 		broadcastWS("newLog", entry)
 	}
-}
-
-func sendJSONSuccess(w http.ResponseWriter, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(APIResponse{Code: 200, Message: "success", Data: data})
-}
-
-func sendJSONError(w http.ResponseWriter, statusCode int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(APIResponse{Code: statusCode, Message: message})
 }

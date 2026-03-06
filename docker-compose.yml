@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  uploader:
+    build: .
+    container_name: live-uploader-system
+    restart: always  # 遭遇意外/重启服务器后无限自动拉起
+    ports:
+      - "8080:8080"  # 大屏控制台端口
+    volumes:
+      # 极简挂载：将当前目录下的 ./data 文件夹映射给容器。
+      # 系统的 config.json、covers截图、downloads录像、以及各类 txt 名单全都会在这里！
+      - ./data:/data
+    environment:
+      - TZ=Asia/Shanghai

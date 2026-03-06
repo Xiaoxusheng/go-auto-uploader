@@ -85,10 +85,12 @@ type BuiltinPlatform interface {
 	GetStreamURL(roomID string, quality string) (streamURL string, anchorName string, avatar string, err error)
 }
 
+// triggerBuiltinBroadcast 触发内置引擎任务状态列表向前端加密 WebSocket 信道的全量广播
 func triggerBuiltinBroadcast() {
 	broadcastWS("builtinTasks", GetBuiltinRecorderTasks())
 }
 
+// updateBuiltinStatus 更新指定内置引擎任务的内存运行状态，并识别录制状态变更以触发广播
 func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMsg string) {
 	key := platform + "_" + roomID
 	now := time.Now()
@@ -151,6 +153,7 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 	}
 }
 
+// updateBuiltinNameInTxt 将新解析到的主播自定义名称同步持久化更新至本地的名单文件中
 func updateBuiltinNameInTxt(platform, roomID, anchorName string) {
 	builtinAnchorLinesMutex.Lock()
 	defer builtinAnchorLinesMutex.Unlock()
@@ -187,6 +190,7 @@ func updateBuiltinNameInTxt(platform, roomID, anchorName string) {
 	}
 }
 
+// builtinHotReloadLoop 后台热重载守护协程，定时检测 builtin_urls.txt 的修改动态启停监控任务
 func builtinHotReloadLoop() {
 	var lastModTime time.Time
 	for {
@@ -318,9 +322,7 @@ func builtinHotReloadLoop() {
 	}
 }
 
-// ==========================================
-// 初始化注册点
-// ==========================================
+// InitBuiltinRecorder 初始化内置录制引擎模块，挂载相关 API 路由并启动系统常驻协程
 func InitBuiltinRecorder(mux *http.ServeMux) {
 	checkFFmpegBuiltin()
 
@@ -410,6 +412,7 @@ func InitBuiltinRecorder(mux *http.ServeMux) {
 	go builtinHotReloadLoop()
 }
 
+// GetBuiltinRecorderTasks 获取当前内存中所有的内置引擎任务运行快照以提供给前端界面
 func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 	var list []BuiltinTaskStatus
 	builtinStatusMap.Range(func(key, value interface{}) bool {
@@ -435,6 +438,8 @@ func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 // ==========================================
 // 辅助工具函数
 // ==========================================
+
+// checkFFmpegBuiltin 探测系统环境内是否有可用的 ffmpeg，作为推流数据解包的核心依赖
 func checkFFmpegBuiltin() {
 	localPath := filepath.Join(".", "ffmpeg.exe")
 	if _, err := os.Stat(localPath); err == nil {
@@ -452,6 +457,7 @@ func checkFFmpegBuiltin() {
 	}
 }
 
+// extractBuiltinRoomID 从各类直播间 URL 中提取出统一格式的纯净房间 ID
 func extractBuiltinRoomID(input string) string {
 	input = strings.TrimSpace(input)
 	if strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://") {
@@ -474,7 +480,7 @@ func extractBuiltinRoomID(input string) string {
 	return input
 }
 
-// ✨【核心修复】彻底清洗文件名，防止因为不可见字符或非法字符导致产生重复的文件夹
+// sanitizeBuiltinFileName 清洗并规范化主播名称，剔除非法及容易导致操作异常的特殊字符
 func sanitizeBuiltinFileName(name string) string {
 	// 1. 清理所有的控制字符（回车、换行、制表符）
 	name = strings.ReplaceAll(name, "\r", "")
@@ -503,6 +509,7 @@ func sanitizeBuiltinFileName(name string) string {
 	return name
 }
 
+// formatBuiltinDuration 将 Go 时间差对象格式化为 X小时X分X秒 格式
 func formatBuiltinDuration(d time.Duration) string {
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
@@ -513,6 +520,7 @@ func formatBuiltinDuration(d time.Duration) string {
 	return fmt.Sprintf("%02d分%02d秒", m, s)
 }
 
+// getBuiltinDirSizeStr 遍历并计算指定保存目录的总物理文件大小
 func getBuiltinDirSizeStr(path string) string {
 	var size int64
 	err := filepath.WalkDir(path, func(_ string, d os.DirEntry, err error) error {
@@ -533,6 +541,7 @@ func getBuiltinDirSizeStr(path string) string {
 	return formatBuiltinBytes(size)
 }
 
+// formatBuiltinBytes 将庞大的字节数据格式化为易读的 KB/MB/GB 规格字符串
 func formatBuiltinBytes(b int64) string {
 	const unit = 1024
 	if b < unit {
@@ -546,6 +555,7 @@ func formatBuiltinBytes(b int64) string {
 	return fmt.Sprintf("%.2f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
+// formatBuiltinQualityName 映射配置内的画质代码为前端直接展示的中文名称
 func formatBuiltinQualityName(quality string) string {
 	switch quality {
 	case "uhd":
@@ -559,6 +569,7 @@ func formatBuiltinQualityName(quality string) string {
 	}
 }
 
+// parseBuiltinLine 分析本地监控的行数据，提炼平台归属、房间ID及自定义备注名
 func parseBuiltinLine(line string) (isPaused bool, platform string, roomID string, customName string, rawURL string) {
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -595,6 +606,7 @@ func parseBuiltinLine(line string) (isPaused bool, platform string, roomID strin
 	return
 }
 
+// syncBuiltinAnchorToTxt 依据前端指令对本地配置文件里的内容作增、删、改并落地
 func syncBuiltinAnchorToTxt(action string, platform, roomID string, rawLine string) {
 	builtinAnchorLinesMutex.Lock()
 	defer builtinAnchorLinesMutex.Unlock()
@@ -648,6 +660,7 @@ func syncBuiltinAnchorToTxt(action string, platform, roomID string, rawLine stri
 // ✨ 新增：抖音短链接无头浏览器深度解析 + HTTP 保底
 // ==========================================
 
+// ExtractBuiltinDouyinLiveURL 针对用户输入的短链接，采取无头浏览器和原生HTTP双擎重定向拿取长连接
 func ExtractBuiltinDouyinLiveURL(text string) (string, error) {
 	re := regexp.MustCompile(`https?://v\.douyin\.com/[a-zA-Z0-9]+/?`)
 	shortURL := re.FindString(text)
@@ -740,6 +753,7 @@ func ExtractBuiltinDouyinLiveURL(text string) (string, error) {
 	return "", fmt.Errorf("双重解析方案均未拿到有效房间号，可能是网络受限或滑块拦截")
 }
 
+// extractBuiltinWebRid 使用正则暴力在返回的 HTML 数据中筛查包含真实房间号的配置段落
 func extractBuiltinWebRid(html string) string {
 	patterns := []string{
 		`"web_rid"\s*:\s*"(\d+)"`,
@@ -768,6 +782,8 @@ func extractBuiltinWebRid(html string) string {
 // ==========================================
 // 核心加密算法复刻 (SM3, RC4, a_bogus)
 // ==========================================
+
+// builtinRC4Encrypt 实现标准的 RC4 对称加密方法，用于接口所需的 UserAgent 加密流程
 func builtinRC4Encrypt(plaintext, key string) string {
 	s := make([]int, 256)
 	for i := 0; i < 256; i++ {
@@ -797,12 +813,14 @@ type BuiltinSM3 struct {
 	size  uint64
 }
 
+// NewBuiltinSM3 初始化一个满足中国国家密码局算法标准的 SM3 散列计算器
 func NewBuiltinSM3() *BuiltinSM3 {
 	s := &BuiltinSM3{}
 	s.Reset()
 	return s
 }
 
+// Reset 清空 SM3 计算器的当前上下文状态和内部数据块缓存，重置回初始哈希常量
 func (s *BuiltinSM3) Reset() {
 	s.reg = []uint32{
 		1937774191, 1226093241, 388252375, 3666478592,
@@ -812,6 +830,7 @@ func (s *BuiltinSM3) Reset() {
 	s.size = 0
 }
 
+// leftRotate 执行 SM3 算法中需要的 32 位无符号整型循环左移按位操作
 func (s *BuiltinSM3) leftRotate(x uint32, n int) uint32 {
 	n &= 0x1f
 	if n == 0 {
@@ -820,6 +839,7 @@ func (s *BuiltinSM3) leftRotate(x uint32, n int) uint32 {
 	return (x << n) | (x >> (32 - n))
 }
 
+// getT 返回对应运算轮次的常数项，属于 SM3 算法标准规范定义的一环
 func (s *BuiltinSM3) getT(j int) uint32 {
 	if j < 16 {
 		return 2043430169
@@ -827,6 +847,7 @@ func (s *BuiltinSM3) getT(j int) uint32 {
 	return 2055708042
 }
 
+// ff 执行 SM3 规定的布尔逻辑计算组合函数之一，取决于执行轮次 j 的区间
 func (s *BuiltinSM3) ff(j int, x, y, z uint32) uint32 {
 	if j < 16 {
 		return x ^ y ^ z
@@ -834,6 +855,7 @@ func (s *BuiltinSM3) ff(j int, x, y, z uint32) uint32 {
 	return (x & y) | (x & z) | (y & z)
 }
 
+// gg 执行 SM3 规定的布尔逻辑计算组合函数之二，负责后续 48 轮次的数据混淆
 func (s *BuiltinSM3) gg(j int, x, y, z uint32) uint32 {
 	if j < 16 {
 		return x ^ y ^ z
@@ -841,6 +863,7 @@ func (s *BuiltinSM3) gg(j int, x, y, z uint32) uint32 {
 	return (x & y) | (^x & z)
 }
 
+// compress 完成对传入的 512 bit (64 Byte) 的单块数据进行消息扩展并注入八位寄存器内
 func (s *BuiltinSM3) compress(data []byte) {
 	w := make([]uint32, 132)
 	for t := 0; t < 16; t++ {
@@ -878,6 +901,7 @@ func (s *BuiltinSM3) compress(data []byte) {
 	s.reg[7] ^= h
 }
 
+// Write 满足 hash.Hash 接口定义，持续吞并字符串并放入缓存器触发增量解算
 func (s *BuiltinSM3) Write(data string) {
 	b := []byte(data)
 	s.size += uint64(len(b))
@@ -899,6 +923,7 @@ func (s *BuiltinSM3) Write(data string) {
 	}
 }
 
+// Sum 封装收尾运算，执行数据填充标准 (Bit 1 随后 0 以及长度字段) 输出 32 字节哈希值
 func (s *BuiltinSM3) Sum() []byte {
 	bitLength := s.size * 8
 	s.chunk = append(s.chunk, 0x80)
@@ -919,6 +944,7 @@ func (s *BuiltinSM3) Sum() []byte {
 	return res
 }
 
+// builtinResultEncrypt 依靠逆向取得的前端特制混淆表，对给出的密文数据进行类 Base64 的私有编码替换
 func builtinResultEncrypt(longStr, num string) string {
 	encodingTables := map[string]string{
 		"s0": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
@@ -960,6 +986,7 @@ func builtinResultEncrypt(longStr, num string) string {
 	return res.String()
 }
 
+// generBuiltinRandom 生成请求校验签名时所需的前置随机噪声比特位组合
 func generBuiltinRandom(randomNum int, option []int) []int {
 	byte1 := randomNum & 255
 	byte2 := (randomNum >> 8) & 255
@@ -971,6 +998,7 @@ func generBuiltinRandom(randomNum int, option []int) []int {
 	}
 }
 
+// generateBuiltinRandomStr 根据上述的噪声组合规则，通过时间种子转换得到完全不规律的 ASCII 字节前缀序列
 func generateBuiltinRandomStr() string {
 	r1 := rand.Float64()
 	r2 := rand.Float64()
@@ -988,6 +1016,7 @@ func generateBuiltinRandomStr() string {
 	return sb.String()
 }
 
+// builtinGenerateABogus 负责合并各层算法完成 a_bogus 参数的终极推导以突破某音接口抓取封锁限制
 func builtinGenerateABogus(params, userAgent string) string {
 	windowEnvStr := "1920|1080|1920|1040|0|30|0|0|1872|92|1920|1040|1857|92|1|24|Win32"
 	suffix := "cus"
@@ -1099,8 +1128,10 @@ func builtinGenerateABogus(params, userAgent string) string {
 // ---------------- Douyin ----------------
 type DouyinBuiltinPlatform struct{}
 
+// GetPlatformName 提供用于逻辑判断及配置索引的抖音平台名标识
 func (d *DouyinBuiltinPlatform) GetPlatformName() string { return "Douyin" }
 
+// GetStreamURL 动态调用抖音 API 探测目标房间号，获得推流地址及封面和信息
 func (d *DouyinBuiltinPlatform) GetStreamURL(roomID string, quality string) (string, string, string, error) {
 	params := url.Values{}
 	params.Set("aid", "6383")
@@ -1219,8 +1250,10 @@ func (d *DouyinBuiltinPlatform) GetStreamURL(roomID string, quality string) (str
 // ---------------- Kuaishou ----------------
 type KuaishouBuiltinPlatform struct{}
 
+// GetPlatformName 提供用于逻辑判断及配置索引的快手平台名标识
 func (k *KuaishouBuiltinPlatform) GetPlatformName() string { return "Kuaishou" }
 
+// GetStreamURL 请求快手服务端底层接口解析主播 ID 并返回视频分发连接信息
 func (k *KuaishouBuiltinPlatform) GetStreamURL(roomID string, quality string) (string, string, string, error) {
 	apiURL := "https://livev.m.chenzhongtech.com/rest/k/live/byUser?kpn=GAME_ZONE&captchaToken="
 
@@ -1329,6 +1362,7 @@ func (k *KuaishouBuiltinPlatform) GetStreamURL(roomID string, quality string) (s
 	return finalStreamURL, anchorName, avatar, nil
 }
 
+// fallbackWeb 当快手 App 端接口由于版本或风控限制无法返回数据时，退回使用普通网页访问强行抽取
 func (k *KuaishouBuiltinPlatform) fallbackWeb(roomID string, quality string) (string, string, string, error) {
 	reqURL := fmt.Sprintf("https://live.kuaishou.com/u/%s", roomID)
 	req, err := http.NewRequest("GET", reqURL, nil)
@@ -1403,8 +1437,10 @@ func (k *KuaishouBuiltinPlatform) fallbackWeb(roomID string, quality string) (st
 // ---------------- Soop ----------------
 type SoopBuiltinPlatform struct{}
 
+// GetPlatformName 提供用于逻辑判断及配置索引的 Soop 平台名标识
 func (s *SoopBuiltinPlatform) GetPlatformName() string { return "Soop" }
 
+// GetStreamURL 请求外网 Soop (AfreecaTV) 接口获取跨国 CDN 的可用录像推流源及主播信息
 func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (string, string, string, error) {
 	globalApi := fmt.Sprintf("https://api.sooplive.com/v2/stream/info/%s", roomID)
 	reqGlobal, err := http.NewRequest("GET", globalApi, nil)
@@ -1628,6 +1664,7 @@ OuterLoop:
 	return finalStreamURL, anchorName, avatar, nil
 }
 
+// apiProxyImage 设置本地反代接口转发获取直播封面图并伪造请求头，穿透部分平台的防盗链拦截限制
 func apiProxyImage(w http.ResponseWriter, r *http.Request) {
 	targetURL := r.URL.Query().Get("url")
 	if targetURL == "" {
@@ -1695,6 +1732,7 @@ type builtinTailBuffer struct {
 	mu  sync.Mutex
 }
 
+// Write (builtinTailBuffer) 实现一个固定长度的循环尾部日志记录缓冲区，避免长期运行消耗过多机器内存
 func (t *builtinTailBuffer) Write(p []byte) (n int, err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1706,7 +1744,7 @@ func (t *builtinTailBuffer) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// [优化] 旁路抽帧大法：通过 Go 读取硬盘上最新写入的 3MB 视频块送到 ffmpeg 快速提取一张图片，0 CPU，0 重复拉流。
+// extractBuiltinCoverFromLocalFile 旁路抽帧大法：只读取本地录像尾部少量字节流交由内存端 ffmpeg 解析，避免卡死并极大降低系统 CPU
 func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
 	files, err := os.ReadDir(dir)
 	if err != nil {
@@ -1760,6 +1798,7 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
 	return true
 }
 
+// BuiltinRecordStream 调动底层 FFmpeg 进程并将推流直通本地文件，并挂载一个独立的抽帧子协程用于获取首发封面
 func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, anchorName, avatar, quality string, segmentTime int) {
 	updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "录制中")
 	safeName := sanitizeBuiltinFileName(anchorName)
@@ -1912,6 +1951,7 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 	updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "未开播等待中")
 }
 
+// wrapperStartMonitorIfNotRunning 将单个监控目标封入守护协程，并实现任务防重载冲突及心跳检测重连功能
 func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 	platformName := p.GetPlatformName()
 	key := platformName + "_" + roomID
@@ -2022,13 +2062,19 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 }
 
 // ==========================================
-// 内置录制系统 Web API
+// 内置录制系统 Web API (已接入商业级解密)
 // ==========================================
 
+// apiRecorderConfig 处理内置引擎对画质及参数配置的解析和存储，已强制兼容加密格式接收
 func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var c BuiltinConfig
-		json.NewDecoder(r.Body).Decode(&c)
+		// 改用加密网关拦截器进行报文反混淆
+		if err := parseEncryptedRequest(r, &c); err != nil {
+			sendJSONError(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法配置实体或解密异常")
+			return
+		}
+
 		if c.Quality != "" {
 			builtinConfig.Quality = c.Quality
 		}
@@ -2038,16 +2084,21 @@ func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		data, _ := json.MarshalIndent(builtinConfig, "", "    ")
 		os.WriteFile("builtin_config.json", data, 0644)
-		sendJSONSuccess(w, nil)
+		sendJSONSuccess(w, r, nil)
 		return
 	}
-	sendJSONSuccess(w, builtinConfig)
+	sendJSONSuccess(w, r, builtinConfig)
 }
 
+// apiRecorderCookies 处理内置引擎应对各大平台反制而提供的 Cookie 更新，已强制兼容加密格式接收
 func apiRecorderCookies(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var c BuiltinCookieConfig
-		json.NewDecoder(r.Body).Decode(&c)
+		if err := parseEncryptedRequest(r, &c); err != nil {
+			sendJSONError(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法 Cookie 实体或解密异常")
+			return
+		}
+
 		builtinCookieMutex.Lock()
 		builtinCookies.Douyin = c.Douyin
 		builtinCookies.Kuaishou = c.Kuaishou
@@ -2055,17 +2106,25 @@ func apiRecorderCookies(w http.ResponseWriter, r *http.Request) {
 		builtinCookieMutex.Unlock()
 		data, _ := json.MarshalIndent(builtinCookies, "", "    ")
 		os.WriteFile("builtin_cookies.json", data, 0644)
-		sendJSONSuccess(w, nil)
+		sendJSONSuccess(w, r, nil)
 		return
 	}
 	builtinCookieMutex.RLock()
-	sendJSONSuccess(w, builtinCookies)
+	sendJSONSuccess(w, r, builtinCookies)
 	builtinCookieMutex.RUnlock()
 }
 
+// apiRecorderAdd 提供将前端通过面板添加的单条或批量直播间转录成录制指令池内的待处理任务功能
 func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
-	var d struct{ Platform, URL string }
-	json.NewDecoder(r.Body).Decode(&d)
+	var d struct {
+		Platform string `json:"platform"`
+		URL      string `json:"url"`
+	}
+
+	if err := parseEncryptedRequest(r, &d); err != nil {
+		sendJSONError(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法添加实体或解密异常")
+		return
+	}
 
 	lines := strings.Split(d.URL, "\n")
 	addedCount := 0
@@ -2171,20 +2230,25 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 	triggerBuiltinBroadcast()
 
 	if addedCount == 0 && duplicateCount > 0 {
-		sendJSONError(w, http.StatusBadRequest, "该主播/直播间已存在于列表中，请勿重复添加！")
+		sendJSONError(w, r, http.StatusBadRequest, "该主播/直播间已存在于列表中，请勿重复添加！")
 		return
 	}
 
-	sendJSONSuccess(w, nil)
+	sendJSONSuccess(w, r, nil)
 }
 
+// apiRecorderControl 为列表里的单条项目指派状态机动作（恢复监控、挂起监控、完全剔除等）
 func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Action   string `json:"action"`
 		Platform string `json:"platform"`
 		RoomID   string `json:"room_id"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+
+	if err := parseEncryptedRequest(r, &req); err != nil {
+		sendJSONError(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法操作实体或解密异常")
+		return
+	}
 
 	key := req.Platform + "_" + req.RoomID
 	switch req.Action {
@@ -2231,14 +2295,19 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 		builtinActiveTasks.Delete(key)
 	}
 	triggerBuiltinBroadcast()
-	sendJSONSuccess(w, nil)
+	sendJSONSuccess(w, r, nil)
 }
 
+// apiRecorderControlAll 执行对当前用户记录中的全部任务群发起全局同步的批量管控状态更新
 func apiRecorderControlAll(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Action string `json:"action"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+
+	if err := parseEncryptedRequest(r, &req); err != nil {
+		sendJSONError(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法全局操作实体或解密异常")
+		return
+	}
 
 	builtinAnchorLinesMutex.Lock()
 	content, err := os.ReadFile("builtin_urls.txt")
@@ -2306,5 +2375,5 @@ func apiRecorderControlAll(w http.ResponseWriter, r *http.Request) {
 	})
 
 	triggerBuiltinBroadcast()
-	sendJSONSuccess(w, nil)
+	sendJSONSuccess(w, r, nil)
 }

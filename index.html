@@ -784,13 +784,13 @@
                                             <div>
                                                 <div class="stat-label">
                                                     <icon-live-broadcast></icon-live-broadcast>
-                                                    WebSocket 实时信道
+                                                    动态 RSA+AES 实时信道
                                                 </div>
                                                 <div style="margin-top: 8px; display: flex; align-items: center; font-size: 15px; font-weight: 500;">
                                                     <span class="status-indicator"
                                                           :class="'status-dot-' + wsStatus"></span>
                                                     <span v-if="wsStatus === 'connected'"
-                                                          style="color: #00B42A; letter-spacing: 0.5px;">双向通道已连接</span>
+                                                          style="color: #00B42A; letter-spacing: 0.5px;">密文安全通道已连接</span>
                                                     <span v-else-if="wsStatus === 'connecting'"
                                                           style="color: #165DFF; letter-spacing: 0.5px;">正在握手连接...</span>
                                                     <span v-else style="color: #F53F3F; letter-spacing: 0.5px;">信道断开,自动重连</span>
@@ -1082,7 +1082,8 @@
                     </a-card>
 
                     <a-card class="apple-glass hover-effect" bordered>
-                        <a-table row-key="room_id" :data="paginatedBuiltinTasks" :pagination="false" bordered stripe hoverable
+                        <a-table row-key="room_id" :data="paginatedBuiltinTasks" :pagination="false" bordered stripe
+                                 hoverable
                                  column-resizable
                                  :scroll="{ x: 740 }"
                                  style="min-height: 450px;" size="small">
@@ -1205,7 +1206,6 @@
                     </a-card>
                 </a-tab-pane>
 
-
                 <a-tab-pane key="streamers">
                     <template #title>
                         <icon-link></icon-link>
@@ -1304,7 +1304,8 @@
                     </a-card>
 
                     <a-card class="apple-glass hover-effect" bordered>
-                        <a-table row-key="name" :data="filteredStreamers" size="small" :pagination="{ pageSize: 20, simple: isMobile }"
+                        <a-table row-key="name" :data="filteredStreamers" size="small"
+                                 :pagination="{ pageSize: 20, simple: isMobile }"
                                  :scroll="{ x: 700 }"
                                  style="min-height: 450px;"
                                  bordered stripe hoverable column-resizable>
@@ -1875,31 +1876,169 @@
 </div>
 
 <script>
+    let _cryptoKey = null;
+    let _sessionId = null;
+    let _aesKeyBytes = null;
+    let securityPromise = null;
+
+    // 解析并导入后端传来的 RSA 公钥 (SPKI 格式)
+    async function importRSAPublicKey(base64Key) {
+        const binaryDer = window.atob(base64Key);
+        const bytes = new Uint8Array(binaryDer.length);
+        for (let i = 0; i < binaryDer.length; i++) {
+            bytes[i] = binaryDer.charCodeAt(i);
+        }
+        return await crypto.subtle.importKey(
+            "spki",
+            bytes.buffer,
+            {name: "RSA-OAEP", hash: "SHA-256"},
+            false,
+            ["encrypt"]
+        );
+    }
+
+    // 核心安全初始化：握手并申请专属隧道
+    async function initSecurity() {
+        if (securityPromise) return securityPromise;
+        securityPromise = (async () => {
+            try {
+                // 1. 从服务器拉取随机生成的 RSA 公钥
+                const res = await fetch('/api/v1/sec/pubkey');
+                const pubKeyData = await res.json();
+                const rsaPubKey = await importRSAPublicKey(pubKeyData.data);
+
+                // 2. 在浏览器本地随机生成 32 字节的高强度 AES-256 密钥
+                _aesKeyBytes = crypto.getRandomValues(new Uint8Array(32));
+                _cryptoKey = await crypto.subtle.importKey("raw", _aesKeyBytes, {name: "AES-GCM"}, false, ["encrypt", "decrypt"]);
+
+                // 3. 使用 RSA-OAEP 公钥加密该 AES 密钥
+                const encryptedAesKeyBuf = await crypto.subtle.encrypt({name: "RSA-OAEP"}, rsaPubKey, _aesKeyBytes);
+                const encryptedAesKeyB64 = window.btoa(String.fromCharCode(...new Uint8Array(encryptedAesKeyBuf)));
+
+                // 4. 将加密后的 AES 密钥发送给后端，换取本会话独有的 Session ID
+                const exRes = await fetch('/api/v1/sec/exchange', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({enc_key: encryptedAesKeyB64})
+                });
+                const exData = await exRes.json();
+                _sessionId = exData.data.session_id;
+                console.log("🛡️ [SEC] RSA+AES 动态密钥安全隧道建立完成!");
+            } catch (e) {
+                console.error("安全隧道建立失败:", e);
+                ArcoVue.Message.error('无法建立安全通信信道，请刷新页面重试');
+            }
+        })();
+        return securityPromise;
+    }
+
+    async function getCryptoKey() {
+        if (!_cryptoKey) await initSecurity();
+        return _cryptoKey;
+    }
+
+    // AES-256-GCM 动态载荷加密函数
+    async function encryptPayload(plaintext) {
+        const key = await getCryptoKey();
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encoded = new TextEncoder().encode(plaintext);
+        const ciphertextBuffer = await crypto.subtle.encrypt({name: "AES-GCM", iv: iv}, key, encoded);
+        const ciphertext = new Uint8Array(ciphertextBuffer);
+        const combined = new Uint8Array(iv.length + ciphertext.length);
+        combined.set(iv);
+        combined.set(ciphertext, iv.length);
+
+        let binary = '';
+        for (let i = 0; i < combined.byteLength; i++) {
+            binary += String.fromCharCode(combined[i]);
+        }
+        return window.btoa(binary);
+    }
+
+    // AES-256-GCM 动态载荷解密函数
+    async function decryptPayload(base64Str) {
+        const key = await getCryptoKey();
+        const binary = window.atob(base64Str);
+        const combined = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            combined[i] = binary.charCodeAt(i);
+        }
+        const iv = combined.slice(0, 12);
+        const ciphertext = combined.slice(12);
+        const decryptedBuffer = await crypto.subtle.decrypt({name: "AES-GCM", iv: iv}, key, ciphertext);
+        return new TextDecoder().decode(decryptedBuffer);
+    }
+</script>
+
+<script>
     const {createApp, ref, reactive, onMounted, onUnmounted, computed, watch, nextTick} = Vue;
     const {Message, Modal, Notification} = ArcoVue;
 
     const api = axios.create({baseURL: '/api/v1', timeout: 10000});
 
+    // 响应拦截器：自动调用专属 AES 密钥解密
     api.interceptors.response.use(
-        res => {
-            if (res.data.code !== 200) {
-                Message.error(res.data.message || '请求失败');
-                return Promise.reject(new Error(res.data.message));
+        async res => {
+            let data = res.data;
+            if (data && data.encrypted) {
+                try {
+                    const decryptedStr = await decryptPayload(data.encrypted);
+                    data = JSON.parse(decryptedStr);
+                } catch (e) {
+                    Message.error('动态解密失败，数据可能被劫持或密钥过期');
+                    return Promise.reject(new Error('Decrypt failed'));
+                }
             }
-            return res.data;
+            if (data.code !== 200) {
+                // 如果后端告知 Session 不合法/过期，清空重连
+                if (data.code === 401 && data.message === 'Session Invalid') {
+                    _sessionId = null;
+                    _cryptoKey = null;
+                    securityPromise = null;
+                    window.location.reload();
+                }
+                Message.error(data.message || '请求失败');
+                return Promise.reject(new Error(data.message));
+            }
+            return data;
         },
-        err => {
+        async err => {
             if (err.response && err.response.status === 401) {
-                localStorage.removeItem('upload_system_token');
+                if (err.response.data && err.response.data.message === 'Session Invalid') {
+                    _sessionId = null;
+                    _cryptoKey = null;
+                    securityPromise = null;
+                } else {
+                    localStorage.removeItem('upload_system_token');
+                }
                 window.location.reload();
+            }
+            if (err.response && err.response.data && err.response.data.encrypted) {
+                try {
+                    const decryptedStr = await decryptPayload(err.response.data.encrypted);
+                    err.response.data = JSON.parse(decryptedStr);
+                } catch (e) {
+                }
             }
             Message.error(err.response?.data?.message || err.message || '网络错误');
             return Promise.reject(err);
         }
     );
-    api.interceptors.request.use(config => {
+
+    // 请求拦截器：确保握手完成后携带专属 SessionID，并封装密文
+    api.interceptors.request.use(async config => {
+        if (!_sessionId) await initSecurity();
+        config.headers['X-Session-Id'] = _sessionId;
+
         const token = localStorage.getItem('upload_system_token');
         if (token) config.headers['Authorization'] = `Bearer ${token}`;
+
+        if (config.data && !(config.data instanceof FormData)) {
+            const rawJson = JSON.stringify(config.data);
+            const encryptedStr = await encryptPayload(rawJson);
+            config.data = {encrypted: encryptedStr};
+            config.headers['X-Encryption-Mode'] = 'AES-256-GCM';
+        }
         return config;
     });
 
@@ -1945,7 +2084,7 @@
 
             const wsLatency = ref(0);
             let pingTimer = null;
-            let lastPongTime = Date.now(); // 【新增】用于记录最后一次收到服务器消息的时间
+            let lastPongTime = Date.now();
 
             const getLatencyColor = (ms) => {
                 if (ms === 0) return 'var(--color-text-3)';
@@ -1955,7 +2094,6 @@
             };
 
             const liveTaskFilter = ref('uploading');
-
             let pollingTimer = null;
             let ws = null;
 
@@ -1972,21 +2110,17 @@
                 scanningInterval: 0
             });
             const queueStatus = reactive({waiting: 0, uploading: 0, success: 0, failed: 0, retrying: 0});
-
             const trafficMetrics = reactive({speed: 0, time: 0});
-
             const statsData = reactive({trend: [], rank: []});
             let trendChartInstance = null;
             window.lastStatsStr = '';
 
             const liveTasks = ref([]);
             const clientTime = ref(Date.now());
-
             const streamers = ref([]);
             const newStreamer = reactive({url: '', name: ''});
             const activeStreamersCount = computed(() => streamers.value.filter(s => s.active).length);
             const isSavingStreamers = ref(false);
-
             const streamerSearchQuery = ref('');
             const streamerSearchRef = ref(null);
             const activeRecordingStreamers = ref([]);
@@ -2025,13 +2159,7 @@
                 }
             });
 
-            const globalPreview = reactive({
-                visible: false,
-                src: '',
-                roomId: '',
-                platform: ''
-            });
-
+            const globalPreview = reactive({visible: false, src: '', roomId: '', platform: ''});
             const openPreview = (record) => {
                 if (!record.avatar) return;
                 globalPreview.src = record.avatar;
@@ -2049,7 +2177,6 @@
             const builtinBatchForm = ref({platform: 'Douyin', urls: ''});
             const builtinSettings = ref({quality: 'uhd', segment_time: 0, save_path: './downloads'});
             const builtinCookies = ref({douyin: '', kuaishou: '', soop: ''});
-
             const builtinTasks = ref([]);
 
             const builtinAdding = ref(false);
@@ -2240,7 +2367,6 @@
                 }
             };
 
-
             const handleGlobalKeydown = (e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
                     if (activeTab.value === 'streamers') {
@@ -2258,11 +2384,9 @@
             const showLogsModal = ref(false);
             const recorderLogsContent = ref('');
             const dockerLogsRef = ref(null);
-
             const showBatchAddModal = ref(false);
             const batchAddText = ref('');
             const batchAddLoading = ref(false);
-
             const cookiesForm = reactive({douyin: '', kuaishou: '', sooplive: '', liveSavePath: ''});
             const cookiesLoading = ref(false);
 
@@ -2274,14 +2398,11 @@
                     color: 'var(--color-text-3)'
                 };
                 if (next === -1) return {status: 'scanning', text: '正在同步目录状态...', color: '#165DFF'};
-
                 const diffSeconds = Math.floor((next - clientTime.value) / 1000);
                 if (diffSeconds < 0) return {status: 'scanning', text: '准备执行扫描...', color: '#165DFF'};
-
                 const m = Math.floor(diffSeconds / 60).toString().padStart(2, '0');
                 const s = (diffSeconds % 60).toString().padStart(2, '0');
                 const isUrgent = diffSeconds <= 60;
-
                 return {
                     status: 'waiting',
                     text: `${m} 分 ${s} 秒`,
@@ -2327,8 +2448,6 @@
 
             const historyQuery = reactive({page: 1, limit: 15, filename: '', status: ''});
             const historyData = reactive({items: [], total: 0});
-
-            // ⭐ 强制显示分页，并开启页码条数切换与总数显示
             const pagination = computed(() => ({
                 total: historyData.total,
                 current: historyQuery.page,
@@ -2380,10 +2499,7 @@
                         },
                         color: ['#F5A623', '#165DFF', '#00B42A', '#F53F3F'],
                         series: [{
-                            type: 'pie',
-                            radius: ['40%', '65%'],
-                            center: ['50%', '40%'],
-                            avoidLabelOverlap: true,
+                            type: 'pie', radius: ['40%', '65%'], center: ['50%', '40%'], avoidLabelOverlap: true,
                             itemStyle: {
                                 borderRadius: 6,
                                 borderColor: isDarkMode.value ? '#232324' : '#ffffff',
@@ -2453,10 +2569,7 @@
                     ],
                     series: [
                         {
-                            name: '上传流量 (GB)',
-                            type: 'line',
-                            smooth: true,
-                            yAxisIndex: 0,
+                            name: '上传流量 (GB)', type: 'line', smooth: true, yAxisIndex: 0,
                             data: (statsData.trend || []).map(i => i.size.toFixed(2)),
                             areaStyle: {
                                 color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{
@@ -2464,8 +2577,7 @@
                                     color: 'rgba(22, 93, 255, 0.4)'
                                 }, {offset: 1, color: 'rgba(22, 93, 255, 0)'}])
                             },
-                            itemStyle: {color: '#165DFF'},
-                            lineStyle: {width: 3}
+                            itemStyle: {color: '#165DFF'}, lineStyle: {width: 3}
                         },
                         {
                             name: '文件数量',
@@ -2503,7 +2615,7 @@
                     const res = await api.post('/auth/login', loginForm);
                     localStorage.setItem('upload_system_token', res.data.token);
                     isLoggedIn.value = true;
-                    Message.success('登录系统成功');
+                    Message.success('加密网关认证成功');
                     initDashboard();
                 } catch (e) {
                 } finally {
@@ -2583,7 +2695,6 @@
                 showLogsModal.value = true;
                 fetchRecorderLogs();
             };
-
             const fetchActiveStreamers = async () => {
                 try {
                     const res = await api.get('/streamers/active');
@@ -2591,7 +2702,6 @@
                 } catch (e) {
                 }
             };
-
             const fetchStreamers = async () => {
                 if (isSavingStreamers.value) return;
                 try {
@@ -2683,41 +2793,48 @@
                 }, 150);
             };
 
-            // 【核心修复一】：心跳假死超时处理与 WebSocket 重连重构
-            const connectWS = () => {
+            // 【重要：WebSocket 中带上申请到的 Session_ID】
+            const connectWS = async () => {
+                if (!_sessionId) await initSecurity();
+
                 if (ws) {
                     ws.onclose = null;
                     ws.close();
                 }
                 wsStatus.value = 'connecting';
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
+                ws = new WebSocket(`${protocol}//${window.location.host}/ws/live?session_id=${_sessionId}`);
 
-                lastPongTime = Date.now(); // 初始化心跳时间
+                lastPongTime = Date.now();
 
                 ws.onopen = () => {
                     wsStatus.value = 'connected';
-                    lastPongTime = Date.now(); // 连接成功时重置时间
+                    lastPongTime = Date.now();
                     if (pingTimer) clearInterval(pingTimer);
-                    pingTimer = setInterval(() => {
+                    pingTimer = setInterval(async () => {
                         if (ws.readyState === WebSocket.OPEN) {
-                            // 【核心修复】：主动心跳检测。如果 15 秒没收到服务器任何消息，说明连接已假死，强制杀掉并重连
                             if (Date.now() - lastPongTime > 15000) {
                                 console.warn("[WS] 心跳超时，连接已假死，强制触发断开重连...");
                                 ws.close();
                                 return;
                             }
-                            ws.send(JSON.stringify({ type: 'ping', payload: Date.now() }));
+                            const pingRaw = JSON.stringify({type: 'ping', payload: Date.now()});
+                            const encryptedPing = await encryptPayload(pingRaw);
+                            ws.send(JSON.stringify({encrypted: encryptedPing}));
                         }
                     }, 5000);
                 };
 
-                ws.onmessage = (event) => {
+                ws.onmessage = async (event) => {
                     try {
-                        // 【核心修复】：只要收到服务器任何数据，说明连接畅通，更新时间戳
                         lastPongTime = Date.now();
 
-                        const msg = JSON.parse(event.data);
+                        const encMsg = JSON.parse(event.data);
+                        if (!encMsg.encrypted) return;
+
+                        const decryptedStr = await decryptPayload(encMsg.encrypted);
+                        const msg = JSON.parse(decryptedStr);
+
                         if (msg.type === 'pong') {
                             wsLatency.value = Date.now() - msg.payload;
                             return;
@@ -2733,7 +2850,7 @@
                                 duration: 0,
                                 closable: true,
                                 position: 'bottomRight',
-                                style: { whiteSpace: 'pre-wrap', wordBreak: 'break-all', lineHeight: '1.6' }
+                                style: {whiteSpace: 'pre-wrap', wordBreak: 'break-all', lineHeight: '1.6'}
                             });
                         } else if (msg.type === 'trafficMetrics') {
                             trafficMetrics.speed = msg.payload.speed;
@@ -2768,15 +2885,9 @@
                                 liveTasks.value[idx].status = msg.payload.status;
                             } else {
                                 liveTasks.value.unshift({
-                                    id: msg.payload.id,
-                                    filename: msg.payload.filename,
-                                    path: msg.payload.path,
-                                    size: msg.payload.size,
-                                    uploaded: msg.payload.uploaded,
-                                    speed: msg.payload.speed,
-                                    status: msg.payload.status,
-                                    startTime: msg.payload.startTime,
-                                    duration: 0
+                                    id: msg.payload.id, filename: msg.payload.filename, path: msg.payload.path,
+                                    size: msg.payload.size, uploaded: msg.payload.uploaded, speed: msg.payload.speed,
+                                    status: msg.payload.status, startTime: msg.payload.startTime, duration: 0
                                 });
                             }
                         } else if (msg.type === 'systemStatus') {
@@ -2814,11 +2925,8 @@
                                 titleText = '⚙️ 配置重载扫描';
                             }
                             Notification.info({
-                                title: titleText,
-                                content: contentText,
-                                position: 'bottomRight',
-                                duration: 4000,
-                                style: { whiteSpace: 'pre-wrap', lineHeight: '1.6' }
+                                title: titleText, content: contentText, position: 'bottomRight', duration: 4000,
+                                style: {whiteSpace: 'pre-wrap', lineHeight: '1.6'}
                             });
                         } else if (msg.type === 'scanFinished') {
                             Notification.success({
@@ -2830,7 +2938,6 @@
                         } else if (msg.type === 'builtinTasks') {
                             const payloadTasks = msg.payload || [];
                             const newTasks = [];
-
                             payloadTasks.forEach(pTask => {
                                 const existing = builtinTasks.value.find(t => t.platform === pTask.platform && t.room_id === pTask.room_id);
                                 if (existing) {
@@ -2840,7 +2947,6 @@
                                     existing.file_size = pTask.file_size;
                                     existing.is_paused = pTask.is_paused;
                                     existing.avatar = pTask.avatar;
-
                                     if (globalPreview.visible && globalPreview.platform === pTask.platform && globalPreview.roomId === pTask.room_id) {
                                         globalPreview.src = pTask.avatar;
                                     }
@@ -2853,6 +2959,7 @@
                             builtinTasks.value = newTasks;
                         }
                     } catch (e) {
+                        console.error("解密流数据发生异常：", e);
                     }
                 };
 
@@ -2860,7 +2967,6 @@
                     wsStatus.value = 'disconnected';
                     wsLatency.value = 0;
                     if (pingTimer) clearInterval(pingTimer);
-                    // 【核心修改】：断开后 3 秒内尝试重连，比原来的 5 秒更灵敏
                     if (isLoggedIn.value) setTimeout(connectWS, 3000);
                 };
                 ws.onerror = () => {
@@ -2870,14 +2976,9 @@
 
             const control = (action) => {
                 const actionText = {
-                    'start': '确定要启动系统吗？',
-                    'pause': '确定要暂停吗？',
-                    'stop': '危险操作：强行停止系统吗？',
-                    'rescan': '立刻触发深度扫描吗？',
-                    'relogin': '刷新远端授权？',
-                    'clear-fail-queue': '清空失败记录？',
-                    'retry-fail-queue': '重试失败任务？',
-                    'clear-success-queue': '清空成功记录？'
+                    'start': '确定要启动系统吗？', 'pause': '确定要暂停吗？', 'stop': '危险操作：强行停止系统吗？',
+                    'rescan': '立刻触发深度扫描吗？', 'relogin': '刷新远端授权？', 'clear-fail-queue': '清空失败记录？',
+                    'retry-fail-queue': '重试失败任务？', 'clear-success-queue': '清空成功记录？'
                 };
                 Modal.confirm({
                     title: '操作确认',
@@ -2906,13 +3007,11 @@
                 historyQuery.page = page;
                 fetchHistory();
             };
-
             const onPageSizeChange = (size) => {
                 historyQuery.limit = size;
                 historyQuery.page = 1;
                 fetchHistory();
             };
-
             const fetchLogs = async () => {
                 try {
                     const res = await api.get('/logs', {params: logQuery});
@@ -2921,8 +3020,11 @@
                 } catch (e) {
                 }
             };
-            const downloadLogs = () => {
-                window.open(`/api/v1/logs/download?level=${logQuery.level}&keyword=${logQuery.keyword}&limit=${logExportLimit.value}`, '_blank');
+
+            // 导出日志也使用带有 SessionID 的链接获取加密文件
+            const downloadLogs = async () => {
+                if (!_sessionId) await initSecurity();
+                window.open(`/api/v1/logs/download?level=${logQuery.level}&keyword=${logQuery.keyword}&limit=${logExportLimit.value}&session_id=${_sessionId}`, '_blank');
             };
 
             const fetchConfig = async () => {
@@ -2997,7 +3099,6 @@
                 'warn': '#ff7d00'
             }[level] || 'var(--color-text-3)');
 
-            // 【核心修复二】：解决移动端瞬间并发导致的请求阻塞
             const initDashboard = () => {
                 fetchStatus();
                 fetchQueue();
@@ -3005,12 +3106,9 @@
                 fetchHistory();
                 fetchLogs();
                 fetchConfig();
-
-                // 【核心修复】：延迟 1 秒建立 WebSocket，避开移动端并发网络请求风暴
                 setTimeout(() => {
                     connectWS();
                 }, 1000);
-
                 if (pollingTimer) clearInterval(pollingTimer);
                 pollingTimer = setInterval(() => {
                     clientTime.value = Date.now();
@@ -3035,23 +3133,20 @@
                 window.removeEventListener('resize', handleResize);
             };
 
-            // 【核心修复三】：监听页面唤醒，解决休眠/切后台导致的断连假死
             onMounted(() => {
                 autoSetThemeByTime();
                 if (isLoggedIn.value) initDashboard();
                 window.addEventListener('keydown', handleGlobalKeydown);
                 handleResize();
 
-                // 【核心修复】：页面可见性监听。当电脑休眠唤醒、或手机切后台重新切回网页时触发
                 document.addEventListener('visibilitychange', () => {
                     if (document.visibilityState === 'visible' && isLoggedIn.value) {
-                        // 如果发现断开，立刻补救重连
                         if (wsStatus.value === 'disconnected' || !ws || ws.readyState !== WebSocket.OPEN) {
-                            console.log("[Mobile/Desktop] 页面唤醒，执行 WebSocket 补救重连...");
                             connectWS();
                         } else {
-                            // 即使状态显示连着，也立刻发一个心跳测试，如果不通，上面的 15 秒机制会秒杀它
-                            ws.send(JSON.stringify({ type: 'ping', payload: Date.now() }));
+                            encryptPayload(JSON.stringify({type: 'ping', payload: Date.now()})).then(enc => {
+                                ws.send(JSON.stringify({encrypted: enc}));
+                            });
                         }
                     }
                 });
@@ -3085,120 +3180,26 @@
             }, {deep: true});
 
             return {
-                isMobile,
-                isDarkMode,
-                toggleTheme,
-                openGitHub,
-                isLoggedIn,
-                loginLoading,
-                loginForm,
-                activeTab,
-                handleLogin,
-                handleLogout,
-                wsStatus,
-                wsStats,
-                wsLatency,
-                getLatencyColor,
-                liveTaskFilter,
-                systemStatus,
-                queueStatus,
-                liveTasks,
-                uploadingTasks,
-                completedTasks,
-                control,
-                historyQuery,
-                historyData,
-                pagination,
-                fetchHistory,
-                onPageChange,
-                onPageSizeChange,
-                logQuery,
-                logData,
-                logExportLimit,
-                logContainerRef,
-                fetchLogs,
-                downloadLogs,
-                configForm,
-                configDirsString,
-                fetchConfig,
-                saveConfig,
-                streamers,
-                newStreamer,
-                activeStreamersCount,
-                fetchStreamers,
-                saveStreamers,
-                addStreamer,
-                removeStreamer,
-                activeRecordingStreamers,
-                onlineStreamersCount,
-                showBatchAddModal,
-                batchAddText,
-                batchAddLoading,
-                handleBatchAdd,
-                cookiesForm,
-                cookiesLoading,
-                fetchCookies,
-                saveCookies,
-                radarState,
-                recorderStatus,
-                recorderControlLoading,
-                showLogsModal,
-                recorderLogsContent,
-                dockerLogsRef,
-                fetchRecorderStatus,
-                controlRecorder,
-                fetchRecorderLogs,
-                openLogsModal,
-                formatSize,
-                formatSpeed,
-                calculatePercent,
-                formatDuration,
-                formatDurationSeconds,
-                getElapsedTime,
-                getStatusColor,
-                getLogLevelColor,
-                fetchLiveTasks,
-                formatStatusText,
-                streamerSearchQuery,
-                streamerSearchRef,
-                filteredStreamers,
-                trafficMetrics,
-                statsData,
-                calculateRankPercent,
-
-                builtinSearchQuery,
-                showBuiltinSettingsModal,
-                showBuiltinBatchModal,
-                builtinCurrentPage,
-                builtinPageSize,
-                sortedBuiltinTasks,
-                paginatedBuiltinTasks,
-                builtinForm,
-                builtinBatchForm,
-                builtinSettings,
-                builtinCookies,
-                builtinTasks,
-                builtinActiveCount,
-                builtinRecordingCount,
-                isAllBuiltinActive,
-                builtinAdding,
-                builtinBatchAdding,
-                builtinSaving,
-                builtinSavingCookies,
-                getBuiltinLiveUrl,
-                fetchBuiltinConfig,
-                saveBuiltinConfig,
-                saveBuiltinCookies,
-                handleAddBuiltin,
-                handleBatchAddBuiltin,
-                handleControlBuiltin,
-                handleSwitchBuiltin,
-                handleMasterSwitchBuiltin,
-                openBuiltinSettingsModal,
-                downloadBuiltinCover,
-
-                globalPreview,
-                openPreview
+                isMobile, isDarkMode, toggleTheme, openGitHub, isLoggedIn, loginLoading, loginForm, activeTab,
+                handleLogin, handleLogout, wsStatus, wsStats, wsLatency, getLatencyColor, liveTaskFilter,
+                systemStatus, queueStatus, liveTasks, uploadingTasks, completedTasks, control, historyQuery,
+                historyData, pagination, fetchHistory, onPageChange, onPageSizeChange, logQuery, logData,
+                logExportLimit, logContainerRef, fetchLogs, downloadLogs, configForm, configDirsString,
+                fetchConfig, saveConfig, streamers, newStreamer, activeStreamersCount, fetchStreamers,
+                saveStreamers, addStreamer, removeStreamer, activeRecordingStreamers, onlineStreamersCount,
+                showBatchAddModal, batchAddText, batchAddLoading, handleBatchAdd, cookiesForm, cookiesLoading,
+                fetchCookies, saveCookies, radarState, recorderStatus, recorderControlLoading, showLogsModal,
+                recorderLogsContent, dockerLogsRef, fetchRecorderStatus, controlRecorder, fetchRecorderLogs,
+                openLogsModal, formatSize, formatSpeed, calculatePercent, formatDuration, formatDurationSeconds,
+                getElapsedTime, getStatusColor, getLogLevelColor, fetchLiveTasks, formatStatusText,
+                streamerSearchQuery, streamerSearchRef, filteredStreamers, trafficMetrics, statsData,
+                calculateRankPercent, builtinSearchQuery, showBuiltinSettingsModal, showBuiltinBatchModal,
+                builtinCurrentPage, builtinPageSize, sortedBuiltinTasks, paginatedBuiltinTasks, builtinForm,
+                builtinBatchForm, builtinSettings, builtinCookies, builtinTasks, builtinActiveCount,
+                builtinRecordingCount, isAllBuiltinActive, builtinAdding, builtinBatchAdding, builtinSaving,
+                builtinSavingCookies, getBuiltinLiveUrl, fetchBuiltinConfig, saveBuiltinConfig, saveBuiltinCookies,
+                handleAddBuiltin, handleBatchAddBuiltin, handleControlBuiltin, handleSwitchBuiltin,
+                handleMasterSwitchBuiltin, openBuiltinSettingsModal, downloadBuiltinCover, globalPreview, openPreview
             };
         }
     });
