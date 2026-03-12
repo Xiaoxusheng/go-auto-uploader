@@ -790,7 +790,7 @@
                                                     <span class="status-indicator"
                                                           :class="'status-dot-' + wsStatus"></span>
                                                     <span v-if="wsStatus === 'connected'"
-                                                          style="color: #00B42A; letter-spacing: 0.5px;">密文安全通道已连接</span>
+                                                          style="color: #00B42A; letter-spacing: 0.5px;">双向通道已连接</span>
                                                     <span v-else-if="wsStatus === 'connecting'"
                                                           style="color: #165DFF; letter-spacing: 0.5px;">正在握手连接...</span>
                                                     <span v-else style="color: #F53F3F; letter-spacing: 0.5px;">信道断开,自动重连</span>
@@ -1815,7 +1815,7 @@
                                 <a-option value="uhd">蓝光 / 超清 (最高画质)</a-option>
                                 <a-option value="hd">高清</a-option>
                                 <a-option value="sd">标清</a-option>
-                            </a-select>
+                                </select>
                         </a-form-item>
                         <a-form-item label="自动分片时长 (分钟)" tooltip="达到时间后自动分割视频文件，0为不限制">
                             <a-input-number v-model="builtinSettings.segment_time" :min="0"
@@ -2051,14 +2051,25 @@
 
             const isDarkMode = ref(false);
 
+            // 【核心修改】：通过 localStorage 记忆用户手动选择的明暗偏好，若无则按时间自动切换
             const autoSetThemeByTime = () => {
-                const hour = new Date().getHours();
-                isDarkMode.value = (hour < 8 || hour >= 18);
+                const savedTheme = localStorage.getItem('upload_system_theme');
+                if (savedTheme !== null) {
+                    // 如果用户手动选择过，则严格遵从用户的选择
+                    isDarkMode.value = savedTheme === 'dark';
+                } else {
+                    // 如果用户没选过，则根据时间自动切换（晚18点到早8点为暗黑模式）
+                    const hour = new Date().getHours();
+                    isDarkMode.value = (hour < 8 || hour >= 18);
+                }
                 applyTheme();
             };
 
             const toggleTheme = () => {
                 isDarkMode.value = !isDarkMode.value;
+                // 【核心修改】：用户手动切换后，将偏好持久化保存到本地存储
+                localStorage.setItem('upload_system_theme', isDarkMode.value ? 'dark' : 'light');
+
                 applyTheme();
                 setTimeout(() => {
                     renderChart();
