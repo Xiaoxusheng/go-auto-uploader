@@ -247,16 +247,15 @@
             box-sizing: border-box;
         }
 
-        /* ================= 修改：统一缩小编排并禁止换行以对齐高度 ================= */
         .stat-value {
-            font-size: 22px; /* 调整字号，避免在 6 列紧凑布局下过大 */
+            font-size: 22px;
             font-weight: 600;
             color: var(--color-text-1);
             margin-top: 10px;
             display: flex;
             align-items: center;
             gap: 8px;
-            white-space: nowrap; /* 强制不换行，防止如 18.06 MB 等长文本换行导致卡片高度被撑爆 */
+            white-space: nowrap;
         }
 
         .stat-label {
@@ -382,9 +381,8 @@
                 overflow: hidden;
             }
 
-            /* ================= 修改：移动端卡片文本同步调小 ================= */
             .stat-value {
-                font-size: 18px; /* 从 20px 调小，适配移动端 */
+                font-size: 18px;
             }
 
             .login-box {
@@ -2556,7 +2554,12 @@
                 nextTick(() => {
                     const dom = document.getElementById('queueChart');
                     if (!dom) return;
-                    if (!chartInstance) chartInstance = echarts.init(dom);
+                    if (!chartInstance) {
+                        chartInstance = echarts.init(dom);
+                    } else {
+                        // 【修复 Bug】增加强制重置尺寸，防止尺寸错乱导致画布空白
+                        chartInstance.resize();
+                    }
                     const total = queueStatus.waiting + queueStatus.uploading + queueStatus.success + queueStatus.failed;
                     if (total === 0) {
                         chartInstance.setOption({
@@ -2609,7 +2612,12 @@
             const renderTrendChart = () => {
                 const dom = document.getElementById('trendChart');
                 if (!dom) return;
-                if (!trendChartInstance) trendChartInstance = echarts.init(dom);
+                if (!trendChartInstance) {
+                    trendChartInstance = echarts.init(dom);
+                } else {
+                    // 【修复 Bug】增加强制重置尺寸，避免 DOM 未挂载完毕导致初始化尺寸为 0x0
+                    trendChartInstance.resize();
+                }
                 const isDark = document.body.getAttribute('arco-theme') === 'dark';
                 const textColor = isDark ? 'rgba(255,255,255,0.7)' : '#4E5969';
                 const splitLineColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)';
@@ -2701,6 +2709,14 @@
                     isLoggedIn.value = true;
                     Message.success('网关认证成功');
                     initDashboard();
+
+                    // 【修复 Bug】登录成功后，等待 DOM 渲染完毕，强制进行一次图表重绘避免白板
+                    setTimeout(() => {
+                        if (activeTab.value === 'overview') {
+                            renderChart();
+                            renderTrendChart();
+                        }
+                    }, 300);
                 } catch (e) {
                 } finally {
                     loginLoading.value = false;
@@ -3310,7 +3326,16 @@
             // 监听生命周期启动状态
             onMounted(() => {
                 autoSetThemeByTime();
-                if (isLoggedIn.value) initDashboard();
+                if (isLoggedIn.value) {
+                    initDashboard();
+                    // 【修复 Bug】刷新页面后，等待 DOM 渲染完毕强制绘图
+                    setTimeout(() => {
+                        if (activeTab.value === 'overview') {
+                            renderChart();
+                            renderTrendChart();
+                        }
+                    }, 300);
+                }
                 window.addEventListener('keydown', handleGlobalKeydown);
                 handleResize();
 

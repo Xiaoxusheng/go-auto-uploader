@@ -1,10 +1,11 @@
+
 <div align="center">
 
 # 🚀 Go Auto Uploader
 
 **高性能分布式自动文件上传与监控系统**
 
-[🌟 项目 GitHub 仓库](https://github.com/Xiaoxusheng/go-auto-uploader)
+[🌟 项目 GitHub 仓库](https://github.com/Xiaoxusheng/go-auto-uploader) &nbsp; | &nbsp; [📝 查看更新日志 (Changelog)](CHANGELOG.md)
 
 </div>
 
@@ -40,11 +41,18 @@
 * **🎛️ 流式动态流量控制**：支持**白班/夜间双模式智能限速**。基于底层字节流 (`io.Reader`) 拦截限速，保证主干网络在工作时间的稳定性。
 * **🔥 无宕机热更新**：采用 Channel 信号量打断机制，在 Web 端修改并发数、扫描间隔等核心参数后，系统会自动重载配置并即刻生效，无需重启进程。
 
+### 🔐 商业级数据安全 (Enterprise-Grade Security)
+
+* **🛡️ 动态 RSA+AES 混合加密**：引入基于 RSA-2048 和 AES-256-GCM 的完美前向保密 (PFS) 动态密钥交换机制。前端每次加载自动换取专属 SessionID 与 AES 临时密钥，对 API 传输载荷进行全链路端到端加密，彻底防止中间人 (MITM) 抓包窃听与重放攻击。
+* **🔌 无感加解密拦截器**：重构前后端网络层与 Axios 拦截器，自动完成 JSON 结构体到 Base64 密文的装箱与拆箱，对上层业务代码实现 100% 零侵入透明兼容。
+* **🎛️ 可视化加密开关**：在前端“上传参数”设置面板中提供 API 加密通信热开关。可随时在明文调试与密文安全模式间无缝动态切换，兼顾极客开发与生产环境的高强度安全需求。
+
 ### 💻 现代化 Web 控制台
 
-* **🎨 极客美学 UI**：采用 Arco Design Vue 深度定制，支持跟随系统时间自动切换的**日间 / 暗黑模式 (Dark Mode)**，以及全局平滑毛玻璃渲染引擎。
+* **🎨 极客美学 UI**：采用 Arco Design Vue 深度定制，支持跟随系统时间自动切换的**日间 / 暗黑模式 (Dark Mode)**，以及全局平滑毛玻璃渲染引擎。配合严格的防折行保护机制与动态字号自适应缩放引擎，完美适配各种尺寸的屏幕。
 * **📡 WebSocket 实时追踪**：通过全双工 WebSocket 通道，毫秒级同步各个上传工作流的瞬时速度、进度及历史耗时。
 * **📊 动态可视化大屏**：集成 ECharts，实时渲染全站流量趋势、硬盘消耗排行及整体任务分布状态。
+* **💽 全局硬件资源监控**：底层引擎全面接入 `gopsutil` 系统级探针，毫秒级实时计算并下发系统磁盘剩余可用空间（Disk Free）与底层 FFmpeg 录制进程物理内存占用（RSS Memory），彻底告别“盲盒式”录制。
 * **🖥️ Web 终端全量投射**：独创的 `logInterceptor` 机制，将后端标准控制台输出拦截并清洗后，实时投射至前端页面，支持多条件检索与分页查阅，并提供 `.log` 格式一键导出。
 
 ### 🛡️ 自动化与健壮性保障
@@ -52,34 +60,33 @@
 * **📧 自动化数据邮件推送**：内置 SMTP 服务，根据设定的周期合并发送精美的 HTML 格式流量统计与成功上传报告。
 * **🔄 优雅的错误恢复**：支持针对特定网络异常导致的任务失败进行一键重试及队列干预。
 
-
-
 ---
 
 ## 📸 界面预览
 
 *以下为系统在实际运行中的界面截图：*
 
-<table border="1" cellpadding="1" cellspacing="1" style="width: 500px">
+<table border="1" cellpadding="1" cellspacing="1" style="width: 100%">
     <tbody>
         <tr>
-            <td><img src="img/1.png" alt="登录" width="1920" /></td>
-            <td><img src="img/2.png" alt="主页面" width="1920" /></td> 
+            <td><img src="img/1.png" alt="登录" width="100%" /></td>
+            <td><img src="img/2.png" alt="主页面" width="100%" /></td> 
         </tr>
         <tr>
-            <td><img src="img/3.png" alt="日志页面" width="1920" /></td>
-           <td><img src="img/4.png" alt="配置页面" width="1920" /></td>
+            <td><img src="img/3.png" alt="日志页面" width="100%" /></td>
+           <td><img src="img/4.png" alt="配置页面" width="100%" /></td>
         </tr>
      <tr>
-            <td><img src="img/5.png" alt="上传成功页面" width="1920" /></td>
-           <td><img src="img/6.png" alt="历史记录页面" width="1920" /></td>
+            <td><img src="img/5.png" alt="上传成功页面" width="100%" /></td>
+           <td><img src="img/6.png" alt="历史记录页面" width="100%" /></td>
         </tr>
      <tr>
-            <td><img src="img/7.png" alt="主播设置页面" width="1920" /></td>
-           <td><img src="img/8.png" alt="cookie设置页面" width="1920" /></td>
+            <td><img src="img/7.png" alt="主播设置页面" width="100%" /></td>
+           <td><img src="img/8.png" alt="cookie设置页面" width="100%" /></td>
         </tr>
     </tbody>
 </table>
+
 ---
 
 ## 📡 WebSocket 实时数据协议规范
@@ -104,7 +111,6 @@
     ]
   }
 }
-
 ```
 
 **瞬时网络速率 (`type: "trafficMetrics"`)**
@@ -118,7 +124,6 @@
     "time": 1708765432000
   }
 }
-
 ```
 
 **队列分布状态 (`type: "queueStatus"`)**
@@ -134,7 +139,6 @@
     "failed": 0
   }
 }
-
 ```
 
 ### ⚡ 2. 任务流与进度追踪
@@ -156,7 +160,6 @@
     "startTime": 1708765000000
   }
 }
-
 ```
 
 **任务完成通知 (`type: "taskDone"`)**
@@ -173,13 +176,12 @@
     "error": "Token expired" // 仅失败时存在
   }
 }
-
 ```
 
 ### 🚀 3. 系统调度与控制
 
 **系统核心状态 (`type: "systemStatus"`)**
-包含全局雷达倒计时、动态休眠时间及目录统计情况。
+包含全局雷达倒计时、动态休眠时间、目录统计情况以及硬件资源探针数据。
 
 ```json
 {
@@ -191,6 +193,8 @@
     "dynamicInterval": 5, // 动态调节后的频率
     "nextScanTime": 1708765900000,
     "uptime": 3600,
+    "diskFree": 52684820480, // 系统可用磁盘空间 (Bytes)
+    "ffmpegMem": 24560000,   // FFmpeg进程内存消耗 (Bytes)
     "dirs": [
       {
         "path": "D:\\Record",
@@ -202,7 +206,6 @@
     ]
   }
 }
-
 ```
 
 **扫描启动事件 (`type: "scanStarted"`)**
@@ -219,7 +222,6 @@
     "trigger": "auto" // auto, manual-start, rescan, config-change
   }
 }
-
 ```
 
 **扫描完毕事件 (`type: "scanFinished"`)**
@@ -233,7 +235,6 @@
     "added": 12 // 压入队列的新文件数量
   }
 }
-
 ```
 
 ### 🎥 4. 直播引擎生态联动
@@ -246,7 +247,6 @@
   "type": "recorderStatus",
   "payload": "running" // running, exited, 离线/异常 等
 }
-
 ```
 
 **热点录制主播探测 (`type: "activeStreamers"`)**
@@ -257,7 +257,6 @@
   "type": "activeStreamers",
   "payload": ["KingKing", "小毛毛芋头"]
 }
-
 ```
 
 **主播配置名单同步 (`type: "streamersData"`)**
@@ -271,7 +270,6 @@
     { "name": "未知", "url": "[https://live.kuaishou.com/456](https://live.kuaishou.com/456)", "active": false }
   ]
 }
-
 ```
 
 ### 🚨 5. 诊断与告警
@@ -289,7 +287,6 @@
     "Error": ""
   }
 }
-
 ```
 
 **全局告警强推 (`type: "systemAlert"`)**
@@ -305,7 +302,6 @@
     "time": "15:04:05"
   }
 }
-
 ```
 
 ---
@@ -338,7 +334,6 @@ go build -o uploader.exe .
 
 # Linux / macOS 平台:
 go build -o uploader .
-
 ```
 
 ### 2. 启动服务
@@ -347,7 +342,6 @@ go build -o uploader .
 
 ```bash
 ./uploader -dirs "D:\录像文件夹, E:\LiveRecord" -workers 3 -day-rate 20 -night-rate 80 -web-port 8080
-
 ```
 
 #### 详细参数说明表：
@@ -384,6 +378,8 @@ go build -o uploader .
 * **拉取系统控制台日志**：`GET /api/v1/logs?page=1&limit=50`
 * **下发队列控制指令**：`POST /api/v1/control/[action]`
   *(支持的 action: `start`, `pause`, `stop`, `rescan`, `clear-fail-queue` 等)*
+
+*(注：系统默认开启动态混合加密机制，调用此类受保护 API 请参考无感拦截器封装格式)*
 
 ---
 
