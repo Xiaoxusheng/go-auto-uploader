@@ -1,7 +1,20 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
+### [v2.2.0] - 最新更新 (Hardware Monitoring & UI Polish)
+#### 🌟 核心特性 (New Features)
+* **全局硬件资源监控 (Hardware Resource Monitoring)**：底层引擎全面接入 `gopsutil` 硬件级探针，新增对系统磁盘剩余可用空间（Disk Free）与底层 FFmpeg 录制进程物理内存占用（RSS Memory）的毫秒级实时计算与下发。帮助用户直观洞察系统存储瓶颈与运行期内存负载，彻底告别“盲盒式”录制。
+
+#### 🎨 界面与交互优化 (UI/UX)
+* **自适应流式卡片重构 (Responsive Cards Polish)**：重构了【系统概览】顶部核心数据指标的响应式栅格系统（由三列优化为平滑的四/六列布局）。
+* **防撑爆折行保护 (Anti-Wrap Protection)**：针对数据面板引入了严格的 `white-space: nowrap` 防换行保护机制与动态字号（Desktop 22px / Mobile 18px）自适应缩放引擎。彻底解决了当监控数值字符过长（如 "18.06 MB"）时，文本换行导致卡片高度被异常撑爆、整体排版错位的不美观问题。
+---
+### [v2.1.0] - 历史更新 (Dynamic RSA+AES API Encryption)
+#### 🌟 核心特性 (New Features)
+* **商业级动态安全信道 (Dynamic Security)**：引入了基于 RSA-2048 和 AES-256-GCM 的完美前向保密 (PFS) 动态密钥交换机制。前端每次加载自动换取专属 SessionID 与 AES 临时密钥，对 API 传输载荷进行全链路端到端加密，彻底防止中间人 (MITM) 抓包窃听与重放攻击。
+* **可视化加密开关 (Encryption Toggle)**：在前端“上传参数”设置面板中新增了“API加密通信”热开关。可随时在明文调试与密文安全模式间无缝动态切换，兼顾极客开发与生产环境的高强度安全需求。
+* **无感加解密拦截器 (Seamless Interceptor)**：重构了前端 Axios 请求/响应拦截器与后端 HTTP 中间件，自动完成 JSON 结构体到 Base64 密文的装箱与拆箱，对上层业务代码实现 100% 零侵入透明兼容。
 
 ---
-### [v1.9.0] - 最新更新 (Memory Dual-Output & Anti-Leech Engine)
+### [v1.9.0] - 历史更新 (Ultra-Realtime & Cookie Engine)
 #### 🌟 核心特性 (New Features)
 * **终极无损内存截帧 (Memory Dual-Output)**：彻底重构内置录制引擎的 FFmpeg 底层调用，引入多通道输出（Dual-Output）黑科技。系统只建立 1 个网络连接，在解码时直接从内存中剥离视频流输出封面。彻底终结了“网络并发抢占被 CDN 403 拦截”与“读写本地 MP4 触发 `moov atom not found`”的行业级痛点。
 * **智能防盗链代理 (Smart Anti-Leech Proxy)**：新增后端高防图片反向代理接口。自动携带全套真实浏览器请求头（Accept、Language 等）去获取主播默认头像，并内置了“智能无 Referer 降级重试”机制，100% 免疫各大平台的防盗链 403 拦截，彻底告别裂图。

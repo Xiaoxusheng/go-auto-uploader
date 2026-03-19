@@ -393,7 +393,7 @@ go build -o uploader .
 
 ## 📜 许可证 & 版权声明
 
-该项目采用 MIT License 开源许可证。
+该项目采用 Apache License 开源许可证。
 
 **© 2026 Lei. All Rights Reserved.**
 

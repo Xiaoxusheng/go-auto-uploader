@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/shirou/gopsutil/v3/disk"    // 新增：用于探测系统磁盘余量
+	"github.com/shirou/gopsutil/v3/process" // 新增：用于探测底层录制进程的物理内存
 )
 
 var (
@@ -106,6 +108,7 @@ type Config struct {
 	MailFrom           string   `json:"mailFrom"`
 	MailAuthCode       string   `json:"mailAuthCode"`
 	MailTo             string   `json:"mailTo"`
+	EnableEncryption   bool     `json:"enableEncryption"` // 决定是否开启通信层的数据安全加密
 }
 
 type Streamer struct {
@@ -204,14 +207,23 @@ func decryptPayload(cryptoText string, key []byte) ([]byte, error) {
 	return aesGCM.Open(nil, nonce, ciphertext, nil)
 }
 
-// parseEncryptedRequest 拦截密文请求，并使用动态分配的密钥将其还原为实际业务结构体
+// parseEncryptedRequest 拦截密文请求，并使用动态分配的密钥将其还原为实际业务结构体，支持降级回明文解析
 func parseEncryptedRequest(r *http.Request, target interface{}) error {
+	appConfigMu.RLock()
+	encEnabled := appConfig.EnableEncryption
+	appConfigMu.RUnlock()
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		return err
 	}
 	if len(body) == 0 {
 		return nil // 允许空载荷的 GET 请求通过
+	}
+
+	// 如果服务端关闭了加密，直接走标准 JSON 解析逻辑即可
+	if !encEnabled {
+		return json.Unmarshal(body, target)
 	}
 
 	var encReq EncryptedRequest
@@ -235,11 +247,21 @@ func parseEncryptedRequest(r *http.Request, target interface{}) error {
 	return json.Unmarshal(decryptedData, target)
 }
 
-// sendJSONSuccess 统一成功响应，并使用对应客户端的临时 AES 密钥对结果进行端到端加密
+// sendJSONSuccess 统一成功响应，并依据配置决定是否使用对应客户端的临时 AES 密钥对结果进行端到端加密
 func sendJSONSuccess(w http.ResponseWriter, r *http.Request, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	resp := APIResponse{Code: 200, Message: "success", Data: data}
 	rawJSON, _ := json.Marshal(resp)
+
+	appConfigMu.RLock()
+	encEnabled := appConfig.EnableEncryption
+	appConfigMu.RUnlock()
+
+	// 降级为明文直接响应
+	if !encEnabled {
+		w.Write(rawJSON)
+		return
+	}
 
 	key, err := getSessionKey(r)
 	if err != nil {
@@ -264,6 +286,15 @@ func sendJSONError(w http.ResponseWriter, r *http.Request, statusCode int, messa
 	resp := APIResponse{Code: statusCode, Message: message}
 	rawJSON, _ := json.Marshal(resp)
 
+	appConfigMu.RLock()
+	encEnabled := appConfig.EnableEncryption
+	appConfigMu.RUnlock()
+
+	if !encEnabled {
+		w.Write(rawJSON)
+		return
+	}
+
 	key, err := getSessionKey(r)
 	if err != nil {
 		w.Write([]byte(fmt.Sprintf(`{"code":%d,"message":"%s"}`, statusCode, message))) // 降级策略
@@ -282,12 +313,20 @@ func sendJSONError(w http.ResponseWriter, r *http.Request, statusCode int, messa
 // 密钥交换前置 API
 // ==========================================
 
-// handleGetPubKey 前端获取系统的随机 RSA 公钥
+// handleGetPubKey 前端获取系统的随机 RSA 公钥，并下发当前系统的安全开关状态
 func handleGetPubKey(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	appConfigMu.RLock()
+	encEnabled := appConfig.EnableEncryption
+	appConfigMu.RUnlock()
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"code": 200,
-		"data": rsaPublicKeyBase64,
+		"data": map[string]interface{}{
+			"pubkey":  rsaPublicKeyBase64,
+			"enabled": encEnabled,
+		},
 	})
 }
 
@@ -326,7 +365,7 @@ func handleExchangeKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// StartWebServer 启动商业级加密 Web 服务器
+// StartWebServer 启动动态安全的 Web 服务器，挂载所有路由端点
 func StartWebServer(port int) {
 	// 系统启动时动态生成 RSA-2048 密钥对，彻底抛弃硬编码密钥
 	priv, err := rsa.GenerateKey(cryptorand.Reader, 2048)
@@ -475,11 +514,15 @@ func buildStatsTrendData() map[string]interface{} {
 	}
 }
 
-// wsBroadcastLoop 处理 WebSocket 广播队列，实时向所有连接客户端下发专属的加密载荷
+// wsBroadcastLoop 处理 WebSocket 广播队列，实时向所有连接客户端下发报文(支持明密文切换)
 func wsBroadcastLoop() {
 	for {
 		msg := <-wsBroadcast
 		rawBytes, _ := json.Marshal(msg)
+
+		appConfigMu.RLock()
+		encEnabled := appConfig.EnableEncryption
+		appConfigMu.RUnlock()
 
 		wsMutex.RLock()
 		clientsCopy := make([]*WSClient, 0, len(wsClients))
@@ -492,9 +535,14 @@ func wsBroadcastLoop() {
 			client.mu.Lock()
 			client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 
-			// ✨ 核心：为每个不同的客户端，使用他们独自协商的 AES 密钥进行隔离加密
-			encryptedPayload, _ := encryptPayload(rawBytes, client.AESKey)
-			err := client.conn.WriteJSON(EncryptedRequest{Encrypted: encryptedPayload})
+			var err error
+			// ✨ 核心：根据后台安全配置判断是否进行端到端隔离加密传输
+			if encEnabled && client.AESKey != nil {
+				encryptedPayload, _ := encryptPayload(rawBytes, client.AESKey)
+				err = client.conn.WriteJSON(EncryptedRequest{Encrypted: encryptedPayload})
+			} else {
+				err = client.conn.WriteJSON(msg)
+			}
 
 			client.mu.Unlock()
 
@@ -555,12 +603,22 @@ func broadcastWS(msgType string, payload interface{}) {
 	}
 }
 
-// handleWebSocket 处理 WebSocket 升级及接收逻辑，增加双向报文解密与加密环节
+// handleWebSocket 处理 WebSocket 升级及接收逻辑，增加明密文双模控制支持
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	key, err := getSessionKey(r)
-	if err != nil {
-		http.Error(w, "Unauthorized Session", 401)
-		return
+	appConfigMu.RLock()
+	encEnabled := appConfig.EnableEncryption
+	appConfigMu.RUnlock()
+
+	var key []byte
+	var err error
+
+	// 若开启加密，要求具备合法的 SessionID 以获得协商好的密钥
+	if encEnabled {
+		key, err = getSessionKey(r)
+		if err != nil {
+			http.Error(w, "Unauthorized Session", 401)
+			return
+		}
 	}
 
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
@@ -582,31 +640,45 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	for {
-		var encMsg EncryptedRequest
-		err := client.conn.ReadJSON(&encMsg)
-		if err != nil {
-			break
-		}
-
-		// 商业级网络入口处立刻使用客户端专属密钥解密报文
-		decryptedBytes, err := decryptPayload(encMsg.Encrypted, client.AESKey)
-		if err != nil {
-			log.Printf("[WS][ERR] WebSocket 密文非法或解密失败: %v", err)
-			continue
-		}
-
 		var msg WSMessage
-		if err := json.Unmarshal(decryptedBytes, &msg); err != nil {
-			continue
+
+		if encEnabled {
+			var encMsg EncryptedRequest
+			err := client.conn.ReadJSON(&encMsg)
+			if err != nil {
+				break
+			}
+
+			// 商业级网络入口处立刻使用客户端专属密钥解密报文
+			decryptedBytes, err := decryptPayload(encMsg.Encrypted, client.AESKey)
+			if err != nil {
+				log.Printf("[WS][ERR] WebSocket 密文非法或解密失败: %v", err)
+				continue
+			}
+
+			if err := json.Unmarshal(decryptedBytes, &msg); err != nil {
+				continue
+			}
+		} else {
+			// 明文降级处理
+			err := client.conn.ReadJSON(&msg)
+			if err != nil {
+				break
+			}
 		}
 
 		if msg.Type == "ping" {
 			pongRaw, _ := json.Marshal(WSMessage{Type: "pong", Payload: msg.Payload})
-			pongEnc, _ := encryptPayload(pongRaw, client.AESKey)
 
 			client.mu.Lock()
 			client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-			_ = client.conn.WriteJSON(EncryptedRequest{Encrypted: pongEnc})
+
+			if encEnabled && client.AESKey != nil {
+				pongEnc, _ := encryptPayload(pongRaw, client.AESKey)
+				_ = client.conn.WriteJSON(EncryptedRequest{Encrypted: pongEnc})
+			} else {
+				_ = client.conn.WriteMessage(websocket.TextMessage, pongRaw)
+			}
 			client.mu.Unlock()
 		}
 	}
@@ -695,6 +767,31 @@ func buildStatusData() map[string]interface{} {
 	}
 	dirStatusesMu.RUnlock()
 
+	// ===== 核心修改：增加内存与磁盘余量采集 =====
+	var diskFree int64 = 0
+	var ffmpegMem int64 = 0
+
+	// 探测磁盘可用空间 (默认检查当前系统所在目录，若配置了多目录则以第一个监控目录所在磁盘为准)
+	targetDir := "."
+	if len(configuredDirs) > 0 && configuredDirs[0] != "" {
+		targetDir = configuredDirs[0]
+	}
+	if usage, err := disk.Usage(targetDir); err == nil {
+		diskFree = int64(usage.Free)
+	}
+
+	// 探测录制进程 (ffmpeg) 占用的物理内存 RSS
+	if procs, err := process.Processes(); err == nil {
+		for _, p := range procs {
+			if name, err := p.Name(); err == nil && strings.Contains(strings.ToLower(name), "ffmpeg") {
+				if memInfo, err := p.MemoryInfo(); err == nil {
+					ffmpegMem += int64(memInfo.RSS)
+				}
+			}
+		}
+	}
+	// ===========================================
+
 	return map[string]interface{}{
 		"running":          isRunning,
 		"tokenValid":       token != "",
@@ -707,6 +804,8 @@ func buildStatusData() map[string]interface{} {
 		"dayRate":          currentDayRate,
 		"nightRate":        currentNightRate,
 		"uptime":           int64(time.Since(startTime).Seconds()),
+		"diskFree":         diskFree,  // 新增磁盘剩余字段
+		"ffmpegMem":        ffmpegMem, // 新增内存占用字段
 	}
 }
 
@@ -894,7 +993,7 @@ func handleControlRetryFailQueue(w http.ResponseWriter, r *http.Request) {
 	queueMu.Unlock()
 	log.Println("[CONTROL] 🔄 用户下发指令：失败任务已全部压入等待队列准备重试")
 
-	// ✨ 核心修复：向引擎发送重扫指令，让 Worker 真正去把硬盘里残留的失败文件捡起来
+	// 核心修复：向引擎发送重扫指令，让 Worker 真正去把硬盘里残留的失败文件捡起来
 	triggerScan("rescan")
 
 	sendJSONSuccess(w, r, nil)
@@ -956,7 +1055,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 		saveConfigToFile()
 
-		log.Printf("[CONTROL] ⚙️ 用户保存了新配置，目标扫描目录已变更为: [%s]", strings.Join(newConfig.Dirs, " | "))
+		log.Printf("[CONTROL] ⚙️ 用户保存了新配置，目标扫描目录已变更为: [%s]，加密模式: %v", strings.Join(newConfig.Dirs, " | "), newConfig.EnableEncryption)
 
 		triggerScan("config-update")
 		triggerReportReset()
@@ -1378,7 +1477,7 @@ func restoreQueueCounts() {
 	queueMu.Unlock()
 }
 
-// handleLogsDownload 组装导出的文本系统运行日志，并将全部文件内容进行 Base64+AES 商业级防泄露加密抛出
+// handleLogsDownload 组装导出的文本系统运行日志，并判断是否需要使用 Base64+AES 进行加密导出
 func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	level := query.Get("level")
@@ -1386,7 +1485,7 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 	exportLimit, _ := strconv.Atoi(query.Get("limit"))
 
 	w.Header().Set("Content-Type", "text/plain")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=logs-encrypted-%s.txt", time.Now().Format("20060102-150405")))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=logs-%s.txt", time.Now().Format("20060102-150405")))
 
 	logsMu.RLock()
 	filtered := make([]*LogEntry, 0)
@@ -1413,6 +1512,16 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	appConfigMu.RLock()
+	encEnabled := appConfig.EnableEncryption
+	appConfigMu.RUnlock()
+
+	if !encEnabled {
+		w.Write([]byte(sb.String()))
+		log.Printf("[CONTROL] 📥 用户导出了 %d 条明文系统日志", len(filtered))
+		return
+	}
+
 	// 安全获取当前请求客户端的私有 AES 密钥
 	key, err := getSessionKey(r)
 	if err != nil {
@@ -1426,7 +1535,7 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[CONTROL] 📥 用户导出了 %d 条系统日志，为确保安全已在文件层全链路加密处理\n", len(filtered))
 }
 
-// logCollector 后台独立长时运行协程，将 Channel 内部抛出的各级系统日志合并缓存后广播至加密 WebSocket 流
+// logCollector 后台独立长时运行协程，将 Channel 内部抛出的各级系统日志合并缓存后广播至 WebSocket 流
 func logCollector() {
 	for entry := range logChan {
 		logsMu.Lock()

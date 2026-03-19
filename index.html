@@ -247,14 +247,16 @@
             box-sizing: border-box;
         }
 
+        /* ================= 修改：统一缩小编排并禁止换行以对齐高度 ================= */
         .stat-value {
-            font-size: 26px;
+            font-size: 22px; /* 调整字号，避免在 6 列紧凑布局下过大 */
             font-weight: 600;
             color: var(--color-text-1);
             margin-top: 10px;
             display: flex;
             align-items: center;
             gap: 8px;
+            white-space: nowrap; /* 强制不换行，防止如 18.06 MB 等长文本换行导致卡片高度被撑爆 */
         }
 
         .stat-label {
@@ -263,6 +265,7 @@
             display: flex;
             align-items: center;
             gap: 6px;
+            white-space: nowrap;
         }
 
         .action-bar {
@@ -379,8 +382,9 @@
                 overflow: hidden;
             }
 
+            /* ================= 修改：移动端卡片文本同步调小 ================= */
             .stat-value {
-                font-size: 20px;
+                font-size: 18px; /* 从 20px 调小，适配移动端 */
             }
 
             .login-box {
@@ -706,7 +710,7 @@
                     <a-row :gutter="[16, 16]">
                         <a-col :xs="24" :md="16">
                             <a-row :gutter="[16, 16]">
-                                <a-col :xs="12" :sm="6">
+                                <a-col :xs="12" :sm="4">
                                     <a-card class="apple-glass" hoverable bordered>
                                         <div class="stat-label">
                                             <icon-list></icon-list>
@@ -716,7 +720,7 @@
                                         </div>
                                     </a-card>
                                 </a-col>
-                                <a-col :xs="12" :sm="6">
+                                <a-col :xs="12" :sm="4">
                                     <a-card class="apple-glass" hoverable bordered>
                                         <div class="stat-label">
                                             <icon-cloud-upload></icon-cloud-upload>
@@ -727,7 +731,7 @@
                                         </div>
                                     </a-card>
                                 </a-col>
-                                <a-col :xs="12" :sm="6">
+                                <a-col :xs="12" :sm="4">
                                     <a-card class="apple-glass" hoverable bordered>
                                         <div class="stat-label">
                                             <icon-check-circle></icon-check-circle>
@@ -737,13 +741,35 @@
                                         </div>
                                     </a-card>
                                 </a-col>
-                                <a-col :xs="12" :sm="6">
+                                <a-col :xs="12" :sm="4">
                                     <a-card class="apple-glass" hoverable bordered>
                                         <div class="stat-label">
                                             <icon-close-circle></icon-close-circle>
                                             失败队列
                                         </div>
                                         <div class="stat-value" style="color: #F53F3F;">{{ queueStatus.failed || 0 }}
+                                        </div>
+                                    </a-card>
+                                </a-col>
+                                <a-col :xs="12" :sm="4">
+                                    <a-card class="apple-glass" hoverable bordered>
+                                        <div class="stat-label">
+                                            <icon-storage></icon-storage>
+                                            磁盘剩余
+                                        </div>
+                                        <div class="stat-value" style="color: #165DFF;">{{
+                                            formatSize(systemStatus.diskFree) || '0 B' }}
+                                        </div>
+                                    </a-card>
+                                </a-col>
+                                <a-col :xs="12" :sm="4">
+                                    <a-card class="apple-glass" hoverable bordered>
+                                        <div class="stat-label">
+                                            <icon-memory></icon-memory>
+                                            录制内存
+                                        </div>
+                                        <div class="stat-value" style="color: #D22ECE;">{{
+                                            formatSize(systemStatus.ffmpegMem) || '0 B' }}
                                         </div>
                                     </a-card>
                                 </a-col>
@@ -873,7 +899,7 @@
                                         <a-tag size="small" color="arcoblue">{{ dir.pendingFiles }}</a-tag>
                                     </a-descriptions-item>
                                     <a-descriptions-item label="已上传">
-                                        <a-tag size="small" color="green">{{ dir.uploadedFiles }}</a-tag>
+                                        <a-tag size="small" color="green">{{ dir.uploadedFiles }}
                                     </a-descriptions-item>
                                     <a-descriptions-item label="总文件">{{ dir.totalFiles }}</a-descriptions-item>
                                     <a-descriptions-item label="上传量">{{ formatSize(dir.uploadedSize) }}
@@ -1670,20 +1696,25 @@
                                             placeholder="例: D:\录像\, E:\LiveRecord\"></a-textarea>
                             </a-form-item>
                             <a-row :gutter="24">
-                                <a-col :xs="24" :sm="8">
+                                <a-col :xs="24" :sm="6">
                                     <a-form-item field="enableLogs" label="前端日志同步">
                                         <a-switch v-model="configForm.enableLogs" size="small"></a-switch>
                                     </a-form-item>
                                 </a-col>
-                                <a-col :xs="24" :sm="8">
+                                <a-col :xs="24" :sm="6">
                                     <a-form-item field="autoRetry" label="失败自动重试">
                                         <a-switch v-model="configForm.autoRetry" size="small"></a-switch>
                                     </a-form-item>
                                 </a-col>
-                                <a-col :xs="24" :sm="8">
+                                <a-col :xs="24" :sm="6">
                                     <a-form-item field="maxRetry" label="重试次数上限">
                                         <a-input-number v-model="configForm.maxRetry" :min="1" :max="10"
                                                         size="small"></a-input-number>
+                                    </a-form-item>
+                                </a-col>
+                                <a-col :xs="24" :sm="6">
+                                    <a-form-item field="enableEncryption" label="API加密通信">
+                                        <a-switch v-model="configForm.enableEncryption" size="small"></a-switch>
                                     </a-form-item>
                                 </a-col>
                             </a-row>
@@ -1905,7 +1936,17 @@
                 // 1. 从服务器拉取随机生成的 RSA 公钥
                 const res = await fetch('/api/v1/sec/pubkey');
                 const pubKeyData = await res.json();
-                const rsaPubKey = await importRSAPublicKey(pubKeyData.data);
+
+                // 将后端返回的 enabled 状态保存到前端全局变量
+                window._encryptionEnabled = pubKeyData.data.enabled;
+
+                if (!window._encryptionEnabled) {
+                    console.log("🔓 [SEC] 后端已关闭传输加密，切换为明文直连模式");
+                    _sessionId = "plaintext-" + Date.now();
+                    return;
+                }
+
+                const rsaPubKey = await importRSAPublicKey(pubKeyData.data.pubkey);
 
                 // 2. 在浏览器本地随机生成 32 字节的高强度 AES-256 密钥
                 _aesKeyBytes = crypto.getRandomValues(new Uint8Array(32));
@@ -1932,8 +1973,9 @@
         return securityPromise;
     }
 
+    // 获取 AES 密钥，若未初始化则触发初始化
     async function getCryptoKey() {
-        if (!_cryptoKey) await initSecurity();
+        if (!_cryptoKey && window._encryptionEnabled) await initSecurity();
         return _cryptoKey;
     }
 
@@ -1980,7 +2022,7 @@
     api.interceptors.response.use(
         async res => {
             let data = res.data;
-            if (data && data.encrypted) {
+            if (window._encryptionEnabled && data && data.encrypted) {
                 try {
                     const decryptedStr = await decryptPayload(data.encrypted);
                     data = JSON.parse(decryptedStr);
@@ -2013,7 +2055,7 @@
                 }
                 window.location.reload();
             }
-            if (err.response && err.response.data && err.response.data.encrypted) {
+            if (window._encryptionEnabled && err.response && err.response.data && err.response.data.encrypted) {
                 try {
                     const decryptedStr = await decryptPayload(err.response.data.encrypted);
                     err.response.data = JSON.parse(decryptedStr);
@@ -2025,7 +2067,7 @@
         }
     );
 
-    // 请求拦截器：确保握手完成后携带专属 SessionID，并封装密文
+    // 请求拦截器：确保握手完成后携带专属 SessionID，并决定是否封装密文
     api.interceptors.request.use(async config => {
         if (!_sessionId) await initSecurity();
         config.headers['X-Session-Id'] = _sessionId;
@@ -2034,10 +2076,14 @@
         if (token) config.headers['Authorization'] = `Bearer ${token}`;
 
         if (config.data && !(config.data instanceof FormData)) {
-            const rawJson = JSON.stringify(config.data);
-            const encryptedStr = await encryptPayload(rawJson);
-            config.data = {encrypted: encryptedStr};
-            config.headers['X-Encryption-Mode'] = 'AES-256-GCM';
+            if (window._encryptionEnabled) {
+                const rawJson = JSON.stringify(config.data);
+                const encryptedStr = await encryptPayload(rawJson);
+                config.data = {encrypted: encryptedStr};
+                config.headers['X-Encryption-Mode'] = 'AES-256-GCM';
+            } else {
+                config.headers['X-Encryption-Mode'] = 'Plaintext';
+            }
         }
         return config;
     });
@@ -2045,29 +2091,29 @@
     const app = createApp({
         setup() {
             const isMobile = ref(window.innerWidth <= 768);
+
+            // 处理浏览器窗口变化以适配移动端
             const handleResize = () => {
                 isMobile.value = window.innerWidth <= 768;
             };
 
             const isDarkMode = ref(false);
 
-            // 【核心修改】：通过 localStorage 记忆用户手动选择的明暗偏好，若无则按时间自动切换
+            // 自动或读取用户配置设定页面暗黑/明亮主题
             const autoSetThemeByTime = () => {
                 const savedTheme = localStorage.getItem('upload_system_theme');
                 if (savedTheme !== null) {
-                    // 如果用户手动选择过，则严格遵从用户的选择
                     isDarkMode.value = savedTheme === 'dark';
                 } else {
-                    // 如果用户没选过，则根据时间自动切换（晚18点到早8点为暗黑模式）
                     const hour = new Date().getHours();
                     isDarkMode.value = (hour < 8 || hour >= 18);
                 }
                 applyTheme();
             };
 
+            // 切换主题并持久化保存
             const toggleTheme = () => {
                 isDarkMode.value = !isDarkMode.value;
-                // 【核心修改】：用户手动切换后，将偏好持久化保存到本地存储
                 localStorage.setItem('upload_system_theme', isDarkMode.value ? 'dark' : 'light');
 
                 applyTheme();
@@ -2077,10 +2123,12 @@
                 }, 100);
             };
 
+            // 更改 body 属性应用 CSS 主题
             const applyTheme = () => {
                 document.body.setAttribute('arco-theme', isDarkMode.value ? 'dark' : '');
             };
 
+            // 打开外站 Github 仓库
             const openGitHub = () => {
                 window.open('https://github.com/Xiaoxusheng/go-auto-uploader', '_blank');
             };
@@ -2097,6 +2145,7 @@
             let pingTimer = null;
             let lastPongTime = Date.now();
 
+            // 为网络延迟显示对应的健康颜色
             const getLatencyColor = (ms) => {
                 if (ms === 0) return 'var(--color-text-3)';
                 if (ms <= 50) return '#00B42A';
@@ -2118,7 +2167,9 @@
                 dirs: [],
                 dynamicInterval: 0,
                 nextScanTime: 0,
-                scanningInterval: 0
+                scanningInterval: 0,
+                diskFree: 0,     // 响应式新增：磁盘余量
+                ffmpegMem: 0     // 响应式新增：引擎内存
             });
             const queueStatus = reactive({waiting: 0, uploading: 0, success: 0, failed: 0, retrying: 0});
             const trafficMetrics = reactive({speed: 0, time: 0});
@@ -2171,6 +2222,8 @@
             });
 
             const globalPreview = reactive({visible: false, src: '', roomId: '', platform: ''});
+
+            // 打开直播间的封面预览图片
             const openPreview = (record) => {
                 if (!record.avatar) return;
                 globalPreview.src = record.avatar;
@@ -2232,6 +2285,7 @@
             const builtinRecordingCount = computed(() => builtinTasks.value.filter(t => t.status === '录制中').length);
             const isAllBuiltinActive = computed(() => builtinTasks.value.length > 0 && builtinTasks.value.some(t => !t.is_paused));
 
+            // 构建并返回各平台的直达跳转链接
             const getBuiltinLiveUrl = (platform, roomId) => {
                 if (platform === 'Douyin') return `https://live.douyin.com/${roomId}`;
                 if (platform === 'Kuaishou') return `https://live.kuaishou.com/u/${roomId}`;
@@ -2239,6 +2293,7 @@
                 return roomId;
             };
 
+            // 下载目标图像的封面
             const downloadBuiltinCover = async (url, anchorName) => {
                 try {
                     const response = await fetch(url);
@@ -2257,6 +2312,7 @@
                 }
             };
 
+            // 拉取内置引擎的配置文件和 Cookie 配置
             const fetchBuiltinConfig = async () => {
                 try {
                     const res1 = await api.get('/builtin_recorder/config');
@@ -2272,11 +2328,14 @@
                 } catch (e) {
                 }
             };
+
+            // 打开设置菜单
             const openBuiltinSettingsModal = () => {
                 showBuiltinSettingsModal.value = true;
                 fetchBuiltinConfig();
             };
 
+            // 存入内置引擎的基础运行配置参数
             const saveBuiltinConfig = async () => {
                 builtinSaving.value = true;
                 try {
@@ -2289,6 +2348,7 @@
                 }
             };
 
+            // 将抓取的 Cookie 推送给后端进行反防盗链
             const saveBuiltinCookies = async () => {
                 builtinSavingCookies.value = true;
                 try {
@@ -2300,6 +2360,7 @@
                 }
             };
 
+            // 监听新的直播间并添加到任务池
             const handleAddBuiltin = async () => {
                 if (!builtinForm.value.url.trim()) return Message.warning("请填写直播间地址或ID");
                 builtinAdding.value = true;
@@ -2313,6 +2374,7 @@
                 }
             };
 
+            // 批量将多个链接转换为录制任务
             const handleBatchAddBuiltin = async (done) => {
                 const lines = builtinBatchForm.value.urls.split('\n').map(l => l.trim()).filter(l => l !== '');
                 if (lines.length === 0) {
@@ -2341,6 +2403,7 @@
                 }
             };
 
+            // 控制单个任务的继续/暂停调度
             const handleSwitchBuiltin = async (checked, record) => {
                 record.switching = true;
                 const action = checked ? 'resume' : 'pause';
@@ -2351,6 +2414,7 @@
                 }
             };
 
+            // 请求后端操控底层的录制容器动作
             const handleControlBuiltin = async (action, record) => {
                 try {
                     await api.post('/builtin_recorder/control', {
@@ -2365,6 +2429,7 @@
                 }
             };
 
+            // 批量将所有录制任务设置为运行/挂起状态
             const handleMasterSwitchBuiltin = async (val) => {
                 const action = val ? 'resume_all' : 'pause_all';
                 const actionName = val ? '全部开启' : '全部暂停';
@@ -2378,6 +2443,7 @@
                 }
             };
 
+            // 全局快捷键：监听组合键
             const handleGlobalKeydown = (e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
                     if (activeTab.value === 'streamers') {
@@ -2421,12 +2487,14 @@
                 };
             });
 
+            // 依据容量排名动态计算刻度图进度百分比
             const calculateRankPercent = (size) => {
                 if (!statsData.rank || statsData.rank.length === 0 || size === 0) return 0;
                 const max = statsData.rank[0].size;
                 return Number((size / max).toFixed(2));
             };
 
+            // 获取录制引擎保存的文件位置以及账号 Cookie
             const fetchCookies = async () => {
                 if (!configForm.value.recorderConfigPath) return;
                 cookiesLoading.value = true;
@@ -2439,6 +2507,7 @@
                 }
             };
 
+            // 保存外部引擎配置信息
             const saveCookies = async () => {
                 if (!configForm.value.recorderConfigPath) {
                     Message.warning('系统安全拦截：请先在【上传参数设置】中配置 config.ini 物理路径！');
@@ -2481,6 +2550,7 @@
             let originalConfigSnapshot = {};
             let chartInstance = null;
 
+            // 绘制饼状图，展示各类任务运行占比
             const renderChart = () => {
                 if (activeTab.value !== 'overview') return;
                 nextTick(() => {
@@ -2535,6 +2605,7 @@
                 });
             };
 
+            // 绘制近 7 日服务器文件上传容量及请求数量的走势折线图
             const renderTrendChart = () => {
                 const dom = document.getElementById('trendChart');
                 if (!dom) return;
@@ -2614,19 +2685,21 @@
                 }
             });
 
+            // 控制前端渲染图表自适应缩放跟随窗口变化
             window.addEventListener('resize', () => {
                 handleResize();
                 if (chartInstance) chartInstance.resize();
                 if (trendChartInstance) trendChartInstance.resize();
             });
 
+            // 处理后台管理鉴权接口
             const handleLogin = async () => {
                 loginLoading.value = true;
                 try {
                     const res = await api.post('/auth/login', loginForm);
                     localStorage.setItem('upload_system_token', res.data.token);
                     isLoggedIn.value = true;
-                    Message.success('加密网关认证成功');
+                    Message.success('网关认证成功');
                     initDashboard();
                 } catch (e) {
                 } finally {
@@ -2634,6 +2707,7 @@
                 }
             };
 
+            // 安全登出系统并移除本地 Token
             const handleLogout = async () => {
                 try {
                     await api.post('/auth/logout');
@@ -2644,18 +2718,23 @@
                 cleanUp();
             };
 
+            // 读取底层服务健康状态、容量上限以及扫描周期
             const fetchStatus = async () => {
                 try {
                     Object.assign(systemStatus, (await api.get('/status')).data);
                 } catch (e) {
                 }
             };
+
+            // 读取实时队列的上传指标与长度
             const fetchQueue = async () => {
                 try {
                     Object.assign(queueStatus, (await api.get('/tasks/queue')).data);
                 } catch (e) {
                 }
             };
+
+            // 拉取短时间内所有工作中的活跃任务进度快照
             const fetchLiveTasks = async () => {
                 try {
                     liveTasks.value = (await api.get('/tasks/live')).data || [];
@@ -2663,6 +2742,7 @@
                 }
             };
 
+            // 获取 Docker 容器当前存活状态 (Running/Exited)
             const fetchRecorderStatus = async () => {
                 try {
                     const res = await api.get('/recorder/status');
@@ -2672,6 +2752,7 @@
                 }
             };
 
+            // 对外部引擎下达启停或重启指令
             const controlRecorder = async (action) => {
                 if (!configForm.value.recorderContainer) {
                     Message.error('请先在上传参数设置中配置 Docker 容器名');
@@ -2689,6 +2770,7 @@
                 }
             };
 
+            // 收集获取 Docker 输出的系统终端日志
             const fetchRecorderLogs = async () => {
                 try {
                     const res = await api.get('/recorder/logs');
@@ -2702,10 +2784,13 @@
                 }
             };
 
+            // 弹出包含终端日志的独立对话框
             const openLogsModal = () => {
                 showLogsModal.value = true;
                 fetchRecorderLogs();
             };
+
+            // 拉取当前处于真正开播推流状态的平台名单
             const fetchActiveStreamers = async () => {
                 try {
                     const res = await api.get('/streamers/active');
@@ -2713,6 +2798,8 @@
                 } catch (e) {
                 }
             };
+
+            // 全量拉取监控名单文件信息
             const fetchStreamers = async () => {
                 if (isSavingStreamers.value) return;
                 try {
@@ -2722,6 +2809,7 @@
                 }
             };
 
+            // 将在前端修改完的外部引擎监听列表持久化并更新给后端
             const saveStreamers = async (showMsg = true) => {
                 isSavingStreamers.value = true;
                 try {
@@ -2735,6 +2823,7 @@
                 }
             };
 
+            // 手动增加单条外部引擎监控录像指令
             const addStreamer = () => {
                 if (!newStreamer.url) {
                     Message.warning('请输入直播间链接');
@@ -2746,6 +2835,7 @@
                 saveStreamers();
             };
 
+            // 解析从文本框贴入的多行直播间链接并压入列表
             const handleBatchAdd = async () => {
                 if (!batchAddText.value.trim()) {
                     Message.warning('请输入要批量添加的主播内容');
@@ -2785,6 +2875,7 @@
                 }
             };
 
+            // 从本地配置列表中去除指定的项
             const removeStreamer = (record) => {
                 const index = streamers.value.findIndex(s => s.url === record.url);
                 if (index > -1) {
@@ -2794,6 +2885,7 @@
                 }
             };
 
+            // 触发 WebSocket 数据到达信号以激活动画和状态指示器
             const triggerWsPulse = (eventType) => {
                 wsStats.msgCount++;
                 wsStats.lastEvent = eventType;
@@ -2804,9 +2896,12 @@
                 }, 150);
             };
 
-            // 【重要：WebSocket 中带上申请到的 Session_ID】
+            // 构建全功能的 WebSocket 客户端信道，并封装断线重连与存活确认功能
             const connectWS = async () => {
-                if (!_sessionId) await initSecurity();
+                // 如果开启了加密但是未获取到 SessionID 则主动握手
+                if (window._encryptionEnabled && !_sessionId) {
+                    await initSecurity();
+                }
 
                 if (ws) {
                     ws.onclose = null;
@@ -2814,7 +2909,14 @@
                 }
                 wsStatus.value = 'connecting';
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                ws = new WebSocket(`${protocol}//${window.location.host}/ws/live?session_id=${_sessionId}`);
+
+                // 拼接 session_id 让后端识别当前 WebSocket 连接属于哪个加密上下文
+                let wsUrl = `${protocol}//${window.location.host}/ws/live`;
+                if (window._encryptionEnabled && _sessionId) {
+                    wsUrl += `?session_id=${_sessionId}`;
+                }
+
+                ws = new WebSocket(wsUrl);
 
                 lastPongTime = Date.now();
 
@@ -2830,8 +2932,14 @@
                                 return;
                             }
                             const pingRaw = JSON.stringify({type: 'ping', payload: Date.now()});
-                            const encryptedPing = await encryptPayload(pingRaw);
-                            ws.send(JSON.stringify({encrypted: encryptedPing}));
+
+                            // 心跳包的独立加密机制
+                            if (window._encryptionEnabled && _cryptoKey) {
+                                const encryptedPing = await encryptPayload(pingRaw);
+                                ws.send(JSON.stringify({encrypted: encryptedPing}));
+                            } else {
+                                ws.send(pingRaw);
+                            }
                         }
                     }, 5000);
                 };
@@ -2840,11 +2948,15 @@
                     try {
                         lastPongTime = Date.now();
 
-                        const encMsg = JSON.parse(event.data);
-                        if (!encMsg.encrypted) return;
+                        let msgObj = JSON.parse(event.data);
 
-                        const decryptedStr = await decryptPayload(encMsg.encrypted);
-                        const msg = JSON.parse(decryptedStr);
+                        // 信道密文截获解析分发器
+                        if (window._encryptionEnabled && msgObj.encrypted) {
+                            const decryptedStr = await decryptPayload(msgObj.encrypted);
+                            msgObj = JSON.parse(decryptedStr);
+                        }
+
+                        const msg = msgObj;
 
                         if (msg.type === 'pong') {
                             wsLatency.value = Date.now() - msg.payload;
@@ -2853,6 +2965,7 @@
 
                         triggerWsPulse(msg.type);
 
+                        // 全局业务信号指令路由
                         if (msg.type === 'systemAlert') {
                             const payload = msg.payload;
                             Notification[payload.level || 'error']({
@@ -2985,6 +3098,7 @@
                 };
             };
 
+            // 发起动作操作以操纵引擎扫描与网络动作队列
             const control = (action) => {
                 const actionText = {
                     'start': '确定要启动系统吗？', 'pause': '确定要暂停吗？', 'stop': '危险操作：强行停止系统吗？',
@@ -3006,6 +3120,7 @@
                 });
             };
 
+            // 拉取远端历史数据库的存储切片信息
             const fetchHistory = async () => {
                 try {
                     const res = await api.get('/tasks/history', {params: historyQuery});
@@ -3014,15 +3129,21 @@
                 } catch (e) {
                 }
             };
+
+            // 下发操作触发历史记录的翻页查询处理
             const onPageChange = (page) => {
                 historyQuery.page = page;
                 fetchHistory();
             };
+
+            // 下发操作触发单页容量更新动作
             const onPageSizeChange = (size) => {
                 historyQuery.limit = size;
                 historyQuery.page = 1;
                 fetchHistory();
             };
+
+            // 将过滤条件绑定后发送拉取指定的系统级别日志请求
             const fetchLogs = async () => {
                 try {
                     const res = await api.get('/logs', {params: logQuery});
@@ -3032,12 +3153,23 @@
                 }
             };
 
-            // 导出日志也使用带有 SessionID 的链接获取加密文件
+            // 触发下载系统日志，修复 Axios baseURL 拼接导致的 404 错误，并恢复浏览器原生下载
             const downloadLogs = async () => {
-                if (!_sessionId) await initSecurity();
-                window.open(`/api/v1/logs/download?level=${logQuery.level}&keyword=${logQuery.keyword}&limit=${logExportLimit.value}&session_id=${_sessionId}`, '_blank');
+                try {
+                    let url = `/api/v1/logs/download?limit=${logExportLimit.value}&level=${logQuery.level}&keyword=${logQuery.keyword}`;
+                    // 如果开启了加密，则必须在 URL 中携带当前会话的 Session_ID 供后端加密使用
+                    if (window._encryptionEnabled) {
+                        if (!_sessionId) await initSecurity();
+                        url += `&session_id=${_sessionId}`;
+                    }
+                    // 使用 window.open 触发浏览器原生下载机制
+                    window.open(url, '_blank');
+                } catch (e) {
+                    Message.error("日志导出失败: " + e.message);
+                }
             };
 
+            // 远程加载最新的配置字典以回显到前端表单
             const fetchConfig = async () => {
                 try {
                     const res = await api.get('/config');
@@ -3047,6 +3179,8 @@
                 } catch (e) {
                 }
             };
+
+            // 通过接口推送并应用目前修改后的前端配置表单数据
             const saveConfig = async () => {
                 try {
                     configForm.value.dirs = configDirsString.value.split(',').map(s => s.trim()).filter(s => s);
@@ -3057,19 +3191,37 @@
                         position: 'bottomRight',
                         duration: 5000
                     });
+
+                    if (originalConfigSnapshot.enableEncryption !== configForm.value.enableEncryption) {
+                        Modal.info({
+                            title: '安全配置已变更',
+                            content: '您修改了通信层安全加密开关，系统将重载页面以重建安全隧道连接。',
+                            onOk: () => {
+                                window.location.reload();
+                            }
+                        });
+                    }
                     originalConfigSnapshot = JSON.parse(JSON.stringify(configForm.value));
                 } catch (e) {
                 }
             };
 
+            // 格式化输出通用字节长度
             const formatSize = (bytes) => {
                 if (!bytes) return '0 B';
                 const k = 1024, sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
                 const i = Math.floor(Math.log(bytes) / Math.log(k));
                 return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
             };
-            const formatSpeed = (bps) => formatSize(bps) + '/s';
+
+            // 将字节转为每秒带宽展现
+            const formatSpeed = (bps) => formatSpeedRate(bps);
+            const formatSpeedRate = (bps) => formatSize(bps) + '/s';
+
+            // 利用双分子差比对渲染上传进度的完成率
             const calculatePercent = (up, tot) => (!tot ? 0 : Number((up / tot).toFixed(2)));
+
+            // 对于秒级的任务进行可读性更强的时间片解析显示
             const formatDurationSeconds = (sec) => {
                 if (!sec && sec !== 0) return '-';
                 if (sec === 0) return '< 1s';
@@ -3077,15 +3229,20 @@
                 const s = sec % 60;
                 return m > 0 ? `${m}m ${s}s` : `${s}s`;
             };
+
+            // 封装通用时长的字符串组装方法
             const formatDuration = (seconds) => {
                 const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60);
                 return `${h}h ${m}m`;
             };
+
+            // 计算任务创建至今消耗的时间，用来反馈任务活跃度
             const getElapsedTime = (startTime) => {
                 if (!startTime) return '0s';
                 return formatDurationSeconds(Math.floor((clientTime.value - startTime) / 1000));
             };
 
+            // 根据任务底层代码的状态字段转为中文翻译
             const formatStatusText = (status) => {
                 if (!status) return '未知';
                 const lower = String(status).toLowerCase();
@@ -3096,6 +3253,8 @@
                 if (lower === 'waiting') return '等待中';
                 return status;
             };
+
+            // 对每种不同的进度给出不同的预设警示色
             const getStatusColor = (status) => {
                 if (!status) return 'gray';
                 const str = String(status).toLowerCase();
@@ -3104,12 +3263,15 @@
                 if (str === 'uploading') return 'arcoblue';
                 return 'orange';
             };
+
+            // 给不同级别的系统终端消息配对主题颜色
             const getLogLevelColor = (level) => ({
                 'info': '#00b42a',
                 'error': '#f53f3f',
                 'warn': '#ff7d00'
             }[level] || 'var(--color-text-3)');
 
+            // 面板挂载的启动脚本方法，发起一系列轮询操作进行初始化并建立网络
             const initDashboard = () => {
                 fetchStatus();
                 fetchQueue();
@@ -3126,6 +3288,7 @@
                 }, 1000);
             };
 
+            // 清理遗留的回调实例用于内存释放优化
             const cleanUp = () => {
                 if (pollingTimer) clearInterval(pollingTimer);
                 if (pingTimer) clearInterval(pingTimer);
@@ -3144,6 +3307,7 @@
                 window.removeEventListener('resize', handleResize);
             };
 
+            // 监听生命周期启动状态
             onMounted(() => {
                 autoSetThemeByTime();
                 if (isLoggedIn.value) initDashboard();
@@ -3155,19 +3319,25 @@
                         if (wsStatus.value === 'disconnected' || !ws || ws.readyState !== WebSocket.OPEN) {
                             connectWS();
                         } else {
-                            encryptPayload(JSON.stringify({type: 'ping', payload: Date.now()})).then(enc => {
-                                ws.send(JSON.stringify({encrypted: enc}));
-                            });
+                            if (window._encryptionEnabled) {
+                                encryptPayload(JSON.stringify({type: 'ping', payload: Date.now()})).then(enc => {
+                                    ws.send(JSON.stringify({encrypted: enc}));
+                                });
+                            } else {
+                                ws.send(JSON.stringify({type: 'ping', payload: Date.now()}));
+                            }
                         }
                     }
                 });
             });
 
+            // 卸载与清除环境
             onUnmounted(() => {
                 cleanUp();
                 window.removeEventListener('keydown', handleGlobalKeydown);
             });
 
+            // 根据激活的不同面板触发对应的即时数据更新
             watch(activeTab, (newTab) => {
                 if (newTab === 'logs') fetchLogs();
                 if (newTab === 'history') fetchHistory();
@@ -3182,6 +3352,7 @@
                 }
             });
 
+            // 控制滚动条定位到底部
             watch(() => logData.items, () => {
                 nextTick(() => {
                     if (logContainerRef.value) {

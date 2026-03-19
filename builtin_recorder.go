@@ -499,8 +499,8 @@ func sanitizeBuiltinFileName(name string) string {
 	// 3. 去除两端所有多余的空白字符
 	name = strings.TrimSpace(name)
 
-	// 4. 彻底剥离会导致云盘报错 500 的非法前缀字符
-	name = strings.TrimLeft(name, "-_.")
+	// 4. 彻底剥离会导致云盘报错 500 的非法前缀和后缀字符（核心修复：点号、横杠、下划线）
+	name = strings.Trim(name, " ._-")
 
 	if name == "" {
 		return "未命名主播"
@@ -1444,10 +1444,14 @@ func (s *SoopBuiltinPlatform) GetPlatformName() string { return "Soop" }
 func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (string, string, string, error) {
 	globalApi := fmt.Sprintf("https://api.sooplive.com/v2/stream/info/%s", roomID)
 	reqGlobal, err := http.NewRequest("GET", globalApi, nil)
+
+	// ✨ 修复 1：定义统一的 User-Agent 供获取流地址时使用，必须与 FFmpeg 内抓取时保持一致！
+	globalUa := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
 	if err == nil {
 		clientId := fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", rand.Uint32(), rand.Uint32()>>16, rand.Uint32()>>16, rand.Uint32()>>16, uint64(rand.Uint32())<<32|uint64(rand.Uint32()))
 		reqGlobal.Header.Set("client-id", clientId)
-		reqGlobal.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1 Edg/141.0.0.0")
+		reqGlobal.Header.Set("User-Agent", globalUa)
 
 		builtinCookieMutex.RLock()
 		if builtinCookies.Soop != "" {
@@ -1469,7 +1473,7 @@ func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (strin
 					infoApi := fmt.Sprintf("https://api.sooplive.com/v2/channel/info/%s", roomID)
 					reqInfo, _ := http.NewRequest("GET", infoApi, nil)
 					reqInfo.Header.Set("client-id", clientId)
-					reqInfo.Header.Set("User-Agent", reqGlobal.Header.Get("User-Agent"))
+					reqInfo.Header.Set("User-Agent", globalUa)
 
 					builtinCookieMutex.RLock()
 					if builtinCookies.Soop != "" {
@@ -1525,7 +1529,7 @@ func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (strin
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0")
+	req.Header.Set("User-Agent", globalUa)
 	req.Header.Set("Origin", "https://m.sooplive.co.kr")
 	req.Header.Set("Referer", "https://m.sooplive.co.kr/")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
@@ -1631,7 +1635,8 @@ OuterLoop:
 				continue
 			}
 
-			reqCdn.Header.Set("User-Agent", "Mozilla/5.0")
+			// ✨ 修复 2：同步请求 CDN 节点的 User-Agent
+			reqCdn.Header.Set("User-Agent", globalUa)
 			reqCdn.Header.Set("Origin", "https://play.sooplive.co.kr")
 			reqCdn.Header.Set("Referer", "https://play.sooplive.co.kr/")
 			reqCdn.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1824,7 +1829,8 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 	if platformName == "Douyin" {
 		args = append(args, "-headers", "Referer: https://live.douyin.com/\r\n")
 	} else if platformName == "Soop" {
-		args = append(args, "-headers", "Referer: https://play.sooplive.co.kr/\r\n")
+		// ✨ 修复 3：Soop CDN 严格校验防盗链，此处必须同时携带 Referer 和 Origin
+		args = append(args, "-headers", "Referer: https://play.sooplive.co.kr/\r\nOrigin: https://play.sooplive.co.kr\r\n")
 	}
 
 	// ✨ [终极修复] 延长探测时间与大小，防止断层与 H.265 获取不到头部信息

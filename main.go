@@ -59,7 +59,7 @@ var (
 	currentDynamicIntervalGlobal int64
 	nextScanTimeGlobal           int64
 
-	// 【新增】熔断保护机制：连续失败次数计数器
+	// 熔断保护机制：连续失败次数计数器
 	consecutiveFailures int32
 )
 
@@ -88,6 +88,9 @@ var (
 	successLogMu sync.Mutex
 	// 优化点：在内存中常驻成功记录，消除前端轮询及 Worker 追加数据时对磁盘和 GC 产生的巨大压力
 	successRecords []UploadRecord
+
+	// 【新增】哈希文件读写并发锁，彻底解决 DB 文件写入时堆积或损坏的并发安全 Bug
+	hashMu sync.RWMutex
 )
 
 var (
@@ -253,6 +256,7 @@ func main() {
 		appConfig.LiveConfigPath = liveConfigPath
 		appConfig.RecorderContainer = recorderContainer
 		appConfig.RecorderConfigPath = recorderConfigPath
+		appConfig.EnableEncryption = true // 默认开启通信加密
 
 		// 写入默认的邮件配置参数（在此预设原有的硬编码值）
 		appConfig.MailFrom = "your_email@qq.com"
@@ -615,10 +619,9 @@ func handleFile(path string) {
 
 	dir := filepath.Dir(rel)
 
-	// ✨【修复核心】: 过滤文件夹路径中的非法前缀，防止生成类似 `_safe_uploads/-可奈` 这种导致 500 的非法云端目录
+	// ✨过滤文件夹路径中的非法前缀，防止生成类似 `_safe_uploads/-可奈` 这种导致 500 的非法云端目录
 	dirParts := strings.Split(filepath.ToSlash(dir), "/")
 	for i, part := range dirParts {
-		// 剥离开头的所有横杠、下划线、点
 		cleanPart := strings.TrimLeft(part, "-_.")
 		if cleanPart == "" {
 			cleanPart = "streamer_dir"
@@ -632,7 +635,8 @@ func handleFile(path string) {
 
 	// 检测秒传机制 (Hash)
 	hash := fileHash(path)
-	if hashExists(hash) {
+	// 【核心修复 Bug】：加入 hash != "" 防御校验避免空穿透
+	if hash != "" && hashExists(hash) {
 		log.Println("[SKIP][HASH] 文件已存在于记录中 (秒传触发):", path)
 
 		taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
@@ -674,6 +678,11 @@ func handleFile(path string) {
 		})
 
 		cleanupFailedTasksByPath(path)
+
+		// 【核心修复 Bug】：必须在此执行 os.Remove，防止触发秒传的文件永远滞留在本地磁盘导致堆积！
+		if err := os.Remove(path); err != nil {
+			log.Printf("[FILE][CLEAN][ERR] 秒传触发，移除本地文件失败 %s: %v", path, err)
+		}
 		return
 	}
 
@@ -791,6 +800,9 @@ func upload(local, remote string, size int64) bool {
 
 	var r struct{ Code int }
 	if decodeErr := json.NewDecoder(resp.Body).Decode(&r); decodeErr != nil {
+		r.Code = resp.StatusCode
+	} else if r.Code == 0 {
+		// 【修复 Bug】应对远端成功返回 `{"message": "success"}` 没有 Code 导致 `r.Code==0` 永远判断失败的问题
 		r.Code = resp.StatusCode
 	}
 
@@ -1217,11 +1229,14 @@ func login() error {
 func fileHash(p string) string {
 	f, err := os.Open(p)
 	if err != nil {
+		// 【修复 BUG】如果因为暂时的句柄被锁或权限不够导致获取失败，必须将错误返回而不是返回空字符串
+		log.Printf("[HASH][ERR] 无法打开文件计算哈希 %s: %v", p, err)
 		return ""
 	}
 	defer f.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
+		log.Printf("[HASH][ERR] 读取文件计算哈希失败 %s: %v", p, err)
 		return ""
 	}
 	return hex.EncodeToString(h.Sum(nil))
@@ -1229,13 +1244,34 @@ func fileHash(p string) string {
 
 // hashExists 将待检索字符遍历对比已有离线数据库用于避免重传
 func hashExists(h string) bool {
+	if h == "" {
+		// 【修复 BUG】如果 h 为空字符串，下面 strings.Contains 也会永远返回 true，导致文件堆积，此处必须拦截！
+		return false
+	}
+
+	// 【修复 BUG】加入读锁防止多个 Worker 高并发读取修改导致 DB 内容混乱
+	hashMu.RLock()
+	defer hashMu.RUnlock()
+
 	data, _ := os.ReadFile(hashFile)
 	return strings.Contains(string(data), h)
 }
 
 // saveHash 向库内追加全新的防重复哈希值字符串
 func saveHash(h string) {
-	f, _ := os.OpenFile(hashFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if h == "" {
+		return
+	}
+
+	// 【修复 BUG】加入写锁防止高并发时破坏 DB 文件结构（文件结尾乱码）导致漏检错检
+	hashMu.Lock()
+	defer hashMu.Unlock()
+
+	f, err := os.OpenFile(hashFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("[HASH][ERR] 打开哈希库文件失败: %v", err)
+		return
+	}
 	defer f.Close()
 	f.WriteString(h + "\n")
 }
