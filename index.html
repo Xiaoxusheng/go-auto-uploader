@@ -30,7 +30,7 @@
             --glass-bg: rgba(255, 255, 255, 0.75);
             --nav-glass-bg: rgba(255, 255, 255, 0.90);
             --glass-border: rgba(0, 0, 0, 0.06);
-            --hover-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+            --hover-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
         }
 
         body[arco-theme='dark'] {
@@ -38,7 +38,7 @@
             --glass-bg: rgba(35, 35, 36, 0.65);
             --nav-glass-bg: rgba(20, 20, 20, 0.85);
             --glass-border: rgba(255, 255, 255, 0.12);
-            --hover-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            --hover-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
         }
 
         body {
@@ -47,7 +47,7 @@
             padding: 0;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
             color: var(--color-text-1);
-            transition: background-color 0.3s ease;
+            transition: background-color 0.4s ease;
         }
 
         .apple-glass {
@@ -55,7 +55,7 @@
             backdrop-filter: saturate(180%) blur(20px);
             -webkit-backdrop-filter: saturate(180%) blur(20px);
             border-radius: 12px;
-            transition: background-color 0.3s ease, border-color 0.3s ease;
+            transition: background-color 0.4s ease, border-color 0.4s ease;
         }
 
         .nav-glass {
@@ -69,7 +69,7 @@
         }
 
         .hover-effect {
-            transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+            transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.4s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .hover-effect:hover {
@@ -78,12 +78,12 @@
         }
 
         .fade-enter-active, .fade-leave-active {
-            transition: opacity 0.3s ease, transform 0.3s ease;
+            transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .fade-enter-from, .fade-leave-to {
             opacity: 0;
-            transform: translateY(10px);
+            transform: translateY(12px) scale(0.98);
         }
 
         .status-indicator {
@@ -96,52 +96,52 @@
 
         @keyframes breathe {
             0% {
-                transform: scale(0.85);
-                box-shadow: 0 0 0 0 rgba(0, 180, 42, 0.7);
+                transform: scale(0.9);
+                box-shadow: 0 0 0 0 rgba(0, 180, 42, 0.4);
             }
             50% {
-                transform: scale(1.1);
-                box-shadow: 0 0 10px 4px rgba(0, 180, 42, 0.3);
+                transform: scale(1.05);
+                box-shadow: 0 0 12px 6px rgba(0, 180, 42, 0.15);
             }
             100% {
-                transform: scale(0.85);
+                transform: scale(0.9);
                 box-shadow: 0 0 0 0 rgba(0, 180, 42, 0);
             }
         }
 
         .status-dot-connected {
             background-color: #00B42A;
-            animation: breathe 2.5s infinite ease-in-out;
+            animation: breathe 3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
 
         @keyframes pulse {
             0% {
                 transform: scale(0.9);
-                opacity: 0.8;
+                opacity: 0.85;
             }
             50% {
-                transform: scale(1.1);
+                transform: scale(1.05);
                 opacity: 1;
             }
             100% {
                 transform: scale(0.9);
-                opacity: 0.8;
+                opacity: 0.85;
             }
         }
 
         .status-dot-connecting {
             background-color: #165DFF;
-            animation: pulse 1s infinite;
+            animation: pulse 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
 
         @keyframes flash-warning {
             0%, 100% {
                 opacity: 1;
                 background-color: #F53F3F;
-                box-shadow: 0 0 8px #F53F3F;
+                box-shadow: 0 0 8px rgba(245, 63, 63, 0.5);
             }
             50% {
-                opacity: 0.4;
+                opacity: 0.5;
                 background-color: #F53F3F;
                 box-shadow: none;
             }
@@ -149,12 +149,12 @@
 
         .status-dot-disconnected {
             background-color: #F53F3F;
-            animation: flash-warning 1s infinite;
+            animation: flash-warning 1.5s ease-in-out infinite;
         }
 
         @keyframes wifi-wave {
             0% {
-                opacity: 0.4;
+                opacity: 0.5;
                 transform: scale(0.95);
             }
             50% {
@@ -162,19 +162,19 @@
                 transform: scale(1.05);
             }
             100% {
-                opacity: 0.4;
+                opacity: 0.5;
                 transform: scale(0.95);
             }
         }
 
         .ws-icon-connected {
             color: #00B42A !important;
-            animation: wifi-wave 3s infinite ease-in-out;
+            animation: wifi-wave 3.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
 
         .ws-icon-connecting {
             color: #165DFF !important;
-            animation: pulse 1s infinite;
+            animation: pulse 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
 
         .ws-icon-disconnected {
@@ -184,9 +184,9 @@
 
         .ws-data-flash {
             color: #165DFF !important;
-            filter: drop-shadow(0 0 12px rgba(22, 93, 255, 0.9));
+            filter: drop-shadow(0 0 14px rgba(22, 93, 255, 0.8));
             transform: scale(1.15) !important;
-            transition: all 0.05s ease-out !important;
+            transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1) !important;
         }
 
         #app {
@@ -1821,7 +1821,9 @@
                 <div v-if="!recorderLogsContent" style="color: gray;">暂无日志输出...</div>
             </div>
         </a-modal>
-        <a-modal v-model:visible="showBatchAddModal" title="批量导入外部引擎名单" @ok="handleBatchAdd"
+
+        <!-- 修复点：修改 @ok 为 @before-ok 以正确支持异步任务关闭回调 -->
+        <a-modal v-model:visible="showBatchAddModal" title="批量导入外部引擎名单" @before-ok="handleBatchAdd"
                  @cancel="showBatchAddModal = false" :ok-loading="batchAddLoading">
             <a-alert type="info" style="margin-bottom: 16px;">
                 请在下方输入框内粘贴主播信息，<b>每行一个</b>，单次导入上限受后端安全策略保护为 <b>50</b> 个。<br>
@@ -1841,10 +1843,10 @@
                         </a-form-item>
                         <a-form-item label="默认录制画质">
                             <a-select v-model="builtinSettings.quality">
-                                <a-option value="uhd">蓝光 / 超清 (最高画质)</a-option>
+                                <a-option value="uhd">原画 / 蓝光 (最高画质)</a-option>
                                 <a-option value="hd">高清</a-option>
                                 <a-option value="sd">标清</a-option>
-                                </select>
+                            </a-select>
                         </a-form-item>
                         <a-form-item label="自动分片时长 (分钟)" tooltip="达到时间后自动分割视频文件，0为不限制">
                             <a-input-number v-model="builtinSettings.segment_time" :min="0"
@@ -1880,7 +1882,9 @@
                 </a-tab-pane>
             </a-tabs>
         </a-modal>
-        <a-modal v-model:visible="showBuiltinBatchModal" title="📑 批量添加内置引擎任务" @ok="handleBatchAddBuiltin"
+
+        <!-- 修复点：修改 @ok 为 @before-ok 以正确支持异步任务关闭回调 -->
+        <a-modal v-model:visible="showBuiltinBatchModal" title="📑 批量添加内置引擎任务" @before-ok="handleBatchAddBuiltin"
                  :ok-loading="builtinBatchAdding">
             <div style="margin-bottom: 15px;">
                 <a-select v-model="builtinBatchForm.platform" placeholder="请选择统一的平台">
@@ -1910,7 +1914,11 @@
     let _aesKeyBytes = null;
     let securityPromise = null;
 
-    // 解析并导入后端传来的 RSA 公钥 (SPKI 格式)
+    /**
+     * 解析并导入后端传来的 RSA 公钥 (SPKI 格式)
+     * @param {string} base64Key Base64编码的RSA公钥
+     * @returns {Promise<CryptoKey>} 返回可用于加密的 Web Crypto API 密钥对象
+     */
     async function importRSAPublicKey(base64Key) {
         const binaryDer = window.atob(base64Key);
         const bytes = new Uint8Array(binaryDer.length);
@@ -1926,7 +1934,10 @@
         );
     }
 
-    // 核心安全初始化：握手并申请专属隧道
+    /**
+     * 核心安全初始化：与服务端进行非对称握手并申请专属 AES 加密隧道
+     * @returns {Promise<void>} 握手完成的 Promise 信号
+     */
     async function initSecurity() {
         if (securityPromise) return securityPromise;
         securityPromise = (async () => {
@@ -1971,13 +1982,20 @@
         return securityPromise;
     }
 
-    // 获取 AES 密钥，若未初始化则触发初始化
+    /**
+     * 获取 AES 密钥，若未初始化隧道则自动触发安全握手协议
+     * @returns {Promise<CryptoKey|null>} 会话专属 AES 密钥
+     */
     async function getCryptoKey() {
         if (!_cryptoKey && window._encryptionEnabled) await initSecurity();
         return _cryptoKey;
     }
 
-    // AES-256-GCM 动态载荷加密函数
+    /**
+     * AES-256-GCM 动态载荷加密函数：生成密文供网络层安全传输
+     * @param {string} plaintext 准备加密的明文 JSON 字符串
+     * @returns {Promise<string>} Base64 编码的密文结果
+     */
     async function encryptPayload(plaintext) {
         const key = await getCryptoKey();
         const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -1995,7 +2013,11 @@
         return window.btoa(binary);
     }
 
-    // AES-256-GCM 动态载荷解密函数
+    /**
+     * AES-256-GCM 动态载荷解密函数：对服务端下发的加密报文进行解密
+     * @param {string} base64Str Base64 编码的密文载荷
+     * @returns {Promise<string>} 解密后的原始明文字符串
+     */
     async function decryptPayload(base64Str) {
         const key = await getCryptoKey();
         const binary = window.atob(base64Str);
@@ -2016,7 +2038,9 @@
 
     const api = axios.create({baseURL: '/api/v1', timeout: 10000});
 
-    // 响应拦截器：自动调用专属 AES 密钥解密
+    /**
+     * Axios 响应拦截器：自动拦截后端报文，触发专属 AES 密钥解密，并统一下发错误反馈
+     */
     api.interceptors.response.use(
         async res => {
             let data = res.data;
@@ -2065,7 +2089,9 @@
         }
     );
 
-    // 请求拦截器：确保握手完成后携带专属 SessionID，并决定是否封装密文
+    /**
+     * Axios 请求拦截器：确保握手完成后携带专属 SessionID，并自动对载荷进行安全封装密文
+     */
     api.interceptors.request.use(async config => {
         if (!_sessionId) await initSecurity();
         config.headers['X-Session-Id'] = _sessionId;
@@ -2090,14 +2116,18 @@
         setup() {
             const isMobile = ref(window.innerWidth <= 768);
 
-            // 处理浏览器窗口变化以适配移动端
+            /**
+             * 处理浏览器窗口大小变化，适配响应式布局开关
+             */
             const handleResize = () => {
                 isMobile.value = window.innerWidth <= 768;
             };
 
             const isDarkMode = ref(false);
 
-            // 自动或读取用户配置设定页面暗黑/明亮主题
+            /**
+             * 根据系统时间或本地存储的用户偏好设置，自动推断并配置当前页面的暗黑/明亮主题
+             */
             const autoSetThemeByTime = () => {
                 const savedTheme = localStorage.getItem('upload_system_theme');
                 if (savedTheme !== null) {
@@ -2109,7 +2139,9 @@
                 applyTheme();
             };
 
-            // 切换主题并持久化保存
+            /**
+             * 响应用户点击动作，切换页面主题模式并持久化存储，随后强制刷新图表色彩
+             */
             const toggleTheme = () => {
                 isDarkMode.value = !isDarkMode.value;
                 localStorage.setItem('upload_system_theme', isDarkMode.value ? 'dark' : 'light');
@@ -2121,12 +2153,16 @@
                 }, 100);
             };
 
-            // 更改 body 属性应用 CSS 主题
+            /**
+             * 对 Body 标签施加 Arco Vue 规范的主题属性以生效 CSS 变量
+             */
             const applyTheme = () => {
                 document.body.setAttribute('arco-theme', isDarkMode.value ? 'dark' : '');
             };
 
-            // 打开外站 Github 仓库
+            /**
+             * 打开底层的开源支持 GitHub 项目地址
+             */
             const openGitHub = () => {
                 window.open('https://github.com/Xiaoxusheng/go-auto-uploader', '_blank');
             };
@@ -2143,7 +2179,11 @@
             let pingTimer = null;
             let lastPongTime = Date.now();
 
-            // 为网络延迟显示对应的健康颜色
+            /**
+             * 根据 WebSocket 的 PING 心跳延迟返回对应视觉警告色
+             * @param {number} ms 延迟的毫秒数
+             * @returns {string} 色彩代码
+             */
             const getLatencyColor = (ms) => {
                 if (ms === 0) return 'var(--color-text-3)';
                 if (ms <= 50) return '#00B42A';
@@ -2166,8 +2206,8 @@
                 dynamicInterval: 0,
                 nextScanTime: 0,
                 scanningInterval: 0,
-                diskFree: 0,     // 响应式新增：磁盘余量
-                ffmpegMem: 0     // 响应式新增：引擎内存
+                diskFree: 0,
+                ffmpegMem: 0
             });
             const queueStatus = reactive({waiting: 0, uploading: 0, success: 0, failed: 0, retrying: 0});
             const trafficMetrics = reactive({speed: 0, time: 0});
@@ -2221,7 +2261,10 @@
 
             const globalPreview = reactive({visible: false, src: '', roomId: '', platform: ''});
 
-            // 打开直播间的封面预览图片
+            /**
+             * 打开指定直播间的实时截图预览大图
+             * @param {Object} record 直播间行内数据记录对象
+             */
             const openPreview = (record) => {
                 if (!record.avatar) return;
                 globalPreview.src = record.avatar;
@@ -2283,7 +2326,12 @@
             const builtinRecordingCount = computed(() => builtinTasks.value.filter(t => t.status === '录制中').length);
             const isAllBuiltinActive = computed(() => builtinTasks.value.length > 0 && builtinTasks.value.some(t => !t.is_paused));
 
-            // 构建并返回各平台的直达跳转链接
+            /**
+             * 构建并返回各个平台的直达跳转外链
+             * @param {string} platform 平台名称标识
+             * @param {string} roomId 平台对应的纯净房间 ID
+             * @returns {string} 用于浏览器打开的完整直播间 URL
+             */
             const getBuiltinLiveUrl = (platform, roomId) => {
                 if (platform === 'Douyin') return `https://live.douyin.com/${roomId}`;
                 if (platform === 'Kuaishou') return `https://live.kuaishou.com/u/${roomId}`;
@@ -2291,7 +2339,11 @@
                 return roomId;
             };
 
-            // 下载目标图像的封面
+            /**
+             * 触发浏览器原生动作，下载目标直播间当前缓存的封面图
+             * @param {string} url 图片源网络地址
+             * @param {string} anchorName 供文件命名的清洗后主播名字
+             */
             const downloadBuiltinCover = async (url, anchorName) => {
                 try {
                     const response = await fetch(url);
@@ -2310,7 +2362,9 @@
                 }
             };
 
-            // 拉取内置引擎的配置文件和 Cookie 配置
+            /**
+             * 调用 API 接口远端拉取内置录制引擎的运行参数及其所依托的 Cookie 配置
+             */
             const fetchBuiltinConfig = async () => {
                 try {
                     const res1 = await api.get('/builtin_recorder/config');
@@ -2327,13 +2381,17 @@
                 }
             };
 
-            // 打开设置菜单
+            /**
+             * 唤起内置引擎的基础设置与 Cookie 更新面板
+             */
             const openBuiltinSettingsModal = () => {
                 showBuiltinSettingsModal.value = true;
                 fetchBuiltinConfig();
             };
 
-            // 存入内置引擎的基础运行配置参数
+            /**
+             * 将用户在前端更改的内置引擎基础参数打包，下发存储至系统后端
+             */
             const saveBuiltinConfig = async () => {
                 builtinSaving.value = true;
                 try {
@@ -2346,7 +2404,9 @@
                 }
             };
 
-            // 将抓取的 Cookie 推送给后端进行反防盗链
+            /**
+             * 推送前端输入的多平台鉴权 Cookie 给后端文件落盘存储，以便穿透风控
+             */
             const saveBuiltinCookies = async () => {
                 builtinSavingCookies.value = true;
                 try {
@@ -2358,7 +2418,9 @@
                 }
             };
 
-            // 监听新的直播间并添加到任务池
+            /**
+             * 将前端输入框填写的链接地址，封装发起给后端录入系统的独立监听队列中
+             */
             const handleAddBuiltin = async () => {
                 if (!builtinForm.value.url.trim()) return Message.warning("请填写直播间地址或ID");
                 builtinAdding.value = true;
@@ -2372,7 +2434,10 @@
                 }
             };
 
-            // 批量将多个链接转换为录制任务
+            /**
+             * 将多行链接文本批量解析并循坏添加至系统后端的监听记录仪中
+             * @param {function} done Arco Vue `on-before-ok` 提供的生命周期回调指针
+             */
             const handleBatchAddBuiltin = async (done) => {
                 const lines = builtinBatchForm.value.urls.split('\n').map(l => l.trim()).filter(l => l !== '');
                 if (lines.length === 0) {
@@ -2401,7 +2466,11 @@
                 }
             };
 
-            // 控制单个任务的继续/暂停调度
+            /**
+             * 触发针对单个内置引擎任务的暂停/恢复操作逻辑
+             * @param {boolean} checked 开关当前滑动的布尔状态
+             * @param {Object} record 该数据行绑定的监控实体
+             */
             const handleSwitchBuiltin = async (checked, record) => {
                 record.switching = true;
                 const action = checked ? 'resume' : 'pause';
@@ -2412,7 +2481,12 @@
                 }
             };
 
-            // 请求后端操控底层的录制容器动作
+            /**
+             * 根据给定的动作指令 (挂起、继续或移除)，封装网络请求下发给后端底层去干预任务协程
+             * @param {string} action 指令类型 ('resume', 'pause', 'delete')
+             * @param {Object} record 操作锁定的数据块
+             * @returns {Promise<boolean>} 是否执行成功的状态反馈
+             */
             const handleControlBuiltin = async (action, record) => {
                 try {
                     await api.post('/builtin_recorder/control', {
@@ -2427,7 +2501,10 @@
                 }
             };
 
-            // 批量将所有录制任务设置为运行/挂起状态
+            /**
+             * 执行最高权限的系统级批处理指令，同步强行休眠或恢复所有正在监听队列中的引擎任务
+             * @param {boolean} val 全局主控制开关滑动的动作状态
+             */
             const handleMasterSwitchBuiltin = async (val) => {
                 const action = val ? 'resume_all' : 'pause_all';
                 const actionName = val ? '全部开启' : '全部暂停';
@@ -2441,7 +2518,10 @@
                 }
             };
 
-            // 全局快捷键：监听组合键
+            /**
+             * 全局快捷键监听注册：绑定 Ctrl+X 键可一键聚焦搜索框
+             * @param {KeyboardEvent} e 全局捕获的按键事件
+             */
             const handleGlobalKeydown = (e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
                     if (activeTab.value === 'streamers') {
@@ -2485,14 +2565,20 @@
                 };
             });
 
-            // 依据容量排名动态计算刻度图进度百分比
+            /**
+             * 依据容量数据，动态比对排行榜内目标，算计并描绘出具有差异感的刻度线进度百分比
+             * @param {number} size 磁盘空间占用字节数据
+             * @returns {number} 用于 UI 渲染的规范化浮点百分率 (0-1)
+             */
             const calculateRankPercent = (size) => {
                 if (!statsData.rank || statsData.rank.length === 0 || size === 0) return 0;
                 const max = statsData.rank[0].size;
                 return Number((size / max).toFixed(2));
             };
 
-            // 获取录制引擎保存的文件位置以及账号 Cookie
+            /**
+             * 解析外部引擎的本地保存映射并读取关联反防盗链 Cookie 数据
+             */
             const fetchCookies = async () => {
                 if (!configForm.value.recorderConfigPath) return;
                 cookiesLoading.value = true;
@@ -2505,7 +2591,9 @@
                 }
             };
 
-            // 保存外部引擎配置信息
+            /**
+             * 将配置有外部引擎凭证的数据模型打包上报，强制将其热合并入远程 Docker 共享文件路径内
+             */
             const saveCookies = async () => {
                 if (!configForm.value.recorderConfigPath) {
                     Message.warning('系统安全拦截：请先在【上传参数设置】中配置 config.ini 物理路径！');
@@ -2548,7 +2636,9 @@
             let originalConfigSnapshot = {};
             let chartInstance = null;
 
-            // 绘制饼状图，展示各类任务运行占比
+            /**
+             * 调动底层 ECharts 库渲染前端页面内直观的队列任务状态分布占比饼图
+             */
             const renderChart = () => {
                 if (activeTab.value !== 'overview') return;
                 nextTick(() => {
@@ -2557,7 +2647,6 @@
                     if (!chartInstance) {
                         chartInstance = echarts.init(dom);
                     } else {
-                        // 【修复 Bug】增加强制重置尺寸，防止尺寸错乱导致画布空白
                         chartInstance.resize();
                     }
                     const total = queueStatus.waiting + queueStatus.uploading + queueStatus.success + queueStatus.failed;
@@ -2608,14 +2697,15 @@
                 });
             };
 
-            // 绘制近 7 日服务器文件上传容量及请求数量的走势折线图
+            /**
+             * 提取远端推送的历史记录进行归纳整合，借用 ECharts 渲染勾勒近 7 日上传流量及负载数据的折线走势图
+             */
             const renderTrendChart = () => {
                 const dom = document.getElementById('trendChart');
                 if (!dom) return;
                 if (!trendChartInstance) {
                     trendChartInstance = echarts.init(dom);
                 } else {
-                    // 【修复 Bug】增加强制重置尺寸，避免 DOM 未挂载完毕导致初始化尺寸为 0x0
                     trendChartInstance.resize();
                 }
                 const isDark = document.body.getAttribute('arco-theme') === 'dark';
@@ -2693,14 +2783,15 @@
                 }
             });
 
-            // 控制前端渲染图表自适应缩放跟随窗口变化
             window.addEventListener('resize', () => {
                 handleResize();
                 if (chartInstance) chartInstance.resize();
                 if (trendChartInstance) trendChartInstance.resize();
             });
 
-            // 处理后台管理鉴权接口
+            /**
+             * 处理后台管理系统管理员身份验证核发接口的 POST 请求与持久化业务
+             */
             const handleLogin = async () => {
                 loginLoading.value = true;
                 try {
@@ -2710,20 +2801,22 @@
                     Message.success('网关认证成功');
                     initDashboard();
 
-                    // 【修复 Bug】登录成功后，等待 DOM 渲染完毕，强制进行一次图表重绘避免白板
-                    setTimeout(() => {
+                    // 在下一个微任务周期中执行图表绘制，避开因 Vue 的 v-if 更新延迟带来的 DOM Null 异常
+                    nextTick(() => {
                         if (activeTab.value === 'overview') {
                             renderChart();
                             renderTrendChart();
                         }
-                    }, 300);
+                    });
                 } catch (e) {
                 } finally {
                     loginLoading.value = false;
                 }
             };
 
-            // 安全登出系统并移除本地 Token
+            /**
+             * 安全熔断登出当前用户授权系统，销毁 Token 会话且清理各类长轮询内存占用
+             */
             const handleLogout = async () => {
                 try {
                     await api.post('/auth/logout');
@@ -2734,7 +2827,9 @@
                 cleanUp();
             };
 
-            // 读取底层服务健康状态、容量上限以及扫描周期
+            /**
+             * 提取并赋予面板底层引擎当前的健康运转状态码与全局基础属性配置信息
+             */
             const fetchStatus = async () => {
                 try {
                     Object.assign(systemStatus, (await api.get('/status')).data);
@@ -2742,7 +2837,9 @@
                 }
             };
 
-            // 读取实时队列的上传指标与长度
+            /**
+             * 通过 GET 端口读取底层缓冲区的各个级别任务队列积累并发压力的程度数值
+             */
             const fetchQueue = async () => {
                 try {
                     Object.assign(queueStatus, (await api.get('/tasks/queue')).data);
@@ -2750,7 +2847,9 @@
                 }
             };
 
-            // 拉取短时间内所有工作中的活跃任务进度快照
+            /**
+             * 高速轮询拿取处于活动上传与排队中的内存记录快照并进行局部界面差量渲染替换
+             */
             const fetchLiveTasks = async () => {
                 try {
                     liveTasks.value = (await api.get('/tasks/live')).data || [];
@@ -2758,7 +2857,9 @@
                 }
             };
 
-            // 获取 Docker 容器当前存活状态 (Running/Exited)
+            /**
+             * 向系统下达指令并通过 Shell 获取被托管外置 Docker 容器现在的运转表象状态
+             */
             const fetchRecorderStatus = async () => {
                 try {
                     const res = await api.get('/recorder/status');
@@ -2768,7 +2869,10 @@
                 }
             };
 
-            // 对外部引擎下达启停或重启指令
+            /**
+             * 对挂载关联在系统的指定 Docker 应用发出诸如强制关停、热重载以及启动等动作命令
+             * @param {string} action 指令的英文标识符 ('start', 'stop', 'restart')
+             */
             const controlRecorder = async (action) => {
                 if (!configForm.value.recorderContainer) {
                     Message.error('请先在上传参数设置中配置 Docker 容器名');
@@ -2786,7 +2890,9 @@
                 }
             };
 
-            // 收集获取 Docker 输出的系统终端日志
+            /**
+             * 解析外部独立 Docker 录制器的 Shell 控制台终端抛出的调试运行回显内容
+             */
             const fetchRecorderLogs = async () => {
                 try {
                     const res = await api.get('/recorder/logs');
@@ -2800,13 +2906,17 @@
                 }
             };
 
-            // 弹出包含终端日志的独立对话框
+            /**
+             * 控制前端外部录像引擎排查追踪模态视图弹窗的显示与预加载工作
+             */
             const openLogsModal = () => {
                 showLogsModal.value = true;
                 fetchRecorderLogs();
             };
 
-            // 拉取当前处于真正开播推流状态的平台名单
+            /**
+             * 轮询对比时间戳以探测判断目前有几个主播真正处于底层数据推流落盘期间
+             */
             const fetchActiveStreamers = async () => {
                 try {
                     const res = await api.get('/streamers/active');
@@ -2815,7 +2925,9 @@
                 }
             };
 
-            // 全量拉取监控名单文件信息
+            /**
+             * 将外部录制系统内解析后的关注列表配置文件内容拉取映射同步于前端表格
+             */
             const fetchStreamers = async () => {
                 if (isSavingStreamers.value) return;
                 try {
@@ -2825,7 +2937,10 @@
                 }
             };
 
-            // 将在前端修改完的外部引擎监听列表持久化并更新给后端
+            /**
+             * 对接接口以修改底层物理名单内容，并依据保存状态做出相应的系统气泡反馈
+             * @param {boolean} showMsg 可选指示参数，判断是否对使用者进行 Toast 对话显示
+             */
             const saveStreamers = async (showMsg = true) => {
                 isSavingStreamers.value = true;
                 try {
@@ -2839,7 +2954,9 @@
                 }
             };
 
-            // 手动增加单条外部引擎监控录像指令
+            /**
+             * 解析用户提交的纯文本格式将单个主播资料注册装填入被监视列表中
+             */
             const addStreamer = () => {
                 if (!newStreamer.url) {
                     Message.warning('请输入直播间链接');
@@ -2851,16 +2968,21 @@
                 saveStreamers();
             };
 
-            // 解析从文本框贴入的多行直播间链接并压入列表
-            const handleBatchAdd = async () => {
+            /**
+             * 分析弹窗录入框的段落数据流，对其作行级拆解及格式纠偏过滤操作后实现大数量列表合并压入
+             * @param {function} done Arco Vue 模态框注入的完成标记钩子
+             */
+            const handleBatchAdd = async (done) => {
                 if (!batchAddText.value.trim()) {
                     Message.warning('请输入要批量添加的主播内容');
-                    return false;
+                    done(false);
+                    return;
                 }
                 const lines = batchAddText.value.split('\n').map(l => l.trim()).filter(l => l);
                 if (lines.length > 50) {
                     Message.error(`单次最多添加 50 个`);
-                    return false;
+                    done(false);
+                    return;
                 }
                 const newEntries = [];
                 for (const line of lines) {
@@ -2875,23 +2997,26 @@
                 }
                 if (newEntries.length === 0) {
                     Message.warning('未能解析到链接');
-                    return false;
+                    done(false);
+                    return;
                 }
                 batchAddLoading.value = true;
                 try {
                     await api.post('/streamers', newEntries);
                     Message.success(`成功批量添加了 ${newEntries.length} 个记录`);
                     batchAddText.value = '';
-                    showBatchAddModal.value = false;
-                    return true;
+                    done(true);
                 } catch (e) {
-                    return false;
+                    done(false);
                 } finally {
                     batchAddLoading.value = false;
                 }
             };
 
-            // 从本地配置列表中去除指定的项
+            /**
+             * 定位查找指定配置源于本地状态链表内的位置并调用函数将其从内存中抛除
+             * @param {Object} record 需要被解绑消除的映射项对象值
+             */
             const removeStreamer = (record) => {
                 const index = streamers.value.findIndex(s => s.url === record.url);
                 if (index > -1) {
@@ -2901,7 +3026,10 @@
                 }
             };
 
-            // 触发 WebSocket 数据到达信号以激活动画和状态指示器
+            /**
+             * 接受来自后台加密通道推送的数据触发点，令前端图标产生 CSS 脉冲动画特效以示心跳通信正在发生
+             * @param {string} eventType 数据触发信号事件类别标示符
+             */
             const triggerWsPulse = (eventType) => {
                 wsStats.msgCount++;
                 wsStats.lastEvent = eventType;
@@ -2912,7 +3040,9 @@
                 }, 150);
             };
 
-            // 构建全功能的 WebSocket 客户端信道，并封装断线重连与存活确认功能
+            /**
+             * 构建全功能的 WebSocket 客户端信道，并封装断线重连、密文解码鉴别与心跳存活自动确认处理机
+             */
             const connectWS = async () => {
                 // 如果开启了加密但是未获取到 SessionID 则主动握手
                 if (window._encryptionEnabled && !_sessionId) {
@@ -3114,7 +3244,10 @@
                 };
             };
 
-            // 发起动作操作以操纵引擎扫描与网络动作队列
+            /**
+             * 提取对系统状态发起干预操作的事件，并对诸如系统起停指令予以强弹窗提醒用户防手滑拦截
+             * @param {string} action 指令的动作短语
+             */
             const control = (action) => {
                 const actionText = {
                     'start': '确定要启动系统吗？', 'pause': '确定要暂停吗？', 'stop': '危险操作：强行停止系统吗？',
@@ -3136,7 +3269,9 @@
                 });
             };
 
-            // 拉取远端历史数据库的存储切片信息
+            /**
+             * 依据设定的分页搜索结构从服务端数据库载入过往切片传输完成与否的历史详单
+             */
             const fetchHistory = async () => {
                 try {
                     const res = await api.get('/tasks/history', {params: historyQuery});
@@ -3146,20 +3281,28 @@
                 }
             };
 
-            // 下发操作触发历史记录的翻页查询处理
+            /**
+             * 表格组件页脚翻页操作触发器，回传页面角标供上游检索新数据层使用
+             * @param {number} page 用户指定的检索页面索引位标
+             */
             const onPageChange = (page) => {
                 historyQuery.page = page;
                 fetchHistory();
             };
 
-            // 下发操作触发单页容量更新动作
+            /**
+             * 触发记录表单每页载客量重新定配操作功能
+             * @param {number} size 新定的数据载荷行数
+             */
             const onPageSizeChange = (size) => {
                 historyQuery.limit = size;
                 historyQuery.page = 1;
                 fetchHistory();
             };
 
-            // 将过滤条件绑定后发送拉取指定的系统级别日志请求
+            /**
+             * 向系统层发起日志检索读取需求，依带条件的结构拉取历史后台控制台运行输出并展现给终端用户使用
+             */
             const fetchLogs = async () => {
                 try {
                     const res = await api.get('/logs', {params: logQuery});
@@ -3169,7 +3312,9 @@
                 }
             };
 
-            // 触发下载系统日志，修复 Axios baseURL 拼接导致的 404 错误，并恢复浏览器原生下载
+            /**
+             * 拼接 URL 暴露出的系统导出端口以便将庞大日记源文件下达到本地磁盘予以物理隔离保留
+             */
             const downloadLogs = async () => {
                 try {
                     let url = `/api/v1/logs/download?limit=${logExportLimit.value}&level=${logQuery.level}&keyword=${logQuery.keyword}`;
@@ -3185,7 +3330,9 @@
                 }
             };
 
-            // 远程加载最新的配置字典以回显到前端表单
+            /**
+             * 请求读取系统设定的参数基值进行表单自动初始化还原填空动作
+             */
             const fetchConfig = async () => {
                 try {
                     const res = await api.get('/config');
@@ -3196,7 +3343,9 @@
                 }
             };
 
-            // 通过接口推送并应用目前修改后的前端配置表单数据
+            /**
+             * 把由终端修改生效确认的核心规则打包成请求传于服务器，由后端改写系统物理常驻设置项文件生效
+             */
             const saveConfig = async () => {
                 try {
                     configForm.value.dirs = configDirsString.value.split(',').map(s => s.trim()).filter(s => s);
@@ -3222,7 +3371,11 @@
                 }
             };
 
-            // 格式化输出通用字节长度
+            /**
+             * 将冗长的原始流长字节计算切削成供人工识别判读查验的 MB 或 GB 数据尺度描述词缀
+             * @param {number} bytes 源字节长度
+             * @returns {string} 优化排版后的格式化存储量字符串
+             */
             const formatSize = (bytes) => {
                 if (!bytes) return '0 B';
                 const k = 1024, sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -3230,14 +3383,33 @@
                 return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
             };
 
-            // 将字节转为每秒带宽展现
+            /**
+             * 对传输瞬发或均值的字节速度转换加上/s字根的表示处理手法
+             * @param {number} bps 被运算的原始字节上传速度值
+             * @returns {string} 可直观视读的网络秒速表示描述串
+             */
             const formatSpeed = (bps) => formatSpeedRate(bps);
+
+            /**
+             * 格式化速率值的内置衍生功能函数引用方法
+             * @param {number} bps 原始值
+             * @returns {string} 后缀字符串
+             */
             const formatSpeedRate = (bps) => formatSize(bps) + '/s';
 
-            // 利用双分子差比对渲染上传进度的完成率
+            /**
+             * 按照总量与完成量间的逻辑得出当前操作推进的具体小数点位百分化数据量
+             * @param {number} up 成功完成量
+             * @param {number} tot 应答整体总量
+             * @returns {number} 转换精简至两位的数学运算结果点百分
+             */
             const calculatePercent = (up, tot) => (!tot ? 0 : Number((up / tot).toFixed(2)));
 
-            // 对于秒级的任务进行可读性更强的时间片解析显示
+            /**
+             * 剖析运算以秒级计数的运行历经耗时赋予可视文本表达（包含分钟转换进位展示）
+             * @param {number} sec 时长标示值
+             * @returns {string} 运算拼接完毕的时间段落描绘
+             */
             const formatDurationSeconds = (sec) => {
                 if (!sec && sec !== 0) return '-';
                 if (sec === 0) return '< 1s';
@@ -3246,19 +3418,31 @@
                 return m > 0 ? `${m}m ${s}s` : `${s}s`;
             };
 
-            // 封装通用时长的字符串组装方法
+            /**
+             * 系统级长时间跨度秒值分解转换为小时及分钟等高纬时间的显示解析构造法
+             * @param {number} seconds 累计流转逝去时间秒钟计算标示
+             * @returns {string} 合并修整完成带标签展示文本串
+             */
             const formatDuration = (seconds) => {
                 const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60);
                 return `${h}h ${m}m`;
             };
 
-            // 计算任务创建至今消耗的时间，用来反馈任务活跃度
+            /**
+             * 以本地机浏览器记录为坐标系算得对象被创生延续生存到如今共消费的绝对秒值后抛出字串返回处理
+             * @param {number} startTime 活动事件起爆打点原时
+             * @returns {string} 代表时分演变的展示级文本
+             */
             const getElapsedTime = (startTime) => {
                 if (!startTime) return '0s';
                 return formatDurationSeconds(Math.floor((clientTime.value - startTime) / 1000));
             };
 
-            // 根据任务底层代码的状态字段转为中文翻译
+            /**
+             * 对代码结构内定死英状态字标识匹配改用贴近系统使用的汉化文字表现功能设计模块
+             * @param {string} status 底层发派出的原态值
+             * @returns {string} 经本地转码化过具有亲和力汉体翻译字根
+             */
             const formatStatusText = (status) => {
                 if (!status) return '未知';
                 const lower = String(status).toLowerCase();
@@ -3270,7 +3454,11 @@
                 return status;
             };
 
-            // 对每种不同的进度给出不同的预设警示色
+            /**
+             * 对各种处于操作、完成不同时段及发生异变中断的对象抛出其状态绑定的界面警示颜色的反馈系统
+             * @param {string} status 等待色彩决断的原本状态字符实体
+             * @returns {string} 关联于框架系统底本色彩方案集属性
+             */
             const getStatusColor = (status) => {
                 if (!status) return 'gray';
                 const str = String(status).toLowerCase();
@@ -3280,14 +3468,20 @@
                 return 'orange';
             };
 
-            // 给不同级别的系统终端消息配对主题颜色
+            /**
+             * 基于捕获到的异常或控制台消息类别为该信息文本划拨涂抹对应的强调展示彩带
+             * @param {string} level 原生级控制台等告警抛出的错误深重级字符
+             * @returns {string} 应在前端涂上的具体16制等颜色表示信息结构
+             */
             const getLogLevelColor = (level) => ({
                 'info': '#00b42a',
                 'error': '#f53f3f',
                 'warn': '#ff7d00'
             }[level] || 'var(--color-text-3)');
 
-            // 面板挂载的启动脚本方法，发起一系列轮询操作进行初始化并建立网络
+            /**
+             * 登入认证无误系统界面唤起前做大规模初探探测信息载入准备功能，用异步推演获取后方多条基础参数总汇
+             */
             const initDashboard = () => {
                 fetchStatus();
                 fetchQueue();
@@ -3304,7 +3498,9 @@
                 }, 1000);
             };
 
-            // 清理遗留的回调实例用于内存释放优化
+            /**
+             * 退离体系后解绑卸除销毁前端内缓存一切定时与挂靠连接及 ECharts 画布占据耗时的清除收尾总系统
+             */
             const cleanUp = () => {
                 if (pollingTimer) clearInterval(pollingTimer);
                 if (pingTimer) clearInterval(pingTimer);
@@ -3323,12 +3519,10 @@
                 window.removeEventListener('resize', handleResize);
             };
 
-            // 监听生命周期启动状态
             onMounted(() => {
                 autoSetThemeByTime();
                 if (isLoggedIn.value) {
                     initDashboard();
-                    // 【修复 Bug】刷新页面后，等待 DOM 渲染完毕强制绘图
                     setTimeout(() => {
                         if (activeTab.value === 'overview') {
                             renderChart();
@@ -3356,13 +3550,11 @@
                 });
             });
 
-            // 卸载与清除环境
             onUnmounted(() => {
                 cleanUp();
                 window.removeEventListener('keydown', handleGlobalKeydown);
             });
 
-            // 根据激活的不同面板触发对应的即时数据更新
             watch(activeTab, (newTab) => {
                 if (newTab === 'logs') fetchLogs();
                 if (newTab === 'history') fetchHistory();
@@ -3377,7 +3569,6 @@
                 }
             });
 
-            // 控制滚动条定位到底部
             watch(() => logData.items, () => {
                 nextTick(() => {
                     if (logContainerRef.value) {

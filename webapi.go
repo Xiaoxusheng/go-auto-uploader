@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,8 +27,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/shirou/gopsutil/v3/disk"    // 新增：用于探测系统磁盘余量
-	"github.com/shirou/gopsutil/v3/process" // 新增：用于探测底层录制进程的物理内存
 )
 
 var (
@@ -358,6 +357,14 @@ func handleExchangeKey(w http.ResponseWriter, r *http.Request) {
 	sessionKeys[sessionID] = aesKey
 	sessionKeysMu.Unlock()
 
+	// 【修复 Bug】Session 24小时后自动过期，防止 sessionKeys map 无限增长（内存泄漏）
+	go func() {
+		time.Sleep(24 * time.Hour)
+		sessionKeysMu.Lock()
+		delete(sessionKeys, sessionID)
+		sessionKeysMu.Unlock()
+	}()
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"code": 200,
@@ -516,81 +523,115 @@ func buildStatsTrendData() map[string]interface{} {
 
 // wsBroadcastLoop 处理 WebSocket 广播队列，实时向所有连接客户端下发报文(支持明密文切换)
 func wsBroadcastLoop() {
+	// 【优化】每5秒刷新一次加密开关缓存，避免每条消息都加读锁
+	var encEnabled bool
+	appConfigMu.RLock()
+	encEnabled = appConfig.EnableEncryption
+	appConfigMu.RUnlock()
+	encRefreshTicker := time.NewTicker(5 * time.Second)
+
 	for {
-		msg := <-wsBroadcast
-		rawBytes, _ := json.Marshal(msg)
+		select {
+		case msg := <-wsBroadcast:
+			rawBytes, _ := json.Marshal(msg)
 
-		appConfigMu.RLock()
-		encEnabled := appConfig.EnableEncryption
-		appConfigMu.RUnlock()
+			wsMutex.RLock()
+			clientsCopy := make([]*WSClient, 0, len(wsClients))
+			for client := range wsClients {
+				clientsCopy = append(clientsCopy, client)
+			}
+			wsMutex.RUnlock()
 
-		wsMutex.RLock()
-		clientsCopy := make([]*WSClient, 0, len(wsClients))
-		for client := range wsClients {
-			clientsCopy = append(clientsCopy, client)
-		}
-		wsMutex.RUnlock()
+			for _, client := range clientsCopy {
+				client.mu.Lock()
+				client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 
-		for _, client := range clientsCopy {
-			client.mu.Lock()
-			client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+				var err error
+				if encEnabled && client.AESKey != nil {
+					encryptedPayload, _ := encryptPayload(rawBytes, client.AESKey)
+					err = client.conn.WriteJSON(EncryptedRequest{Encrypted: encryptedPayload})
+				} else {
+					err = client.conn.WriteJSON(msg)
+				}
 
-			var err error
-			// ✨ 核心：根据后台安全配置判断是否进行端到端隔离加密传输
-			if encEnabled && client.AESKey != nil {
-				encryptedPayload, _ := encryptPayload(rawBytes, client.AESKey)
-				err = client.conn.WriteJSON(EncryptedRequest{Encrypted: encryptedPayload})
-			} else {
-				err = client.conn.WriteJSON(msg)
+				client.mu.Unlock()
+
+				if err != nil {
+					client.conn.Close()
+					wsMutex.Lock()
+					delete(wsClients, client)
+					wsMutex.Unlock()
+				}
 			}
 
-			client.mu.Unlock()
-
-			if err != nil {
-				client.conn.Close()
-				wsMutex.Lock()
-				delete(wsClients, client)
-				wsMutex.Unlock()
-			}
+		case <-encRefreshTicker.C:
+			appConfigMu.RLock()
+			encEnabled = appConfig.EnableEncryption
+			appConfigMu.RUnlock()
 		}
 	}
 }
 
 // wsDashboardBroadcaster 定时向面板广播系统实时状态数据、系统负载及图表
 func wsDashboardBroadcaster() {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+	// 快速刷新：状态、队列、流量 (每2秒)
+	fastTicker := time.NewTicker(2 * time.Second)
+	// 慢速刷新：磁盘 IO 和目录遍历类数据 (每10秒)
+	slowTicker := time.NewTicker(10 * time.Second)
+	defer fastTicker.Stop()
+	defer slowTicker.Stop()
 
-	for range ticker.C {
-		wsMutex.RLock()
-		clientCount := len(wsClients)
-		wsMutex.RUnlock()
+	// 缓存慢速数据，避免每次都重新采集
+	var cachedStreamersData interface{}
+	var cachedActiveStreamers interface{}
+	var cachedStatsTrend interface{}
+	var cachedRecorderStatus interface{}
 
-		if clientCount > 0 {
-			broadcastWS("systemStatus", buildStatusData())
-			broadcastWS("queueStatus", buildQueueData())
+	// 首次立即采集一次慢速数据
+	cachedStreamersData = getStreamersData()
+	cachedActiveStreamers = getActiveStreamers()
+	cachedStatsTrend = buildStatsTrendData()
+	cachedRecorderStatus = getRecorderStatus()
 
-			var totalSpeed int64 = 0
-			liveTasksMu.RLock()
-			for _, task := range liveTasks {
-				if task.Status == "uploading" {
-					totalSpeed += task.Speed
+	for {
+		select {
+		case <-fastTicker.C:
+			wsMutex.RLock()
+			clientCount := len(wsClients)
+			wsMutex.RUnlock()
+
+			if clientCount > 0 {
+				broadcastWS("systemStatus", buildStatusData())
+				broadcastWS("queueStatus", buildQueueData())
+
+				var totalSpeed int64 = 0
+				liveTasksMu.RLock()
+				for _, task := range liveTasks {
+					if task.Status == "uploading" {
+						totalSpeed += task.Speed
+					}
 				}
+				liveTasksMu.RUnlock()
+
+				broadcastWS("trafficMetrics", map[string]interface{}{
+					"speed": totalSpeed,
+					"time":  time.Now().UnixMilli(),
+				})
+
+				// 使用缓存的慢速数据
+				broadcastWS("statsTrend", cachedStatsTrend)
+				broadcastWS("recorderStatus", cachedRecorderStatus)
+				broadcastWS("activeStreamers", cachedActiveStreamers)
+				broadcastWS("streamersData", cachedStreamersData)
+				broadcastWS("builtinTasks", GetBuiltinRecorderTasks())
 			}
-			liveTasksMu.RUnlock()
 
-			broadcastWS("trafficMetrics", map[string]interface{}{
-				"speed": totalSpeed,
-				"time":  time.Now().UnixMilli(),
-			})
-
-			broadcastWS("statsTrend", buildStatsTrendData())
-
-			broadcastWS("recorderStatus", getRecorderStatus())
-			broadcastWS("activeStreamers", getActiveStreamers())
-			broadcastWS("streamersData", getStreamersData())
-
-			broadcastWS("builtinTasks", GetBuiltinRecorderTasks())
+		case <-slowTicker.C:
+			// 【优化】慢速数据只每10秒更新一次，避免高频磁盘IO和目录遍历
+			cachedStreamersData = getStreamersData()
+			cachedActiveStreamers = getActiveStreamers()
+			cachedStatsTrend = buildStatsTrendData()
+			cachedRecorderStatus = getRecorderStatus()
 		}
 	}
 }
@@ -705,15 +746,108 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiry := time.Now().Add(24 * time.Hour).UnixMilli()
+	tokenMu.Lock()
 	if token == "" {
 		token = "test-token-" + strconv.FormatInt(time.Now().Unix(), 10)
 	}
-	sendJSONSuccess(w, r, map[string]interface{}{"token": token, "expiry": expiry})
+	currentToken := token
+	tokenMu.Unlock()
+	sendJSONSuccess(w, r, map[string]interface{}{"token": currentToken, "expiry": expiry})
 }
 
 // handleLogout 处理注销请求，清除登录状态
 func handleLogout(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, r, nil)
+}
+
+// getDiskFreeSpaceStd 获取指定目录所在磁盘的剩余逻辑空间 (纯标准库跨平台实现)
+func getDiskFreeSpaceStd(pathStr string) int64 {
+	if pathStr == "" {
+		pathStr = "."
+	}
+	absPath, err := filepath.Abs(pathStr)
+	if err != nil {
+		absPath = pathStr
+	}
+
+	if runtime.GOOS == "windows" {
+		vol := filepath.VolumeName(absPath)
+		if vol == "" {
+			vol = "C:"
+		}
+		cmd := exec.Command("wmic", "logicaldisk", "where", fmt.Sprintf("DeviceID='%s'", vol), "get", "FreeSpace")
+		out, err := cmd.Output()
+		if err == nil {
+			lines := strings.Split(string(out), "\n")
+			if len(lines) >= 2 {
+				freeStr := strings.TrimSpace(lines[1])
+				if freeBytes, err := strconv.ParseInt(freeStr, 10, 64); err == nil {
+					return freeBytes
+				}
+			}
+		}
+	} else {
+		cmd := exec.Command("df", "-k", absPath)
+		out, err := cmd.Output()
+		if err == nil {
+			lines := strings.Split(string(out), "\n")
+			if len(lines) >= 2 {
+				fields := strings.Fields(lines[1])
+				// available column is generally index 3 on standard Linux df
+				if len(fields) >= 4 {
+					if freeKb, err := strconv.ParseInt(fields[3], 10, 64); err == nil {
+						return freeKb * 1024
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// getFFmpegMemoryStd 获取所有底层 ffmpeg 进程占用的物理内存 RSS 估算值 (纯标准库跨平台实现)
+func getFFmpegMemoryStd() int64 {
+	var totalMem int64 = 0
+
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq ffmpeg.exe", "/FO", "CSV", "/NH")
+		out, err := cmd.Output()
+		if err == nil {
+			lines := strings.Split(string(out), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.Contains(line, "INFO:") {
+					continue
+				}
+				parts := strings.Split(line, "\",\"")
+				if len(parts) >= 5 {
+					memStr := parts[4]
+					memStr = strings.ReplaceAll(memStr, "\"", "")
+					memStr = strings.ReplaceAll(memStr, ",", "")
+					memStr = strings.ReplaceAll(memStr, " K", "")
+					memStr = strings.ReplaceAll(memStr, " KB", "")
+					if memKb, err := strconv.ParseInt(strings.TrimSpace(memStr), 10, 64); err == nil {
+						totalMem += memKb * 1024
+					}
+				}
+			}
+		}
+	} else {
+		cmd := exec.Command("ps", "-eo", "comm,rss")
+		out, err := cmd.Output()
+		if err == nil {
+			lines := strings.Split(string(out), "\n")
+			for _, line := range lines {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 && strings.Contains(strings.ToLower(fields[0]), "ffmpeg") {
+					if memKb, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+						totalMem += memKb * 1024
+					}
+				}
+			}
+		}
+	}
+	return totalMem
 }
 
 // buildStatusData 构建系统运行参数与目录状态聚合的大宽表
@@ -767,29 +901,16 @@ func buildStatusData() map[string]interface{} {
 	}
 	dirStatusesMu.RUnlock()
 
-	// ===== 核心修改：增加内存与磁盘余量采集 =====
+	// ===== 核心修改：使用原生标准库命令采集内存与磁盘余量 =====
 	var diskFree int64 = 0
 	var ffmpegMem int64 = 0
 
-	// 探测磁盘可用空间 (默认检查当前系统所在目录，若配置了多目录则以第一个监控目录所在磁盘为准)
 	targetDir := "."
 	if len(configuredDirs) > 0 && configuredDirs[0] != "" {
 		targetDir = configuredDirs[0]
 	}
-	if usage, err := disk.Usage(targetDir); err == nil {
-		diskFree = int64(usage.Free)
-	}
-
-	// 探测录制进程 (ffmpeg) 占用的物理内存 RSS
-	if procs, err := process.Processes(); err == nil {
-		for _, p := range procs {
-			if name, err := p.Name(); err == nil && strings.Contains(strings.ToLower(name), "ffmpeg") {
-				if memInfo, err := p.MemoryInfo(); err == nil {
-					ffmpegMem += int64(memInfo.RSS)
-				}
-			}
-		}
-	}
+	diskFree = getDiskFreeSpaceStd(targetDir)
+	ffmpegMem = getFFmpegMemoryStd()
 	// ===========================================
 
 	return map[string]interface{}{
@@ -804,8 +925,8 @@ func buildStatusData() map[string]interface{} {
 		"dayRate":          currentDayRate,
 		"nightRate":        currentNightRate,
 		"uptime":           int64(time.Since(startTime).Seconds()),
-		"diskFree":         diskFree,  // 新增磁盘剩余字段
-		"ffmpegMem":        ffmpegMem, // 新增内存占用字段
+		"diskFree":         diskFree,  // 使用系统原生命令获取的剩余空间
+		"ffmpegMem":        ffmpegMem, // 使用系统原生命令获取的 ffmpeg 内存占用
 	}
 }
 

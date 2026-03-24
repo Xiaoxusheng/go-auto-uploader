@@ -235,6 +235,9 @@ func main() {
 		successRecords = make([]UploadRecord, 0)
 	}
 
+	// 启动时一次性加载哈希库到内存，后续 hashExists/saveHash 全走内存
+	loadHashCache()
+
 	// 初始化系统参数：优先从 config.json 读取；如果文件不存在，则使用启动参数进行填充
 	appConfigMu.Lock()
 	data, err := os.ReadFile("config.json")
@@ -948,7 +951,11 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 	if time.Since(p.last) > 500*time.Millisecond {
 		p.last = time.Now()
 		progress := int(float64(p.read) * 100 / float64(p.total))
-		speed := int64(float64(p.read) / float64(time.Since(p.start).Seconds()))
+		elapsed := time.Since(p.start).Seconds()
+		var speed int64
+		if elapsed > 0.1 { // 【修复 Bug】避免启动瞬间除以近 0 导致速度值溢出
+			speed = int64(float64(p.read) / elapsed)
+		}
 
 		step := progress / 10
 		if step > p.lastLogProg {
@@ -1040,10 +1047,26 @@ func recordSuccess(remote, name string, size int64) {
 		successRecords = successRecords[len(successRecords)-50000:]
 	}
 
-	// 写入磁盘动作依然保留用于持久化
-	b, _ := json.MarshalIndent(successRecords, "", "  ")
-	if err := os.WriteFile(successLogFile, b, 0644); err != nil {
+	// 【核心修复】：获取目标日志文件所在的具体目录，确保临时文件和目标文件处于同一磁盘分区，彻底解决 invalid cross-device link 报错
+	targetDir := filepath.Dir(successLogFile)
+	f, err := os.CreateTemp(targetDir, "upload_success_*.json")
+	if err != nil {
+		log.Printf("[CLEAN][SUCCESS_LOG][ERR] 创建临时日志文件失败: %v", err)
+		return
+	}
+	tmpName := f.Name()
+	enc := json.NewEncoder(f)
+	encErr := enc.Encode(successRecords)
+	f.Close()
+	if encErr != nil {
+		log.Printf("[CLEAN][SUCCESS_LOG][ERR] 序列化日志失败: %v", encErr)
+		os.Remove(tmpName)
+		return
+	}
+	// 原子替换，防止写一半时进程崩溃导致文件损坏
+	if err := os.Rename(tmpName, successLogFile); err != nil {
 		log.Printf("[CLEAN][SUCCESS_LOG][ERR] 写入日志失败: %v", err)
+		os.Remove(tmpName)
 	}
 }
 
@@ -1242,31 +1265,54 @@ func fileHash(p string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// hashExists 将待检索字符遍历对比已有离线数据库用于避免重传
-func hashExists(h string) bool {
-	if h == "" {
-		// 【修复 BUG】如果 h 为空字符串，下面 strings.Contains 也会永远返回 true，导致文件堆积，此处必须拦截！
-		return false
+// hashCache 内存哈希集合，避免每次都读磁盘
+var hashCache map[string]struct{}
+
+// loadHashCache 启动时一次性加载哈希库到内存
+func loadHashCache() {
+	hashMu.Lock()
+	defer hashMu.Unlock()
+	hashCache = make(map[string]struct{})
+	data, err := os.ReadFile(hashFile)
+	if err != nil {
+		return
 	}
-
-	// 【修复 BUG】加入读锁防止多个 Worker 高并发读取修改导致 DB 内容混乱
-	hashMu.RLock()
-	defer hashMu.RUnlock()
-
-	data, _ := os.ReadFile(hashFile)
-	return strings.Contains(string(data), h)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			hashCache[line] = struct{}{}
+		}
+	}
+	log.Printf("[HASH] 已从磁盘加载 %d 条哈希记录到内存缓存", len(hashCache))
 }
 
-// saveHash 向库内追加全新的防重复哈希值字符串
+// hashExists 直接查内存哈希集合，O(1) 精确匹配，无磁盘 IO
+func hashExists(h string) bool {
+	if h == "" {
+		return false
+	}
+	hashMu.RLock()
+	defer hashMu.RUnlock()
+	_, ok := hashCache[h]
+	return ok
+}
+
+// saveHash 向库内追加全新的防重复哈希值字符串，并同步更新内存缓存
 func saveHash(h string) {
 	if h == "" {
 		return
 	}
 
-	// 【修复 BUG】加入写锁防止高并发时破坏 DB 文件结构（文件结尾乱码）导致漏检错检
 	hashMu.Lock()
 	defer hashMu.Unlock()
 
+	// 先写内存缓存，保证下次 hashExists 立即可见
+	if hashCache == nil {
+		hashCache = make(map[string]struct{})
+	}
+	hashCache[h] = struct{}{}
+
+	// 再追加磁盘持久化
 	f, err := os.OpenFile(hashFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Printf("[HASH][ERR] 打开哈希库文件失败: %v", err)

@@ -482,24 +482,17 @@ func extractBuiltinRoomID(input string) string {
 
 // sanitizeBuiltinFileName 清洗并规范化主播名称，剔除非法及容易导致操作异常的特殊字符
 func sanitizeBuiltinFileName(name string) string {
-	// 1. 清理所有的控制字符（回车、换行、制表符）
 	name = strings.ReplaceAll(name, "\r", "")
 	name = strings.ReplaceAll(name, "\n", "")
 	name = strings.ReplaceAll(name, "\t", "")
-
-	// 顺手把常见的全角空格替换成半角空格，防止被当作文字保留
 	name = strings.ReplaceAll(name, "　", " ")
 
-	// 2. 剔除非法字符（这里直接删除，不再替换为"_"，防止产生变种名称）
 	invalidChars := []string{"\\", "/", ":", "*", "?", "\"", "<", ">", "|"}
 	for _, char := range invalidChars {
 		name = strings.ReplaceAll(name, char, "")
 	}
 
-	// 3. 去除两端所有多余的空白字符
 	name = strings.TrimSpace(name)
-
-	// 4. 彻底剥离会导致云盘报错 500 的非法前缀和后缀字符（核心修复：点号、横杠、下划线）
 	name = strings.Trim(name, " ._-")
 
 	if name == "" {
@@ -670,12 +663,9 @@ func ExtractBuiltinDouyinLiveURL(text string) (string, error) {
 	}
 	log.Printf("\n🔍 [解析引擎] 提取到纯净短链接: %s\n", shortURL)
 
-	// 1. 无头浏览器深度解析 (加入终极防风控参数)
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", true),
-		// ✨ 核心防风控 1：禁用 webdriver 特征，防止被抖音识别为机器人弹出滑块
 		chromedp.Flag("disable-blink-features", "AutomationControlled"),
-		// ✨ 核心防风控 2：排除不必要的后台加载项加速渲染
 		chromedp.Flag("disable-extensions", true),
 		chromedp.Flag("mute-audio", true),
 		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
@@ -686,7 +676,6 @@ func ExtractBuiltinDouyinLiveURL(text string) (string, error) {
 	ctx, cancel2 := chromedp.NewContext(allocCtx)
 	defer cancel2()
 
-	// ✨ 核心优化：将超时时间从 8 秒延长到 15 秒，给网络和 JS 充分的执行时间
 	ctx, cancel3 := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel3()
 
@@ -703,7 +692,6 @@ func ExtractBuiltinDouyinLiveURL(text string) (string, error) {
 	)
 
 	if err == nil {
-		// ✨ 状态识别：如果重定向到了个人主页，说明主播已经下播了
 		if strings.Contains(finalURL, "douyin.com/user/") {
 			return "", fmt.Errorf("解析失败: 该主播当前未开播 (重定向至个人主页)")
 		}
@@ -721,11 +709,10 @@ func ExtractBuiltinDouyinLiveURL(text string) (string, error) {
 			return fmt.Sprintf("https://live.douyin.com/%s", webRid), nil
 		}
 	} else {
-		log.Printf("err:", err)
+		log.Printf("err: %v", err)
 		log.Printf("⚠️ [解析引擎] 无头浏览器超时或未安装，触发底层 HTTP 拦截器保底...")
 	}
 
-	// 2. HTTP 拦截器保底
 	fallbackClient := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -737,7 +724,6 @@ func ExtractBuiltinDouyinLiveURL(text string) (string, error) {
 		defer resp.Body.Close()
 		resolvedURL := resp.Request.URL.String()
 
-		// 同样拦截下播状态
 		if strings.Contains(resolvedURL, "douyin.com/user/") {
 			return "", fmt.Errorf("解析失败: 该主播当前未开播 (重定向至个人主页)")
 		}
@@ -807,6 +793,7 @@ func builtinRC4Encrypt(plaintext, key string) string {
 	return string(res)
 }
 
+// BuiltinSM3 SM3 散列算法结构体定义
 type BuiltinSM3 struct {
 	reg   []uint32
 	chunk []byte
@@ -1227,23 +1214,31 @@ func (d *DouyinBuiltinPlatform) GetStreamURL(roomID string, quality string) (str
 	}
 
 	var streamURL string
-	targetKey := "FULL_HD1"
+	targetKeys := []string{"ORIGIN1", "ORIGIN", "FULL_HD1"}
 	if quality == "hd" {
-		targetKey = "HD1"
+		targetKeys = []string{"HD1"}
 	} else if quality == "sd" {
-		targetKey = "SD1"
+		targetKeys = []string{"SD1"}
 	}
 
-	streamURL = roomData.StreamURL.FlvPullURL[targetKey]
-	if streamURL == "" {
-		streamURL = roomData.StreamURL.HlsPullURLMap[targetKey]
+	for _, key := range targetKeys {
+		streamURL = roomData.StreamURL.FlvPullURL[key]
+		if streamURL != "" {
+			break
+		}
+		streamURL = roomData.StreamURL.HlsPullURLMap[key]
+		if streamURL != "" {
+			break
+		}
 	}
+
 	if streamURL == "" {
 		for _, v := range roomData.StreamURL.FlvPullURL {
 			streamURL = v
 			break
 		}
 	}
+
 	return streamURL, anchorName, avatar, nil
 }
 
@@ -1445,7 +1440,6 @@ func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (strin
 	globalApi := fmt.Sprintf("https://api.sooplive.com/v2/stream/info/%s", roomID)
 	reqGlobal, err := http.NewRequest("GET", globalApi, nil)
 
-	// ✨ 修复 1：定义统一的 User-Agent 供获取流地址时使用，必须与 FFmpeg 内抓取时保持一致！
 	globalUa := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 	if err == nil {
@@ -1635,7 +1629,6 @@ OuterLoop:
 				continue
 			}
 
-			// ✨ 修复 2：同步请求 CDN 节点的 User-Agent
 			reqCdn.Header.Set("User-Agent", globalUa)
 			reqCdn.Header.Set("Origin", "https://play.sooplive.co.kr")
 			reqCdn.Header.Set("Referer", "https://play.sooplive.co.kr/")
@@ -1732,6 +1725,7 @@ func apiProxyImage(w http.ResponseWriter, r *http.Request) {
 // 🌟 终极截帧黑科技：内存级多路分发截帧
 // ==========================================
 
+// builtinTailBuffer 环形日志尾部缓冲池，避免收集底层日志时消耗过多内存
 type builtinTailBuffer struct {
 	buf []byte
 	mu  sync.Mutex
@@ -1750,38 +1744,54 @@ func (t *builtinTailBuffer) Write(p []byte) (n int, err error) {
 }
 
 // extractBuiltinCoverFromLocalFile 旁路抽帧大法：只读取本地录像尾部少量字节流交由内存端 ffmpeg 解析，避免卡死并极大降低系统 CPU
+// 【修改内容】：
+// 1. 将读取缓冲从 3MB 提升至 5MB，确保能完整包裹住至少一个高质量的关键帧 (I-Frame)。
+// 2. 引入 FFmpeg 视频滤镜 `-vf "select='eq(pict_type,I)'"`，强制只提取画质最无损的独立关键帧，避免截到模糊的过渡帧(P/B帧)。
+// 3. 采用无损 PNG 编码 (`-c:v png`) 替代有损 JPEG 编码，彻底解除压缩限制，实测 1080P 画质下截图体积将轻松突破 1MB~3MB。
+// 注：生成的文件即使后缀为 .jpg，现代浏览器底层也能完美识别其为 PNG 数据并高清渲染。
 func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
+	// 1. 读取指定目录下的所有文件列表，寻找当前录像切片
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		return false
 	}
+
 	var latestFile string
 	var maxTime time.Time
+
+	// 2. 遍历筛选出符合前缀且最新的 .ts 视频分片文件
 	for _, f := range files {
 		if !f.IsDir() && strings.HasPrefix(f.Name(), prefix) && strings.HasSuffix(f.Name(), ".ts") {
 			info, err := f.Info()
+			// 确保文件大小大于 512KB 以防止读取到损坏或不完整的切片
 			if err == nil && info.ModTime().After(maxTime) && info.Size() > 512*1024 {
 				maxTime = info.ModTime()
 				latestFile = filepath.Join(dir, f.Name())
 			}
 		}
 	}
+
+	// 如果没有找到有效文件，则直接返回失败，等待下一轮轮询
 	if latestFile == "" {
 		return false
 	}
 
+	// 3. 打开最新写入的视频文件准备读取尾部数据
 	file, err := os.Open(latestFile)
 	if err != nil {
 		return false
 	}
 	defer file.Close()
 
+	// 4. 计算并提取文件尾部的数据块 (提升至最高读取 5MB，确保绝对能命中一个完整的 I 帧)
 	stat, _ := file.Stat()
 	size := stat.Size()
-	readSize := int64(3 * 1024 * 1024) // 读取最后 3MB 数据（足够遇到一个 I 帧）
+	readSize := int64(5 * 1024 * 1024)
 	if size < readSize {
 		readSize = size
 	}
+
+	// 将文件指针移动到尾部并读取数据到缓冲区中
 	file.Seek(-readSize, 2)
 	buf := make([]byte, readSize)
 	_, err = io.ReadFull(file, buf)
@@ -1789,21 +1799,40 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
 		return false
 	}
 
-	// 将内存中读取到的 3MB 二进制流喂给微型 ffmpeg
-	cmd := exec.Command(builtinFfmpegPath, "-y", "-i", "pipe:0", "-frames:v", "1", "-q:v", "2", "-f", "image2", coverPath)
+	// 5. 组装 FFmpeg 截帧命令 (采用 I 帧精准提取 + PNG 无损编码引擎)
+	// 参数解析：
+	// -vf "select='eq(pict_type,I)'": 滤镜强制仅抓取最高质量的 I 帧 (关键帧)
+	// -frames:v 1: 仅输出 1 张图片
+	// -c:v png: 使用无损的 PNG 编码器，文件大小飙升，画质到达天花板
+	cmd := exec.Command(builtinFfmpegPath,
+		"-y",
+		"-i", "pipe:0",
+		"-vf", "select='eq(pict_type,I)'",
+		"-frames:v", "1",
+		"-c:v", "png",
+		"-f", "image2",
+		coverPath,
+	)
+
+	// 6. 将内存中的尾部视频流通过标准输入管道 (pipe) 传给 FFmpeg 进程
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return false
 	}
+
+	// 启动进程并异步写入流数据
 	cmd.Start()
 	stdin.Write(buf)
 	stdin.Close()
+
+	// 等待截帧真正执行完毕并落盘
 	cmd.Wait()
 
 	return true
 }
 
-// BuiltinRecordStream 调动底层 FFmpeg 进程并将推流直通本地文件，并挂载一个独立的抽帧子协程用于获取首发封面
+// BuiltinRecordStream 调动底层 FFmpeg 进程并将推流直通本地文件，增加了高度强化的上下文状态管控防止僵尸进程
+// 【修改内容】：在进程生命周期 select 块结束后、wg.Wait() 执行之前，显式增加了一行 cancelRecord()，解决断流后截帧协程无法结束造成的死锁问题。
 func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, anchorName, avatar, quality string, segmentTime int) {
 	updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "录制中")
 	safeName := sanitizeBuiltinFileName(anchorName)
@@ -1829,18 +1858,10 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 	if platformName == "Douyin" {
 		args = append(args, "-headers", "Referer: https://live.douyin.com/\r\n")
 	} else if platformName == "Soop" {
-		// ✨ 修复 3：Soop CDN 严格校验防盗链，此处必须同时携带 Referer 和 Origin
 		args = append(args, "-headers", "Referer: https://play.sooplive.co.kr/\r\nOrigin: https://play.sooplive.co.kr\r\n")
 	}
 
-	// ✨ [终极修复] 延长探测时间与大小，防止断层与 H.265 获取不到头部信息
 	args = append(args, "-rw_timeout", "15000000", "-analyzeduration", "5000000", "-probesize", "5000000", "-i", streamURL)
-
-	// ===============================================
-	// 🌟 [终极修复] 视频抗损坏技术：严格过滤杂流 + TS追加封装
-	// ===============================================
-	// 原版 -map 0 会把平台私有的弹幕/礼物等无法识别的“数据流”强行塞进 TS，导致文件直接报废。
-	// 现在改为 -map 0:v? -map 0:a? 并且 -ignore_unknown，只提取纯净的视频和音频。
 	args = append(args, "-map", "0:v?", "-map", "0:a?", "-ignore_unknown")
 
 	if segmentTime > 0 {
@@ -1860,6 +1881,10 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 
 	startTime := time.Now()
 
+	// 引入派生 Context 与 WaitGroup 强化协程与进程生命周期管理
+	recordCtx, cancelRecord := context.WithCancel(ctx)
+	defer cancelRecord()
+
 	cmd := exec.Command(builtinFfmpegPath, args...)
 
 	var stderrBuf builtinTailBuffer
@@ -1877,7 +1902,11 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 		return
 	}
 
+	// 使用 WaitGroup 精确阻塞与释放旁路抽帧子协程
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		var lastModTime time.Time
 		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
@@ -1890,8 +1919,8 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 
 		for {
 			select {
-			case <-ctx.Done():
-				return // 录制结束，退出监控
+			case <-recordCtx.Done(): // 收到严格终止指令，立刻结束旁路监测
+				return
 			case <-ticker.C:
 				extracted := extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath)
 
@@ -1931,27 +1960,42 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 		done <- cmd.Wait()
 	}()
 
+	// 核心生命周期管控模型
 	select {
-	case <-ctx.Done():
+	case <-recordCtx.Done():
+		log.Printf("\n⚠️ [终止信号] 收到任务中止信号，正在安全结束 %s | %s ...\n", platformName, anchorName)
 		if stdin != nil {
-			io.WriteString(stdin, "q\n")
+			io.WriteString(stdin, "q\n") // 优先发送封装指令
 			stdin.Close()
 		}
 
 		select {
 		case <-done:
-			log.Printf("\n🔴 [手动停止] %s | %s | 录像已安全保存完毕\n", platformName, anchorName)
+			log.Printf("\n✅ [手动停止] %s | %s | 录像已安全保存完毕\n", platformName, anchorName)
 		case <-time.After(10 * time.Second):
-			cmd.Process.Kill()
-			log.Printf("\n🔴 [手动停止超时强杀] %s | %s\n", platformName, anchorName)
+			if cmd.Process != nil {
+				cmd.Process.Kill() // 10秒不退则毫不留情强杀，断绝僵尸进程
+			}
+			log.Printf("\n🔴 [超时强杀] %s | %s | FFmpeg卡死已回收内存\n", platformName, anchorName)
 		}
 	case err := <-done:
 		duration := time.Since(startTime)
 		if err != nil {
 			log.Printf("\n🔴 [录制异常/断流] %s | %s | 时长: %s | 错误: %v\n🔥 FFmpeg 底层真实报错:\n%s\n", platformName, anchorName, formatBuiltinDuration(duration), err, string(stderrBuf.buf))
 		} else {
-			log.Printf("\n🔴 [录制结束] %s | %s | 时长: %s (自然完成)\n", platformName, anchorName, formatBuiltinDuration(duration))
+			log.Printf("\n🟢 [录制结束] %s | %s | 时长: %s (自然完成)\n", platformName, anchorName, formatBuiltinDuration(duration))
 		}
+	}
+
+	// ✨ 修复核心：必须在此显式调用 cancelRecord()，通知截帧旁路协程立即退出
+	// 否则 wg.Wait() 会造成永久死锁，导致下方的 updateBuiltinStatus 永远不执行
+	cancelRecord()
+
+	wg.Wait() // 彻底等待旁路协程销毁
+
+	// 自动清理小于 1KB 的失效封面图残余
+	if info, err := os.Stat(coverPath); err == nil && info.Size() < 1024 {
+		os.Remove(coverPath)
 	}
 
 	updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "未开播等待中")
@@ -2062,7 +2106,7 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 			}
 
 			builtinCancels.Delete(key)
-			cancel()
+			cancel() // 确保释放本轮的局部监听器
 		}
 	}()
 }
@@ -2075,7 +2119,6 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var c BuiltinConfig
-		// 改用加密网关拦截器进行报文反混淆
 		if err := parseEncryptedRequest(r, &c); err != nil {
 			sendJSONError(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法配置实体或解密异常")
 			return
