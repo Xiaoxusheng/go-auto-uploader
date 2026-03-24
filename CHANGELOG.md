@@ -1,5 +1,20 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
-### [v2.2.0] - 最新更新 (Hardware Monitoring & UI Polish)
+
+### [v2.3.0] - 最新更新 (Zero Dependency & Origin Quality)
+#### 🌟 核心特性 (New Features)
+* **抖音原画级录制 (Origin Quality Support)**：全面升级内置录制引擎的画质嗅探逻辑。当用户选择最高画质时，底层将优先去平台字典中提取 `ORIGIN1` 或 `ORIGIN` 无损原画流，若主播未开启原画则自动平滑降级至 `FULL_HD1` (蓝光)，彻底释放最高录制画质潜力。
+* **画质天花板级截帧 (Lossless Cover Extraction)**：全面升级内置引擎的旁路抽帧黑科技。采用 I 帧 (关键帧) 精准提取与无损 PNG 编码引擎 (`-c:v png`)，彻底解除原有 JPEG 的有损压缩限制。直播封面截图画质达到无损天花板（单张体积可突破 1MB~3MB），完美保留原始直播画面的每一处高清细节。
+
+#### 🔧 底层与架构调整 (Backend & Architecture)
+* **零依赖硬件探针 (Zero-Dependency Monitoring)**：为了大幅降低跨平台编译的复杂度和最终二进制文件的体积，彻底剥离了沉重的 `gopsutil` 第三方硬件库。重构为利用 Go 原生标准库调用底层跨平台 Shell 命令 (`wmic`/`df`/`tasklist`/`ps`) 来实现极低开销的磁盘与内存监控。
+* **高并发 IO 锁修复 (Concurrency I/O Fix)**：修复了在高并发触发秒传或写入成功日志时，导致 `uploaded_hash.db` 数据库文件尾部出现乱码、结构破坏或漏检的严重 Bug。全面引入 `sync.RWMutex` 读写锁，保障多 Worker 状态下的绝对数据安全。
+
+#### 🎨 界面与交互优化 (UI/UX)
+* **严谨的界面术语 (UI Terminology)**：为配合底层原画抓取能力的升级，将前端引擎全局设置中的“蓝光/超清”术语严谨地更正为“原画/蓝光 (最高画质)”。
+* **语法规范修复 (Syntax Polish)**：修复了前端 Vue/Arco Design 组件树中存在的下拉框闭合标签错误 (`</select>` 修正为 `</a-select>`)，提升了 DOM 的健壮性。
+
+---
+### [v2.2.0] - 历史更新 (Hardware Monitoring & UI Polish)
 #### 🌟 核心特性 (New Features)
 * **全局硬件资源监控 (Hardware Resource Monitoring)**：底层引擎全面接入 `gopsutil` 硬件级探针，新增对系统磁盘剩余可用空间（Disk Free）与底层 FFmpeg 录制进程物理内存占用（RSS Memory）的毫秒级实时计算与下发。帮助用户直观洞察系统存储瓶颈与运行期内存负载，彻底告别“盲盒式”录制。
 
