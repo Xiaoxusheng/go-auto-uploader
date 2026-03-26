@@ -9,7 +9,6 @@
       <change beforePath="$PROJECT_DIR$/builtin_recorder.go" beforeDir="false" afterPath="$PROJECT_DIR$/builtin_recorder.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/index.html" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.go" beforeDir="false" afterPath="$PROJECT_DIR$/main.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/webapi.go" beforeDir="false" afterPath="$PROJECT_DIR$/webapi.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

@@ -12,6 +12,7 @@ import (
 	"net/smtp"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,7 +43,8 @@ var (
 
 	// 优化点：为 httpCli 配置连接池，复用空闲连接，极大减少频繁新建 TCP 请求带来的内存和 CPU 消耗
 	httpCli = &http.Client{
-		Timeout: 1200 * time.Second,
+		// 彻底解决超大文件上传时间过长被强行熔断掐断的问题
+		Timeout: 0,
 		Transport: &http.Transport{
 			MaxIdleConns:        100,              // 最大空闲连接数
 			MaxIdleConnsPerHost: 20,               // 每个 host 最大空闲连接
@@ -89,8 +91,16 @@ var (
 	// 优化点：在内存中常驻成功记录，消除前端轮询及 Worker 追加数据时对磁盘和 GC 产生的巨大压力
 	successRecords []UploadRecord
 
-	// 【新增】哈希文件读写并发锁，彻底解决 DB 文件写入时堆积或损坏的并发安全 Bug
+	// 哈希文件读写并发锁，彻底解决 DB 文件写入时堆积或损坏的并发安全 Bug
 	hashMu sync.RWMutex
+
+	// 高性能合并落盘脏标记，采用无锁原子操作防止并发瓶颈
+	dirStatusDirty int32
+
+	// 【彻底解耦扫描与上传】新增的全局异步 Worker 池核心组件
+	globalTaskCh  = make(chan string, 100000) // 十万级超大缓冲，保证扫描引擎永不阻塞
+	enqueuedFiles sync.Map                    // 任务防重防漏护盾
+	workerCount   int32                       // 当前实际运行的 Worker 数量
 )
 
 var (
@@ -112,6 +122,12 @@ func triggerReportReset() {
 	case triggerReportCh <- struct{}{}:
 	default:
 	}
+}
+
+// fileTask 用于收集扫描阶段发现的文件及其大小，以便进行智能调度排序
+type fileTask struct {
+	path string
+	size int64
 }
 
 // Task 定义了单个上传任务运行时的动态属性和状态
@@ -147,6 +163,7 @@ type HistoryRecord struct {
 const (
 	safeBaseDir    = "/_safe_uploads"      // 远端安全目录
 	successLogFile = "upload_success.json" // 本地成功日志，用于图表统计
+	dirStatusFile  = "dir_status.json"     // 本地目录状态统计持久化文件
 )
 
 // logInterceptor 拦截系统内部各类标准打印流，并实现同步推送到前端 WebSocket 展示
@@ -186,6 +203,97 @@ func saveConfigToFile() {
 		os.WriteFile("config.json", data, 0644)
 	} else {
 		log.Printf("[CONFIG][ERR] 无法保存配置文件 config.json: %v", err)
+	}
+}
+
+// loadDirStatuses 启动时从本地磁盘恢复各个监控目录的累计上传数据，防止重启清空
+func loadDirStatuses() {
+	dirStatusesMu.Lock()
+	defer dirStatusesMu.Unlock()
+	data, err := os.ReadFile(dirStatusFile)
+	if err == nil {
+		json.Unmarshal(data, &dirStatuses)
+	}
+}
+
+// markDirStatusDirty 标记内存中的目录状态已被更改，触发后台异步落盘
+func markDirStatusDirty() {
+	atomic.StoreInt32(&dirStatusDirty, 1)
+}
+
+// flushDirStatuses 提取内存中的最新目录状态并执行物理层面的覆盖落盘
+func flushDirStatuses() {
+	dirStatusesMu.RLock()
+	defer dirStatusesMu.RUnlock()
+	data, err := json.MarshalIndent(dirStatuses, "", "  ")
+	if err == nil {
+		targetDir := filepath.Dir(dirStatusFile)
+		f, err := os.CreateTemp(targetDir, "dir_status_*.json")
+		if err != nil {
+			return
+		}
+		tmpName := f.Name()
+		f.Write(data)
+		f.Close()
+		os.Rename(tmpName, dirStatusFile) // 原子替换，避免写入中途宕机导致损坏
+	}
+}
+
+// dirStatusPersistLoop 驻留于后台的合并落盘守护协程，按固定心跳检查并持久化状态
+func dirStatusPersistLoop() {
+	ticker := time.NewTicker(5 * time.Second) // 5 秒合并写一次，化解 I/O 阻塞瓶颈
+	for range ticker.C {
+		// CAS 原子操作：如果当前为脏数据(1)，则置为干净(0)并执行实际的写盘操作
+		if atomic.CompareAndSwapInt32(&dirStatusDirty, 1, 0) {
+			flushDirStatuses()
+		}
+	}
+}
+
+// manageWorkers 全局常驻的动态 Worker 线程池调度器
+// 不再随扫描周期生灭，它会像抽水机一样默默在后台吸干 globalTaskCh 里的排队任务
+func manageWorkers() {
+	for {
+		appConfigMu.RLock()
+		desired := appConfig.Workers
+		appConfigMu.RUnlock()
+
+		current := atomic.LoadInt32(&workerCount)
+		for current < int32(desired) {
+			atomic.AddInt32(&workerCount, 1)
+
+			go func(workerID int) {
+				for path := range globalTaskCh {
+					runningMu.RLock()
+					isRunning := running
+					runningMu.RUnlock()
+
+					// 若系统处于暂停状态，将任务丢弃并抹除内存标记，交由下一次扫描重新拾取
+					if !isRunning {
+						enqueuedFiles.Delete(path)
+						atomic.AddInt64(&queueCount, -1)
+						continue
+					}
+
+					atomic.AddInt64(&queueCount, -1)
+					atomic.AddInt64(&activeWorker, 1)
+
+					start := time.Now()
+					handleFile(path) // 实际的耗时上传操作在这里发生
+
+					log.Printf("[UPLOAD][DONE][W%d] 文件:%s 耗时:%s", workerID, filepath.Base(path), time.Since(start).Truncate(time.Millisecond))
+
+					// 上传结束（无论成功或失败），必须清除防重标记，允许未来复检
+					enqueuedFiles.Delete(path)
+					atomic.AddInt64(&activeWorker, -1)
+				}
+				atomic.AddInt32(&workerCount, -1)
+			}(int(current) + 1)
+
+			current++
+		}
+		// 每 2 秒巡检一次 Worker 数量，确保存活
+		time.Sleep(2 * time.Second)
 	}
 }
 
@@ -238,6 +346,9 @@ func main() {
 	// 启动时一次性加载哈希库到内存，后续 hashExists/saveHash 全走内存
 	loadHashCache()
 
+	// 启动时加载硬盘目录累积统计数据
+	loadDirStatuses()
+
 	// 初始化系统参数：优先从 config.json 读取；如果文件不存在，则使用启动参数进行填充
 	appConfigMu.Lock()
 	data, err := os.ReadFile("config.json")
@@ -277,6 +388,8 @@ func main() {
 	go StartWebServer(webPort)
 	go queueStatusLoop()
 	go reportLoop()
+	go dirStatusPersistLoop() // 挂载高性能异步合并落盘守护机制
+	go manageWorkers()        // 挂载全局异步的 Worker 上传线程池
 
 	appConfigMu.RLock()
 	baseInterval := appConfig.ScanInterval
@@ -291,11 +404,13 @@ func main() {
 
 		// 合并读取内置录制引擎的工作状态
 		builtinRecordingCount := 0
+		/* 若需要对接内置录制状态，可在此恢复代码
 		for _, t := range GetBuiltinRecorderTasks() {
 			if t.Status == "录制中" {
 				builtinRecordingCount++
 			}
 		}
+		*/
 		totalActiveCount := int(activeCount) + builtinRecordingCount // 外置变动数 + 内置引擎正在录制数
 
 		if totalActiveCount > 0 {
@@ -332,12 +447,14 @@ func main() {
 
 				// 合并读取内置录制引擎的工作状态
 				builtinRecordingCount := 0
-				for _, t := range GetBuiltinRecorderTasks() {
-					if t.Status == "录制中" {
-						builtinRecordingCount++
-					}
+				/*
+					for _, t := range GetBuiltinRecorderTasks() {
+						if t.Status == "录制中" {
+							builtinRecordingCount++
+						}
 
-				}
+					}
+				*/
 				totalActiveCount := int(activeCount) + builtinRecordingCount
 
 				if totalActiveCount > 0 {
@@ -369,11 +486,13 @@ func main() {
 				activeCount := runOnce(reason, currentDynamicInterval)
 
 				builtinRecordingCount := 0
-				for _, t := range GetBuiltinRecorderTasks() {
-					if t.Status == "录制中" {
-						builtinRecordingCount++
+				/*
+					for _, t := range GetBuiltinRecorderTasks() {
+						if t.Status == "录制中" {
+							builtinRecordingCount++
+						}
 					}
-				}
+				*/
 				totalActiveCount := int(activeCount) + builtinRecordingCount
 
 				if totalActiveCount > 0 {
@@ -418,11 +537,10 @@ func queueStatusLoop() {
 	}
 }
 
-// runOnce 发起对本地全部监控目录树枝条叶的深度检索、合法过滤，并将任务下发推送给多线程池
+// runOnce 发起对本地全部监控目录树枝条叶的深度检索、合法过滤，并将任务下发给常驻异步任务池
 func runOnce(triggerReason string, currentDynamicInterval int) int {
-	atomic.StoreInt64(&nextScanTimeGlobal, -1) // -1 表示前端显示"正在扫描中"
+	atomic.StoreInt64(&nextScanTimeGlobal, -1) // -1 表示前端显示"正在同步目录状态..."
 
-	// 一旦用户下达手动开始、或重新扫描的指令，认为人为介入，重置熔断计数器
 	if triggerReason == "start" || triggerReason == "rescan" {
 		atomic.StoreInt32(&consecutiveFailures, 0)
 	}
@@ -432,9 +550,6 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	currentDirs := make([]string, len(appConfig.Dirs))
 	copy(currentDirs, appConfig.Dirs)
 	appConfigMu.RUnlock()
-
-	taskCh := make(chan string, currentWorkers*2)
-	var wg sync.WaitGroup
 
 	runningMu.RLock()
 	isRunning := running
@@ -447,7 +562,6 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 
 	log.Printf("[SCAN][START] 🔍 启动目录探测，并发Workers:[%d] 目标路径:[%s]", currentWorkers, strings.Join(currentDirs, " | "))
 
-	// 广播给前端
 	broadcastWS("scanStarted", map[string]interface{}{
 		"time":     time.Now().UnixMilli(),
 		"dirs":     currentDirs,
@@ -456,37 +570,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 		"trigger":  triggerReason,
 	})
 
-	// 启动 Worker 池
-	for i := 0; i < currentWorkers; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			for path := range taskCh {
-				runningMu.RLock()
-				isRunning := running
-				runningMu.RUnlock()
-
-				if !isRunning {
-					// 如果系统被熔断或暂停，必须要 continue 把 channel 里的数据排空防止死锁
-					atomic.AddInt64(&queueCount, -1)
-					continue
-				}
-
-				atomic.AddInt64(&queueCount, -1)
-				atomic.AddInt64(&activeWorker, 1)
-
-				start := time.Now()
-				handleFile(path) // 处理文件上传
-
-				log.Printf("[UPLOAD][DONE][W%d] 文件:%s 耗时:%s",
-					id, filepath.Base(path), time.Since(start).Truncate(time.Millisecond))
-
-				atomic.AddInt64(&activeWorker, -1)
-			}
-		}(i + 1)
-	}
-
-	// 初始化目录统计状态
+	// 初始化目录统计状态 (保留已上传的数据，每次重头严谨计算 Pending 数以保证面板精准)
 	dirStatusesMu.Lock()
 	for _, root := range currentDirs {
 		root = filepath.Clean(strings.TrimSpace(root))
@@ -495,7 +579,6 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 		}
 		if ds, exists := dirStatuses[root]; exists {
 			ds.PendingFiles = 0
-			ds.TotalFiles = 0
 			ds.TotalSize = 0
 			ds.LastScanTime = time.Now().UnixMilli()
 		} else {
@@ -509,65 +592,125 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 
 	var newlyAddedFiles int32 = 0
 	var activeRecordingCount int32 = 0
+	var scanWg sync.WaitGroup
 
-	// 遍历并投递任务
+	// 用于大文件排队调度的任务缓冲池与互斥锁
+	var collectedTasks []fileTask
+	var collectedMu sync.Mutex
+
+	// 并发遍历多个目标根目录以加速数据检索和任务投递
 	for _, root := range currentDirs {
 		root = filepath.Clean(strings.TrimSpace(root))
 		if root == "." || root == "" {
 			continue
 		}
 
-		// 使用 filepath.WalkDir 代替 filepath.Walk。降低内存消耗
-		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			runningMu.RLock()
-			isRunning := running
-			runningMu.RUnlock()
+		scanWg.Add(1)
+		go func(scanRoot string) {
+			defer scanWg.Done()
 
-			if !isRunning {
-				return fmt.Errorf("scan canceled by user")
-			}
-			if err != nil {
-				log.Printf("[SCAN][ERR] 访问路径出错 %s: %v", path, err)
+			err := filepath.WalkDir(scanRoot, func(path string, d os.DirEntry, err error) error {
+				runningMu.RLock()
+				isRunning := running
+				runningMu.RUnlock()
+
+				if !isRunning {
+					return fmt.Errorf("scan canceled by user")
+				}
+				if err != nil {
+					log.Printf("[SCAN][ERR] 访问路径出错 %s: %v", path, err)
+					return nil
+				}
+				if d.IsDir() {
+					return nil
+				}
+
+				info, err := d.Info()
+				if err != nil {
+					return nil
+				}
+
+				if time.Since(info.ModTime()) < 2*time.Minute {
+					atomic.AddInt32(&activeRecordingCount, 1)
+					return nil
+				}
+
+				// ✨ 核心修复一：在扫描阶段直接拦截并静默销毁 0 字节废弃文件，拔除根源污染
+				if info.Size() == 0 {
+					log.Printf("[SCAN][CLEAN] 检测到遗留的 0 字节无效切片，已自动物理删除: %s", path)
+					os.Remove(path)
+					return nil
+				}
+
+				// 每找到一个合法的磁盘文件，视为当前待处理文件
+				dirStatusesMu.Lock()
+				if ds, exists := dirStatuses[scanRoot]; exists {
+					ds.PendingFiles++
+					ds.TotalSize += info.Size()
+				}
+				dirStatusesMu.Unlock()
+
+				// 利用内存锁阻挡已在排队或上一轮尚未处理完成的文件，避免冗余收集
+				if _, loaded := enqueuedFiles.Load(path); !loaded {
+					collectedMu.Lock()
+					collectedTasks = append(collectedTasks, fileTask{path: path, size: info.Size()})
+					collectedMu.Unlock()
+				}
 				return nil
-			}
-			if d.IsDir() {
-				return nil
-			}
+			})
 
-			// 手动调用 Info 仅在确认是文件后获取信息
-			info, err := d.Info()
-			if err != nil {
-				return nil
+			if err != nil && err.Error() != "scan canceled by user" {
+				SendAlert("warning", "目录扫描异常", "无法访问部分路径: "+err.Error())
+				addLog("error", "文件遍历失败", err.Error())
 			}
+		}(root)
+	}
 
-			// 忽略最后修改时间在 2 分钟内的文件（判定为正在写入）
-			if time.Since(info.ModTime()) < 2*time.Minute {
-				atomic.AddInt32(&activeRecordingCount, 1)
-				return nil
-			}
+	// 阻塞挂起直至所有平行目录的检索分析下发动作完成
+	scanWg.Wait()
 
-			dirStatusesMu.Lock()
-			if ds, exists := dirStatuses[root]; exists {
-				ds.PendingFiles++
-				ds.TotalFiles++
-				ds.TotalSize += info.Size()
-			}
-			dirStatusesMu.Unlock()
+	// 智能调度核心-修改版：解决大文件全部扎堆导致通道严重拥堵的问题
+	// 1. 依然先按大小降序排列
+	sort.Slice(collectedTasks, func(i, j int) bool {
+		return collectedTasks[i].size > collectedTasks[j].size
+	})
 
+	// 2. 双指针交替提取：按 [最大, 最小, 第二大, 第二小...] 的顺序重组序列，实现负载穿插均衡化
+	var mixedTasks []fileTask
+	left, right := 0, len(collectedTasks)-1
+	for left <= right {
+		mixedTasks = append(mixedTasks, collectedTasks[left])
+		left++
+		if left <= right {
+			mixedTasks = append(mixedTasks, collectedTasks[right])
+			right--
+		}
+	}
+	collectedTasks = mixedTasks // 覆写回主切片供下发推流
+
+	// 将排序及混合完成后的任务真正抛入全局异步大容量缓冲通道中
+	for _, t := range collectedTasks {
+		if _, loaded := enqueuedFiles.LoadOrStore(t.path, true); !loaded {
 			atomic.AddInt64(&queueCount, 1)
 			atomic.AddInt32(&newlyAddedFiles, 1)
-			taskCh <- path
-			return nil
-		})
 
-		if err != nil && err.Error() != "scan canceled by user" {
-			SendAlert("warning", "目录扫描异常", "无法访问部分路径: "+err.Error())
-			addLog("error", "文件遍历失败", err.Error())
+			select {
+			case globalTaskCh <- t.path:
+			default:
+				enqueuedFiles.Delete(t.path)
+				atomic.AddInt64(&queueCount, -1)
+				atomic.AddInt32(&newlyAddedFiles, -1)
+			}
 		}
 	}
 
-	close(taskCh)
-	wg.Wait() // 等待所有 Worker 完成
+	// 在扫描终点，将累加出的准确待处理量 + 内存记录的成功上传量 = 当下的总文件数
+	dirStatusesMu.Lock()
+	for _, ds := range dirStatuses {
+		ds.TotalFiles = ds.PendingFiles + ds.UploadedFiles
+	}
+	dirStatusesMu.Unlock()
+	markDirStatusDirty() // 状态持久化落盘
 
 	log.Printf("[SCAN][END] 🏁 本轮扫描完毕。发现新文件: %d 个 | 仍在录制中文件: %d 个", newlyAddedFiles, activeRecordingCount)
 
@@ -576,6 +719,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 		"added": newlyAddedFiles,
 	})
 
+	// 绝不等待工作线程，马上把控制权还给主流程触发雷达倒计时！
 	return int(activeRecordingCount)
 }
 
@@ -608,6 +752,13 @@ func handleFile(path string) {
 		return
 	}
 
+	// ✨ 核心修复二：作为防线托底，拒绝 0 字节切片进入推流流程，避免 NaN 以及远端 500
+	if info.Size() == 0 {
+		log.Printf("[FILE][SKIP] 拦截到 0 字节死文件，阻断上传并执行清理: %s", path)
+		os.Remove(path)
+		return
+	}
+
 	root := detectRoot(path)
 	if root == "" {
 		log.Println("[SKIP][NO_ROOT_MATCH] 找不到匹配的根目录:", path)
@@ -622,7 +773,7 @@ func handleFile(path string) {
 
 	dir := filepath.Dir(rel)
 
-	// ✨过滤文件夹路径中的非法前缀，防止生成类似 `_safe_uploads/-可奈` 这种导致 500 的非法云端目录
+	// 过滤文件夹路径中的非法前缀，防止生成类似 `_safe_uploads/-可奈` 这种导致 500 的非法云端目录
 	dirParts := strings.Split(filepath.ToSlash(dir), "/")
 	for i, part := range dirParts {
 		cleanPart := strings.TrimLeft(part, "-_.")
@@ -638,7 +789,6 @@ func handleFile(path string) {
 
 	// 检测秒传机制 (Hash)
 	hash := fileHash(path)
-	// 【核心修复 Bug】：加入 hash != "" 防御校验避免空穿透
 	if hash != "" && hashExists(hash) {
 		log.Println("[SKIP][HASH] 文件已存在于记录中 (秒传触发):", path)
 
@@ -664,6 +814,7 @@ func handleFile(path string) {
 
 		addHistoryRecord(path, remote, info.Size(), "success(秒传)", 0, "")
 
+		// 一旦秒传判定成功，不仅记录增加，更要减扣其身处待处理列表的份额
 		dirStatusesMu.Lock()
 		if ds, exists := dirStatuses[root]; exists {
 			if ds.PendingFiles > 0 {
@@ -671,8 +822,10 @@ func handleFile(path string) {
 			}
 			ds.UploadedFiles++
 			ds.UploadedSize += info.Size()
+			ds.TotalFiles = ds.PendingFiles + ds.UploadedFiles
 		}
 		dirStatusesMu.Unlock()
+		markDirStatusDirty()
 
 		broadcastWS("taskDone", map[string]interface{}{
 			"id":     taskID,
@@ -682,7 +835,6 @@ func handleFile(path string) {
 
 		cleanupFailedTasksByPath(path)
 
-		// 【核心修复 Bug】：必须在此执行 os.Remove，防止触发秒传的文件永远滞留在本地磁盘导致堆积！
 		if err := os.Remove(path); err != nil {
 			log.Printf("[FILE][CLEAN][ERR] 秒传触发，移除本地文件失败 %s: %v", path, err)
 		}
@@ -697,6 +849,7 @@ func handleFile(path string) {
 		}
 		recordSuccess(remote, name, info.Size())
 
+		// 真实物理上传完毕后扣除待处理余量
 		dirStatusesMu.Lock()
 		if ds, exists := dirStatuses[root]; exists {
 			if ds.PendingFiles > 0 {
@@ -704,8 +857,10 @@ func handleFile(path string) {
 			}
 			ds.UploadedFiles++
 			ds.UploadedSize += info.Size()
+			ds.TotalFiles = ds.PendingFiles + ds.UploadedFiles
 		}
 		dirStatusesMu.Unlock()
+		markDirStatusDirty()
 	}
 }
 
@@ -801,11 +956,15 @@ func upload(local, remote string, size int64) bool {
 	}
 	defer resp.Body.Close()
 
-	var r struct{ Code int }
+	// 解析出服务器真实返回的 Message，拒绝吃掉任何服务端返回的详细报错
+	var r struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
 	if decodeErr := json.NewDecoder(resp.Body).Decode(&r); decodeErr != nil {
 		r.Code = resp.StatusCode
+		r.Message = "解析远端响应体失败或非标准化 JSON 格式"
 	} else if r.Code == 0 {
-		// 【修复 Bug】应对远端成功返回 `{"message": "success"}` 没有 Code 导致 `r.Code==0` 永远判断失败的问题
 		r.Code = resp.StatusCode
 	}
 
@@ -839,11 +998,12 @@ func upload(local, remote string, size int64) bool {
 		return true
 
 	} else {
-		log.Printf("[UPLOAD][REMOTE][ERR] 远端服务器拒绝或异常，状态码: %d 文件: %s", r.Code, filepath.Base(local))
-		errMsg := fmt.Sprintf("远端拒绝接收 (Code: %d)", r.Code)
+		// 截获服务器的真实拦截明细输出到日志
+		log.Printf("[UPLOAD][REMOTE][ERR] 远端服务器拒绝或异常，状态码: %d 详细报错: %s 文件: %s", r.Code, r.Message, filepath.Base(local))
+		errMsg := fmt.Sprintf("远端拒绝 (Code: %d, 报错: %s)", r.Code, r.Message)
 
-		// Token 失效发送通知
-		SendAlert("error", "上传遭拒绝", fmt.Sprintf("文件: %s\n原因: 远端返回 Code %d，可能 Token 已过期或因文件名包含非法字符被拦截。", filepath.Base(local), r.Code))
+		// 将服务端真实错误暴露给用户的气泡系统
+		SendAlert("error", "上传遭拒绝", fmt.Sprintf("文件: %s\n状态码: %d\n详细报错: %s", filepath.Base(local), r.Code, r.Message))
 
 		liveTasksMu.Lock()
 		if task, exists := liveTasks[taskID]; exists {
@@ -869,7 +1029,7 @@ func upload(local, remote string, size int64) bool {
 		// 判断 Token 失效或服务器磁盘已满的逻辑熔断
 		fails := atomic.AddInt32(&consecutiveFailures, 1)
 		if fails >= 30 {
-			pauseSystemOnFailure(fmt.Sprintf("连续 %d 个文件被远端服务器拒绝接收 (状态码: %d)，可能是 Token 失效、云端存储空间已满、或目标存在非法文件夹。", fails, r.Code))
+			pauseSystemOnFailure(fmt.Sprintf("连续 %d 个文件被远端服务器拒绝接收 (状态码: %d，报错: %s)。", fails, r.Code, r.Message))
 		}
 
 		return false
@@ -950,10 +1110,18 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 	// 每半秒更新一次进度并同步前端
 	if time.Since(p.last) > 500*time.Millisecond {
 		p.last = time.Now()
-		progress := int(float64(p.read) * 100 / float64(p.total))
+
+		// ✨ 核心修复三：彻底防范浮点数被 0 除所引发的 NaN (Not a Number) 以及随之而来的界面崩溃
+		var progress int
+		if p.total > 0 {
+			progress = int(float64(p.read) * 100 / float64(p.total))
+		} else {
+			progress = 100 // 如果文件大小为 0，直判完成
+		}
+
 		elapsed := time.Since(p.start).Seconds()
 		var speed int64
-		if elapsed > 0.1 { // 【修复 Bug】避免启动瞬间除以近 0 导致速度值溢出
+		if elapsed > 0.1 {
 			speed = int64(float64(p.read) / elapsed)
 		}
 
@@ -1042,12 +1210,12 @@ func recordSuccess(remote, name string, size int64) {
 		Size:     size,
 	})
 
-	// 优化点：限制最多保留 50000 条历史记录，防止内存无限膨胀
-	if len(successRecords) > 50000 {
-		successRecords = successRecords[len(successRecords)-50000:]
+	// 优化点：限制最多保留 500000 条历史记录，防止内存无限膨胀
+	if len(successRecords) > 500000 {
+		successRecords = successRecords[len(successRecords)-500000:]
 	}
 
-	// 【核心修复】：获取目标日志文件所在的具体目录，确保临时文件和目标文件处于同一磁盘分区，彻底解决 invalid cross-device link 报错
+	// 获取目标日志文件所在的具体目录，确保临时文件和目标文件处于同一磁盘分区，彻底解决 invalid cross-device link 报错
 	targetDir := filepath.Dir(successLogFile)
 	f, err := os.CreateTemp(targetDir, "upload_success_*.json")
 	if err != nil {
@@ -1252,7 +1420,6 @@ func login() error {
 func fileHash(p string) string {
 	f, err := os.Open(p)
 	if err != nil {
-		// 【修复 BUG】如果因为暂时的句柄被锁或权限不够导致获取失败，必须将错误返回而不是返回空字符串
 		log.Printf("[HASH][ERR] 无法打开文件计算哈希 %s: %v", p, err)
 		return ""
 	}

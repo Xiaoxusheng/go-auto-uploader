@@ -1832,7 +1832,9 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
 }
 
 // BuiltinRecordStream 调动底层 FFmpeg 进程并将推流直通本地文件，增加了高度强化的上下文状态管控防止僵尸进程
-// 【修改内容】：在进程生命周期 select 块结束后、wg.Wait() 执行之前，显式增加了一行 cancelRecord()，解决断流后截帧协程无法结束造成的死锁问题。
+// 【修改内容】：
+// 1. 在进程生命周期 select 块结束后、wg.Wait() 执行之前，显式增加了一行 cancelRecord()，解决断流后截帧协程无法结束造成的死锁问题。
+// 2. 将生成封面图的扩展名从 .jpg 修改为 .png，以匹配底层 extractBuiltinCoverFromLocalFile 函数中输出的无损 PNG 编码格式，提升代码严谨性与可维护性。
 func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, anchorName, avatar, quality string, segmentTime int) {
 	updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "录制中")
 	safeName := sanitizeBuiltinFileName(anchorName)
@@ -1872,7 +1874,8 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 		args = append(args, "-c:v", "copy", "-c:a", "copy", "-f", "mpegts", outPath)
 	}
 
-	fileName := fmt.Sprintf("%s_%s.jpg", platformName, roomID)
+	// 【修改点 1】：将封面图的后缀改为 .png 保持表里如一
+	fileName := fmt.Sprintf("%s_%s.png", platformName, roomID)
 	coverDir := filepath.Join(".", "covers")
 	os.MkdirAll(coverDir, os.ModePerm)
 	coverPath := filepath.Join(coverDir, fileName)
@@ -1935,7 +1938,8 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 								imgArchiveDir := filepath.Join(outDir, "Screenshots")
 								os.MkdirAll(imgArchiveDir, os.ModePerm)
 
-								archiveCoverPath := filepath.Join(imgArchiveDir, fmt.Sprintf("%s_%s_cover_%04d.jpg", safeName, timestamp, coverCount))
+								// 【修改点 2】：归档保存的截图也同步修改为 .png 后缀
+								archiveCoverPath := filepath.Join(imgArchiveDir, fmt.Sprintf("%s_%s_cover_%04d.png", safeName, timestamp, coverCount))
 								_ = os.WriteFile(archiveCoverPath, data, 0644)
 								log.Printf("[BUILTIN] 📸 旁路截帧 (第 %d 次) 已保存至独立截图目录，等待自动上传: %s", coverCount, archiveCoverPath)
 								coverCount++
