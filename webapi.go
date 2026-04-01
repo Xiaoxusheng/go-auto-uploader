@@ -40,16 +40,14 @@ var (
 		},
 	}
 
-	wsClients   = make(map[*WSClient]bool)
-	wsMutex     sync.RWMutex
+	wsClients   sync.Map // 升级优化：无锁化的 WS 客户端广播池
 	wsBroadcast = make(chan WSMessage, 100)
 
 	running   = false
 	runningMu sync.RWMutex
 	startTime time.Time
 
-	dirStatuses   = make(map[string]*DirStatus)
-	dirStatusesMu sync.RWMutex
+	dirStatuses sync.Map // 升级优化：彻底废弃 dirStatusesMu，改用高性能字典
 
 	logs    = make([]*LogEntry, 0, 1000)
 	logsMu  sync.RWMutex
@@ -60,8 +58,7 @@ var (
 	// ==========================================
 	rsaPrivateKey      *rsa.PrivateKey
 	rsaPublicKeyBase64 string
-	sessionKeys        = make(map[string][]byte) // 存放每个客户端独有的 AES 密钥
-	sessionKeysMu      sync.RWMutex
+	sessionKeys        sync.Map // 升级优化：支持极速无锁查询的专属隧道密钥池
 )
 
 // WSClient 增加专属的 AES 密钥字段，实现独立加密广播
@@ -76,7 +73,9 @@ type WSMessage struct {
 	Payload interface{} `json:"payload"`
 }
 
+// DirStatus 添加结构体自身锁解决统计冲突并确保原子性
 type DirStatus struct {
+	Mu            sync.RWMutex
 	Path          string `json:"path"`
 	TotalFiles    int    `json:"totalFiles"`
 	UploadedFiles int    `json:"uploadedFiles"`
@@ -129,7 +128,7 @@ type APIResponse struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-type TrendPoint struct {
+type TrendPointRes struct {
 	Date  string  `json:"date"`
 	Size  float64 `json:"size"`
 	Count int     `json:"count"`
@@ -157,13 +156,11 @@ func getSessionKey(r *http.Request) ([]byte, error) {
 	if sid == "" {
 		return nil, fmt.Errorf("missing session id")
 	}
-	sessionKeysMu.RLock()
-	key, ok := sessionKeys[sid]
-	sessionKeysMu.RUnlock()
+	keyVal, ok := sessionKeys.Load(sid)
 	if !ok {
 		return nil, fmt.Errorf("invalid or expired session id")
 	}
-	return key, nil
+	return keyVal.([]byte), nil
 }
 
 // encryptPayload 使用客户端专属的动态 AES 密钥进行载荷加密
@@ -353,16 +350,12 @@ func handleExchangeKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := fmt.Sprintf("sess-%d-%d", time.Now().UnixNano(), rand.Intn(1000000))
-	sessionKeysMu.Lock()
-	sessionKeys[sessionID] = aesKey
-	sessionKeysMu.Unlock()
+	sessionKeys.Store(sessionID, aesKey)
 
 	// 【修复 Bug】Session 24小时后自动过期，防止 sessionKeys map 无限增长（内存泄漏）
 	go func() {
 		time.Sleep(24 * time.Hour)
-		sessionKeysMu.Lock()
-		delete(sessionKeys, sessionID)
-		sessionKeysMu.Unlock()
+		sessionKeys.Delete(sessionID)
 	}()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -469,44 +462,43 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, indexHTML)
 }
 
-// buildStatsTrendData 构建统计趋势图表的数据，利用内存缓存加速访问
+// buildStatsTrendData 【性能核心引擎】不再遍历五十万海量节点切片！
+// 以无锁微秒级的速度从后台维护在内存的增量聚合统计库中直接抓取，彻底铲除图表刷新导致的 CPU 卡顿
 func buildStatsTrendData() map[string]interface{} {
-	successLogMu.Lock()
-	list := make([]UploadRecord, len(successRecords))
-	copy(list, successRecords)
-	successLogMu.Unlock()
-
-	trendMap := make(map[string]*TrendPoint)
+	trendMap := make(map[string]*TrendPointRes)
 	now := time.Now()
 	for i := 0; i < 7; i++ {
 		d := now.AddDate(0, 0, -i).Format("01-02")
-		trendMap[d] = &TrendPoint{Date: d, Size: 0, Count: 0}
+		trendMap[d] = &TrendPointRes{Date: d, Size: 0, Count: 0}
 	}
 
-	rankMap := make(map[string]int64)
-
-	for _, rec := range list {
-		day := rec.Time.Format("01-02")
-		if tp, ok := trendMap[day]; ok {
-			tp.Size += float64(rec.Size) / 1024 / 1024 / 1024
-			tp.Count++
-		}
-		rankMap[rec.Streamer] += rec.Size
-	}
-
-	trendResult := make([]TrendPoint, 0)
+	trendResult := make([]TrendPointRes, 0)
 	for i := 6; i >= 0; i-- {
 		d := now.AddDate(0, 0, -i).Format("01-02")
-		trendResult = append(trendResult, *trendMap[d])
+		// 从增量池快速拉取此日期的预结集数据
+		if val, exists := trendStats.Load(d); exists {
+			tp := val.(*TrendPoint)
+			tp.Mu.Lock()
+			trendResult = append(trendResult, TrendPointRes{
+				Date:  tp.Date,
+				Size:  tp.Size,
+				Count: tp.Count,
+			})
+			tp.Mu.Unlock()
+		} else {
+			trendResult = append(trendResult, *trendMap[d])
+		}
 	}
 
 	rankResult := make([]StreamerRank, 0)
-	for name, size := range rankMap {
+	rankStats.Range(func(key, value interface{}) bool {
+		sizeAtom := value.(*atomic.Int64)
 		rankResult = append(rankResult, StreamerRank{
-			Name: name,
-			Size: float64(size) / 1024 / 1024 / 1024,
+			Name: key.(string),
+			Size: float64(sizeAtom.Load()) / 1024 / 1024 / 1024,
 		})
-	}
+		return true
+	})
 
 	sort.Slice(rankResult, func(i, j int) bool {
 		return rankResult[i].Size > rankResult[j].Size
@@ -535,14 +527,8 @@ func wsBroadcastLoop() {
 		case msg := <-wsBroadcast:
 			rawBytes, _ := json.Marshal(msg)
 
-			wsMutex.RLock()
-			clientsCopy := make([]*WSClient, 0, len(wsClients))
-			for client := range wsClients {
-				clientsCopy = append(clientsCopy, client)
-			}
-			wsMutex.RUnlock()
-
-			for _, client := range clientsCopy {
+			wsClients.Range(func(key, value interface{}) bool {
+				client := key.(*WSClient)
 				client.mu.Lock()
 				client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 
@@ -558,11 +544,10 @@ func wsBroadcastLoop() {
 
 				if err != nil {
 					client.conn.Close()
-					wsMutex.Lock()
-					delete(wsClients, client)
-					wsMutex.Unlock()
+					wsClients.Delete(client)
 				}
-			}
+				return true
+			})
 
 		case <-encRefreshTicker.C:
 			appConfigMu.RLock()
@@ -596,22 +581,26 @@ func wsDashboardBroadcaster() {
 	for {
 		select {
 		case <-fastTicker.C:
-			wsMutex.RLock()
-			clientCount := len(wsClients)
-			wsMutex.RUnlock()
+			clientCount := 0
+			wsClients.Range(func(_, _ interface{}) bool {
+				clientCount++
+				return false // Just to check if it's empty quickly
+			})
 
 			if clientCount > 0 {
 				broadcastWS("systemStatus", buildStatusData())
 				broadcastWS("queueStatus", buildQueueData())
 
 				var totalSpeed int64 = 0
-				liveTasksMu.RLock()
-				for _, task := range liveTasks {
+				liveTasks.Range(func(key, value interface{}) bool {
+					task := value.(*Task)
+					task.Mu.RLock()
 					if task.Status == "uploading" {
 						totalSpeed += task.Speed
 					}
-				}
-				liveTasksMu.RUnlock()
+					task.Mu.RUnlock()
+					return true
+				})
 
 				broadcastWS("trafficMetrics", map[string]interface{}{
 					"speed": totalSpeed,
@@ -669,15 +658,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	client := &WSClient{conn: conn, AESKey: key}
 
-	wsMutex.Lock()
-	wsClients[client] = true
-	wsMutex.Unlock()
+	wsClients.Store(client, true)
 
 	defer func() {
 		client.conn.Close()
-		wsMutex.Lock()
-		delete(wsClients, client)
-		wsMutex.Unlock()
+		wsClients.Delete(client)
 	}()
 
 	for {
@@ -851,6 +836,7 @@ func getFFmpegMemoryStd() int64 {
 }
 
 // buildStatusData 构建系统运行参数与目录状态聚合的大宽表
+// 改编至通过高并发读锁提取各项结构体内状态，消除瓶颈
 func buildStatusData() map[string]interface{} {
 	runningMu.RLock()
 	isRunning := running
@@ -870,14 +856,15 @@ func buildStatusData() map[string]interface{} {
 	}
 	nextScan := atomic.LoadInt64(&nextScanTimeGlobal)
 
-	dirStatusesMu.RLock()
 	dirs := make([]map[string]interface{}, 0)
 	for _, dir := range configuredDirs {
 		dir = strings.TrimSpace(dir)
 		if dir == "" {
 			continue
 		}
-		if status, exists := dirStatuses[dir]; exists {
+		if val, exists := dirStatuses.Load(dir); exists {
+			status := val.(*DirStatus)
+			status.Mu.RLock()
 			dirs = append(dirs, map[string]interface{}{
 				"path":          status.Path,
 				"totalFiles":    status.TotalFiles,
@@ -887,6 +874,7 @@ func buildStatusData() map[string]interface{} {
 				"uploadedSize":  status.UploadedSize,
 				"lastScanTime":  status.LastScanTime,
 			})
+			status.Mu.RUnlock()
 		} else {
 			dirs = append(dirs, map[string]interface{}{
 				"path":          dir,
@@ -899,9 +887,7 @@ func buildStatusData() map[string]interface{} {
 			})
 		}
 	}
-	dirStatusesMu.RUnlock()
 
-	// ===== 核心修改：使用原生标准库命令采集内存与磁盘余量 =====
 	var diskFree int64 = 0
 	var ffmpegMem int64 = 0
 
@@ -911,7 +897,6 @@ func buildStatusData() map[string]interface{} {
 	}
 	diskFree = getDiskFreeSpaceStd(targetDir)
 	ffmpegMem = getFFmpegMemoryStd()
-	// ===========================================
 
 	return map[string]interface{}{
 		"running":          isRunning,
@@ -935,17 +920,14 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, r, buildStatusData())
 }
 
-// buildQueueData 统计并构建各个任务队列的数字分布
+// buildQueueData 提取直接依存在内存中的各个队列的极致计数状态量
 func buildQueueData() map[string]interface{} {
-	queueMu.RLock()
-	defer queueMu.RUnlock()
-
 	return map[string]interface{}{
 		"waiting":   atomic.LoadInt64(&queueCount),
-		"uploading": len(queueUploading),
-		"success":   len(queueSuccess),
-		"failed":    len(queueFail),
-		"retrying":  len(queueRetrying),
+		"uploading": atomic.LoadInt64(&queueUploadingCount),
+		"success":   atomic.LoadInt64(&queueSuccessCount),
+		"failed":    atomic.LoadInt64(&queueFailCount),
+		"retrying":  atomic.LoadInt64(&queueRetryingCount),
 	}
 }
 
@@ -956,11 +938,12 @@ func handleQueue(w http.ResponseWriter, r *http.Request) {
 
 // handleLiveTasks 响应查询实时进行中的上传任务
 func handleLiveTasks(w http.ResponseWriter, r *http.Request) {
-	liveTasksMu.RLock()
-	tasks := make([]map[string]interface{}, 0, len(liveTasks))
+	tasks := make([]map[string]interface{}, 0)
 	cutoffTime := time.Now().Add(-30 * time.Minute)
 
-	for _, task := range liveTasks {
+	liveTasks.Range(func(key, value interface{}) bool {
+		task := value.(*Task)
+		task.Mu.RLock()
 		if task.CreatedAt.After(cutoffTime) {
 			duration := 0
 			if !task.EndTime.IsZero() {
@@ -980,8 +963,9 @@ func handleLiveTasks(w http.ResponseWriter, r *http.Request) {
 				"duration":  duration,
 			})
 		}
-	}
-	liveTasksMu.RUnlock()
+		task.Mu.RUnlock()
+		return true
+	})
 	sendJSONSuccess(w, r, tasks)
 }
 
@@ -1097,21 +1081,22 @@ func handleControlRescan(w http.ResponseWriter, r *http.Request) {
 
 // handleControlClearFailQueue 响应用户清空失败队列的指令
 func handleControlClearFailQueue(w http.ResponseWriter, r *http.Request) {
-	queueMu.Lock()
-	queueFail = make([]string, 0)
-	queueMu.Unlock()
+	// 使用 O(1) 效率彻底更换为空表
+	queueFail = sync.Map{}
+	atomic.StoreInt64(&queueFailCount, 0)
+
 	log.Println("[CONTROL] 🧹 用户下发指令：已清空失败任务队列")
 	sendJSONSuccess(w, r, nil)
 }
 
 // handleControlRetryFailQueue 响应用户重试全部失败任务的指令
 func handleControlRetryFailQueue(w http.ResponseWriter, r *http.Request) {
-	queueMu.Lock()
-	for _, taskID := range queueFail {
-		queueWaiting = append(queueWaiting, taskID)
-	}
-	queueFail = make([]string, 0)
-	queueMu.Unlock()
+	// 充入计数并清空记录
+	queueFailCountVal := atomic.LoadInt64(&queueFailCount)
+	atomic.AddInt64(&queueCount, queueFailCountVal)
+
+	queueFail = sync.Map{}
+	atomic.StoreInt64(&queueFailCount, 0)
 	log.Println("[CONTROL] 🔄 用户下发指令：失败任务已全部压入等待队列准备重试")
 
 	// 核心修复：向引擎发送重扫指令，让 Worker 真正去把硬盘里残留的失败文件捡起来
@@ -1122,9 +1107,9 @@ func handleControlRetryFailQueue(w http.ResponseWriter, r *http.Request) {
 
 // handleControlClearSuccessQueue 响应用户清空成功展示历史的指令
 func handleControlClearSuccessQueue(w http.ResponseWriter, r *http.Request) {
-	queueMu.Lock()
-	queueSuccess = make([]string, 0)
-	queueMu.Unlock()
+	queueSuccess = sync.Map{}
+	atomic.StoreInt64(&queueSuccessCount, 0)
+
 	log.Println("[CONTROL] 🧹 用户下发指令：已清空成功任务队列展示历史")
 	sendJSONSuccess(w, r, nil)
 }
@@ -1135,15 +1120,27 @@ func handleDirsStatus(w http.ResponseWriter, r *http.Request) {
 	configuredDirs := appConfig.Dirs
 	appConfigMu.RUnlock()
 
-	dirStatusesMu.RLock()
 	statuses := make([]*DirStatus, 0)
 	for _, dir := range configuredDirs {
 		dir = strings.TrimSpace(dir)
 		if dir == "" {
 			continue
 		}
-		if status, exists := dirStatuses[dir]; exists {
-			statuses = append(statuses, status)
+		if val, exists := dirStatuses.Load(dir); exists {
+			// 在构建前端结构前短暂的读取锁确保数据一致性
+			ds := val.(*DirStatus)
+			ds.Mu.RLock()
+			clone := &DirStatus{
+				Path:          ds.Path,
+				TotalFiles:    ds.TotalFiles,
+				UploadedFiles: ds.UploadedFiles,
+				PendingFiles:  ds.PendingFiles,
+				TotalSize:     ds.TotalSize,
+				UploadedSize:  ds.UploadedSize,
+				LastScanTime:  ds.LastScanTime,
+			}
+			ds.Mu.RUnlock()
+			statuses = append(statuses, clone)
 		} else {
 			statuses = append(statuses, &DirStatus{
 				Path:         dir,
@@ -1151,7 +1148,6 @@ func handleDirsStatus(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	dirStatusesMu.RUnlock()
 
 	sendJSONSuccess(w, r, statuses)
 }
@@ -1588,14 +1584,11 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 // restoreQueueCounts 系统启动时通过对内存内日志的复用来还原历史排队数，彻底杜绝 I/O 开销
 func restoreQueueCounts() {
 	successLogMu.Lock()
-	listLen := len(successRecords)
+	listLen := int64(len(successRecords))
 	successLogMu.Unlock()
 
-	queueMu.Lock()
-	for i := 0; i < listLen; i++ {
-		queueSuccess = append(queueSuccess, fmt.Sprintf("hist-%d", i))
-	}
-	queueMu.Unlock()
+	// 快速填充内存中表示历史容量的值
+	atomic.StoreInt64(&queueSuccessCount, listLen)
 }
 
 // handleLogsDownload 组装导出的文本系统运行日志，并判断是否需要使用 Base64+AES 进行加密导出

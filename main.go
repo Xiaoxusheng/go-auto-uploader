@@ -43,7 +43,6 @@ var (
 
 	// 优化点：为 httpCli 配置连接池，复用空闲连接，极大减少频繁新建 TCP 请求带来的内存和 CPU 消耗
 	httpCli = &http.Client{
-		// 彻底解决超大文件上传时间过长被强行熔断掐断的问题
 		Timeout: 0,
 		Transport: &http.Transport{
 			MaxIdleConns:        100,              // 最大空闲连接数
@@ -71,17 +70,21 @@ var (
 	appConfigMu sync.RWMutex
 )
 
-// 任务队列和历史记录状态
+// 任务队列和历史记录状态 (极致性能优化：全量替换为 sync.Map 和 原子计算)
 var (
-	liveTasks   = make(map[string]*Task)
-	liveTasksMu sync.RWMutex
+	liveTasks sync.Map // key: taskID string, value: *Task
 
-	queueWaiting   = make([]string, 0)
-	queueUploading = make([]string, 0)
-	queueSuccess   = make([]string, 0)
-	queueFail      = make([]string, 0)
-	queueRetrying  = make([]string, 0)
-	queueMu        sync.RWMutex
+	// 队列并发安全字典，充当 Set 的功能，O(1) 的存取与删除
+	queueUploading sync.Map
+	queueSuccess   sync.Map
+	queueFail      sync.Map
+	queueRetrying  sync.Map
+
+	// 高性能原子队列计数器
+	queueUploadingCount int64
+	queueSuccessCount   int64
+	queueFailCount      int64
+	queueRetryingCount  int64
 
 	history   = make([]*HistoryRecord, 0)
 	historyMu sync.RWMutex
@@ -91,8 +94,13 @@ var (
 	// 优化点：在内存中常驻成功记录，消除前端轮询及 Worker 追加数据时对磁盘和 GC 产生的巨大压力
 	successRecords []UploadRecord
 
-	// 哈希文件读写并发锁，彻底解决 DB 文件写入时堆积或损坏的并发安全 Bug
-	hashMu sync.RWMutex
+	// 优化点：将图表统计从每次 O(N) 全量遍历 50W 条数据优化为 O(1) 增量聚合维护
+	trendStats sync.Map // key: date (MM-DD), value: *TrendPoint
+	rankStats  sync.Map // key: streamer string, value: *atomic.Int64
+
+	// 哈希表优化：移除全局锁，换用高并发 sync.Map 承载海量哈希验证
+	hashCache  sync.Map
+	hashFileMu sync.Mutex // 专为哈希值追记落盘提供的 I/O 锁
 
 	// 高性能合并落盘脏标记，采用无锁原子操作防止并发瓶颈
 	dirStatusDirty int32
@@ -131,7 +139,9 @@ type fileTask struct {
 }
 
 // Task 定义了单个上传任务运行时的动态属性和状态
+// 优化：内嵌专属读写锁，隔离并发争抢
 type Task struct {
+	Mu         sync.RWMutex
 	ID         string
 	Name       string
 	Path       string
@@ -208,11 +218,15 @@ func saveConfigToFile() {
 
 // loadDirStatuses 启动时从本地磁盘恢复各个监控目录的累计上传数据，防止重启清空
 func loadDirStatuses() {
-	dirStatusesMu.Lock()
-	defer dirStatusesMu.Unlock()
 	data, err := os.ReadFile(dirStatusFile)
 	if err == nil {
-		json.Unmarshal(data, &dirStatuses)
+		var tempMap map[string]*DirStatus
+		if err := json.Unmarshal(data, &tempMap); err == nil {
+			for k, v := range tempMap {
+				// 转入高并发 sync.Map 容器
+				dirStatuses.Store(k, v)
+			}
+		}
 	}
 }
 
@@ -223,9 +237,25 @@ func markDirStatusDirty() {
 
 // flushDirStatuses 提取内存中的最新目录状态并执行物理层面的覆盖落盘
 func flushDirStatuses() {
-	dirStatusesMu.RLock()
-	defer dirStatusesMu.RUnlock()
-	data, err := json.MarshalIndent(dirStatuses, "", "  ")
+	tempMap := make(map[string]*DirStatus)
+	dirStatuses.Range(func(key, value interface{}) bool {
+		ds := value.(*DirStatus)
+		ds.Mu.RLock()
+		// 复制出状态快照用于落盘
+		tempMap[key.(string)] = &DirStatus{
+			Path:          ds.Path,
+			TotalFiles:    ds.TotalFiles,
+			UploadedFiles: ds.UploadedFiles,
+			PendingFiles:  ds.PendingFiles,
+			TotalSize:     ds.TotalSize,
+			UploadedSize:  ds.UploadedSize,
+			LastScanTime:  ds.LastScanTime,
+		}
+		ds.Mu.RUnlock()
+		return true
+	})
+
+	data, err := json.MarshalIndent(tempMap, "", "  ")
 	if err == nil {
 		targetDir := filepath.Dir(dirStatusFile)
 		f, err := os.CreateTemp(targetDir, "dir_status_*.json")
@@ -251,7 +281,6 @@ func dirStatusPersistLoop() {
 }
 
 // manageWorkers 全局常驻的动态 Worker 线程池调度器
-// 不再随扫描周期生灭，它会像抽水机一样默默在后台吸干 globalTaskCh 里的排队任务
 func manageWorkers() {
 	for {
 		appConfigMu.RLock()
@@ -336,9 +365,12 @@ func main() {
 	// 启用日志拦截器，将日志传回加密网页
 	log.SetOutput(&logInterceptor{original: os.Stdout})
 
-	// 优化点：启动时仅读取一次本地上传成功记录，将其缓存到内存中，后续只操作内存，避免磁盘读取阻塞
+	// 优化点：启动时读取一次本地上传成功记录缓存入内存，并依此构建高性能的增量聚合面板所需数据源
 	if data, err := os.ReadFile(successLogFile); err == nil {
 		json.Unmarshal(data, &successRecords)
+		for _, rec := range successRecords {
+			updateStatsIncrementally(rec) // 将已存的数据恢复到高并发增量池
+		}
 	} else {
 		successRecords = make([]UploadRecord, 0)
 	}
@@ -447,14 +479,6 @@ func main() {
 
 				// 合并读取内置录制引擎的工作状态
 				builtinRecordingCount := 0
-				/*
-					for _, t := range GetBuiltinRecorderTasks() {
-						if t.Status == "录制中" {
-							builtinRecordingCount++
-						}
-
-					}
-				*/
 				totalActiveCount := int(activeCount) + builtinRecordingCount
 
 				if totalActiveCount > 0 {
@@ -486,13 +510,6 @@ func main() {
 				activeCount := runOnce(reason, currentDynamicInterval)
 
 				builtinRecordingCount := 0
-				/*
-					for _, t := range GetBuiltinRecorderTasks() {
-						if t.Status == "录制中" {
-							builtinRecordingCount++
-						}
-					}
-				*/
 				totalActiveCount := int(activeCount) + builtinRecordingCount
 
 				if totalActiveCount > 0 {
@@ -571,24 +588,25 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	})
 
 	// 初始化目录统计状态 (保留已上传的数据，每次重头严谨计算 Pending 数以保证面板精准)
-	dirStatusesMu.Lock()
 	for _, root := range currentDirs {
 		root = filepath.Clean(strings.TrimSpace(root))
 		if root == "." || root == "" {
 			continue
 		}
-		if ds, exists := dirStatuses[root]; exists {
+		if val, exists := dirStatuses.Load(root); exists {
+			ds := val.(*DirStatus)
+			ds.Mu.Lock()
 			ds.PendingFiles = 0
 			ds.TotalSize = 0
 			ds.LastScanTime = time.Now().UnixMilli()
+			ds.Mu.Unlock()
 		} else {
-			dirStatuses[root] = &DirStatus{
+			dirStatuses.Store(root, &DirStatus{
 				Path:         root,
 				LastScanTime: time.Now().UnixMilli(),
-			}
+			})
 		}
 	}
-	dirStatusesMu.Unlock()
 
 	var newlyAddedFiles int32 = 0
 	var activeRecordingCount int32 = 0
@@ -643,12 +661,13 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 				}
 
 				// 每找到一个合法的磁盘文件，视为当前待处理文件
-				dirStatusesMu.Lock()
-				if ds, exists := dirStatuses[scanRoot]; exists {
+				if val, exists := dirStatuses.Load(scanRoot); exists {
+					ds := val.(*DirStatus)
+					ds.Mu.Lock()
 					ds.PendingFiles++
 					ds.TotalSize += info.Size()
+					ds.Mu.Unlock()
 				}
-				dirStatusesMu.Unlock()
 
 				// 利用内存锁阻挡已在排队或上一轮尚未处理完成的文件，避免冗余收集
 				if _, loaded := enqueuedFiles.Load(path); !loaded {
@@ -705,11 +724,13 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	}
 
 	// 在扫描终点，将累加出的准确待处理量 + 内存记录的成功上传量 = 当下的总文件数
-	dirStatusesMu.Lock()
-	for _, ds := range dirStatuses {
+	dirStatuses.Range(func(key, value interface{}) bool {
+		ds := value.(*DirStatus)
+		ds.Mu.Lock()
 		ds.TotalFiles = ds.PendingFiles + ds.UploadedFiles
-	}
-	dirStatusesMu.Unlock()
+		ds.Mu.Unlock()
+		return true
+	})
 	markDirStatusDirty() // 状态持久化落盘
 
 	log.Printf("[SCAN][END] 🏁 本轮扫描完毕。发现新文件: %d 个 | 仍在录制中文件: %d 个", newlyAddedFiles, activeRecordingCount)
@@ -725,23 +746,22 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 
 // cleanupFailedTasksByPath 根据给定路径定位并清理缓存队列中残留的失败态记录
 func cleanupFailedTasksByPath(targetPath string) {
-	liveTasksMu.Lock()
-	defer liveTasksMu.Unlock()
+	// 利用无锁哈希表快速遍历并核销失败任务
+	liveTasks.Range(func(key, value interface{}) bool {
+		task := value.(*Task)
+		task.Mu.RLock()
+		p := task.Path
+		st := task.Status
+		task.Mu.RUnlock()
 
-	queueMu.Lock()
-	defer queueMu.Unlock()
-
-	var toDelete []string
-	for id, task := range liveTasks {
-		if task.Path == targetPath && task.Status == "failed" {
-			toDelete = append(toDelete, id)
-			delete(liveTasks, id)
+		if p == targetPath && st == "failed" {
+			liveTasks.Delete(key)
+			if _, loaded := queueFail.LoadAndDelete(key); loaded {
+				atomic.AddInt64(&queueFailCount, -1)
+			}
 		}
-	}
-
-	for _, id := range toDelete {
-		queueFail = removeTask(queueFail, id)
-	}
+		return true
+	})
 }
 
 // handleFile 负责调度单一目标文件的生命周期，包括名称净洗、秒传对比、上报排队及执行下层上传操作
@@ -794,8 +814,7 @@ func handleFile(path string) {
 
 		taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
 
-		liveTasksMu.Lock()
-		liveTasks[taskID] = &Task{
+		newTask := &Task{
 			ID:        taskID,
 			Name:      name,
 			Path:      path,
@@ -806,25 +825,25 @@ func handleFile(path string) {
 			CreatedAt: time.Now(),
 			EndTime:   time.Now(),
 		}
-		liveTasksMu.Unlock()
+		liveTasks.Store(taskID, newTask)
 
-		queueMu.Lock()
-		queueSuccess = append(queueSuccess, taskID)
-		queueMu.Unlock()
+		queueSuccess.Store(taskID, struct{}{})
+		atomic.AddInt64(&queueSuccessCount, 1)
 
 		addHistoryRecord(path, remote, info.Size(), "success(秒传)", 0, "")
 
 		// 一旦秒传判定成功，不仅记录增加，更要减扣其身处待处理列表的份额
-		dirStatusesMu.Lock()
-		if ds, exists := dirStatuses[root]; exists {
+		if val, exists := dirStatuses.Load(root); exists {
+			ds := val.(*DirStatus)
+			ds.Mu.Lock()
 			if ds.PendingFiles > 0 {
 				ds.PendingFiles--
 			}
 			ds.UploadedFiles++
 			ds.UploadedSize += info.Size()
 			ds.TotalFiles = ds.PendingFiles + ds.UploadedFiles
+			ds.Mu.Unlock()
 		}
-		dirStatusesMu.Unlock()
 		markDirStatusDirty()
 
 		broadcastWS("taskDone", map[string]interface{}{
@@ -850,16 +869,17 @@ func handleFile(path string) {
 		recordSuccess(remote, name, info.Size())
 
 		// 真实物理上传完毕后扣除待处理余量
-		dirStatusesMu.Lock()
-		if ds, exists := dirStatuses[root]; exists {
+		if val, exists := dirStatuses.Load(root); exists {
+			ds := val.(*DirStatus)
+			ds.Mu.Lock()
 			if ds.PendingFiles > 0 {
 				ds.PendingFiles--
 			}
 			ds.UploadedFiles++
 			ds.UploadedSize += info.Size()
 			ds.TotalFiles = ds.PendingFiles + ds.UploadedFiles
+			ds.Mu.Unlock()
 		}
-		dirStatusesMu.Unlock()
 		markDirStatusDirty()
 	}
 }
@@ -877,8 +897,7 @@ func upload(local, remote string, size int64) bool {
 	startTime := time.Now()
 	pr := NewProgressReaderWithID(filepath.Base(remote), f, size, taskID)
 
-	liveTasksMu.Lock()
-	liveTasks[taskID] = &Task{
+	newTask := &Task{
 		ID:        taskID,
 		Name:      filepath.Base(remote),
 		Path:      local,
@@ -888,11 +907,10 @@ func upload(local, remote string, size int64) bool {
 		Status:    "uploading",
 		CreatedAt: startTime,
 	}
-	liveTasksMu.Unlock()
+	liveTasks.Store(taskID, newTask)
 
-	queueMu.Lock()
-	queueUploading = append(queueUploading, taskID)
-	queueMu.Unlock()
+	queueUploading.Store(taskID, struct{}{})
+	atomic.AddInt64(&queueUploadingCount, 1)
 
 	broadcastWS("uploadProgress", map[string]interface{}{
 		"id":        taskID,
@@ -925,18 +943,20 @@ func upload(local, remote string, size int64) bool {
 		// 发送通知
 		SendAlert("error", "上传连接失败", "无法连接远端服务器: "+err.Error())
 
-		liveTasksMu.Lock()
-		if task, exists := liveTasks[taskID]; exists {
+		if val, exists := liveTasks.Load(taskID); exists {
+			task := val.(*Task)
+			task.Mu.Lock()
 			task.Status = "failed"
 			task.Error = err.Error()
 			task.EndTime = time.Now()
+			task.Mu.Unlock()
 		}
-		liveTasksMu.Unlock()
 
-		queueMu.Lock()
-		queueUploading = removeTask(queueUploading, taskID)
-		queueFail = append(queueFail, taskID)
-		queueMu.Unlock()
+		if _, loaded := queueUploading.LoadAndDelete(taskID); loaded {
+			atomic.AddInt64(&queueUploadingCount, -1)
+		}
+		queueFail.Store(taskID, struct{}{})
+		atomic.AddInt64(&queueFailCount, 1)
 
 		addHistoryRecord(local, remote, size, "failed", time.Since(startTime).Seconds(), err.Error())
 
@@ -969,18 +989,20 @@ func upload(local, remote string, size int64) bool {
 	}
 
 	if r.Code == 200 {
-		liveTasksMu.Lock()
-		if task, exists := liveTasks[taskID]; exists {
+		if val, exists := liveTasks.Load(taskID); exists {
+			task := val.(*Task)
+			task.Mu.Lock()
 			task.Status = "success"
 			task.Progress = 100
 			task.EndTime = time.Now()
+			task.Mu.Unlock()
 		}
-		liveTasksMu.Unlock()
 
-		queueMu.Lock()
-		queueUploading = removeTask(queueUploading, taskID)
-		queueSuccess = append(queueSuccess, taskID)
-		queueMu.Unlock()
+		if _, loaded := queueUploading.LoadAndDelete(taskID); loaded {
+			atomic.AddInt64(&queueUploadingCount, -1)
+		}
+		queueSuccess.Store(taskID, struct{}{})
+		atomic.AddInt64(&queueSuccessCount, 1)
 
 		addHistoryRecord(local, remote, size, "success", time.Since(startTime).Seconds(), "")
 
@@ -1005,18 +1027,20 @@ func upload(local, remote string, size int64) bool {
 		// 将服务端真实错误暴露给用户的气泡系统
 		SendAlert("error", "上传遭拒绝", fmt.Sprintf("文件: %s\n状态码: %d\n详细报错: %s", filepath.Base(local), r.Code, r.Message))
 
-		liveTasksMu.Lock()
-		if task, exists := liveTasks[taskID]; exists {
+		if val, exists := liveTasks.Load(taskID); exists {
+			task := val.(*Task)
+			task.Mu.Lock()
 			task.Status = "failed"
 			task.Error = errMsg
 			task.EndTime = time.Now()
+			task.Mu.Unlock()
 		}
-		liveTasksMu.Unlock()
 
-		queueMu.Lock()
-		queueUploading = removeTask(queueUploading, taskID)
-		queueFail = append(queueFail, taskID)
-		queueMu.Unlock()
+		if _, loaded := queueUploading.LoadAndDelete(taskID); loaded {
+			atomic.AddInt64(&queueUploadingCount, -1)
+		}
+		queueFail.Store(taskID, struct{}{})
+		atomic.AddInt64(&queueFailCount, 1)
 
 		addHistoryRecord(local, remote, size, "failed", time.Since(startTime).Seconds(), errMsg)
 
@@ -1057,16 +1081,6 @@ func addHistoryRecord(local, remote string, size int64, status string, duration 
 	historyMu.Unlock()
 }
 
-// removeTask 对指定数组内通过游标匹对将其中的特定 ID 的任务进行剪裁和丢弃
-func removeTask(tasks []string, taskID string) []string {
-	for i, t := range tasks {
-		if t == taskID {
-			return append(tasks[:i], tasks[i+1:]...)
-		}
-	}
-	return tasks
-}
-
 // ProgressReader 带速率限制和进度通知的自定义文件读取数据结构
 type ProgressReader struct {
 	name        string
@@ -1092,6 +1106,7 @@ func NewProgressReaderWithID(name string, r io.Reader, total int64, taskID strin
 }
 
 // Read 实现核心 io.Reader 接口并劫持每一次小片数据读写用于上报进度与速率休眠拦截
+// 性能提升：移除全局 liveTasksMu 的锁定，转为提取单任务内的细粒度 RWMutex
 func (p *ProgressReader) Read(b []byte) (int, error) {
 	startRead := time.Now()
 	n, err := p.r.Read(b)
@@ -1131,22 +1146,33 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 			log.Printf("[UPLOAD][PROGRESS] 文件: %s -> 进度: %d%%", p.name, step*10)
 		}
 
-		liveTasksMu.Lock()
-		if task, exists := liveTasks[p.taskID]; exists {
+		// 精准定位任务进行原子级属性覆写，防止锁冲突
+		if val, exists := liveTasks.Load(p.taskID); exists {
+			task := val.(*Task)
+
+			task.Mu.Lock()
 			task.Progress = progress
 			task.Speed = speed
+
+			// 数据拷贝提取出安全区域，避开下流广播阻塞
+			wsName := task.Name
+			wsPath := task.Path
+			wsSize := task.Size
+			wsStatus := task.Status
+			wsStartTime := task.CreatedAt.UnixMilli()
+			task.Mu.Unlock()
+
 			broadcastWS("uploadProgress", map[string]interface{}{
 				"id":        p.taskID,
-				"filename":  task.Name,
-				"path":      task.Path,
-				"size":      task.Size,
+				"filename":  wsName,
+				"path":      wsPath,
+				"size":      wsSize,
 				"uploaded":  p.read,
 				"speed":     speed,
-				"status":    "uploading",
-				"startTime": task.CreatedAt.UnixMilli(),
+				"status":    wsStatus,
+				"startTime": wsStartTime,
 			})
 		}
-		liveTasksMu.Unlock()
 	}
 	return n, err
 }
@@ -1196,19 +1222,50 @@ type UploadRecord struct {
 	Size     int64
 }
 
+// TrendPoint 为增量统计专属配备的高性能细粒度锁定数据结构
+type TrendPoint struct {
+	Mu    sync.Mutex
+	Date  string  `json:"date"`
+	Size  float64 `json:"size"`
+	Count int     `json:"count"`
+}
+
+// updateStatsIncrementally 并发安全的图表源数据累加器，消除了过去 O(N) O(500,000) 的遍历消耗
+func updateStatsIncrementally(rec UploadRecord) {
+	day := rec.Time.Format("01-02")
+	// 获取或初始化当天的 TrendPoint
+	tVal, _ := trendStats.LoadOrStore(day, &TrendPoint{Date: day})
+	tp := tVal.(*TrendPoint)
+
+	tp.Mu.Lock()
+	tp.Size += float64(rec.Size) / 1024 / 1024 / 1024
+	tp.Count++
+	tp.Mu.Unlock()
+
+	// 更新主播流量排行 Rank
+	rVal, _ := rankStats.LoadOrStore(rec.Streamer, &atomic.Int64{})
+	rInt := rVal.(*atomic.Int64)
+	rInt.Add(rec.Size)
+}
+
 // recordSuccess 专门记录最终通过网络被写入目标端存储系统的文件日志以供统计
 func recordSuccess(remote, name string, size int64) {
-	successLogMu.Lock()
-	defer successLogMu.Unlock()
-
-	// 优化点：直接向常驻内存的 Slice 追加数据，完全摆脱 `json.Unmarshal(data, &list)` 的 CPU/GC 消耗
-	successRecords = append(successRecords, UploadRecord{
+	rec := UploadRecord{
 		Time:     time.Now(),
 		Streamer: detectStreamer(remote),
 		Name:     name,
 		Remote:   remote,
 		Size:     size,
-	})
+	}
+
+	// 立刻提交至高性能的增量内存统计池
+	updateStatsIncrementally(rec)
+
+	successLogMu.Lock()
+	defer successLogMu.Unlock()
+
+	// 优化点：直接向常驻内存的 Slice 追加数据，完全摆脱 `json.Unmarshal(data, &list)` 的 CPU/GC 消耗
+	successRecords = append(successRecords, rec)
 
 	// 优化点：限制最多保留 500000 条历史记录，防止内存无限膨胀
 	if len(successRecords) > 500000 {
@@ -1432,14 +1489,8 @@ func fileHash(p string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// hashCache 内存哈希集合，避免每次都读磁盘
-var hashCache map[string]struct{}
-
 // loadHashCache 启动时一次性加载哈希库到内存
 func loadHashCache() {
-	hashMu.Lock()
-	defer hashMu.Unlock()
-	hashCache = make(map[string]struct{})
 	data, err := os.ReadFile(hashFile)
 	if err != nil {
 		return
@@ -1447,20 +1498,21 @@ func loadHashCache() {
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
-			hashCache[line] = struct{}{}
+			hashCache.Store(line, struct{}{})
 		}
 	}
-	log.Printf("[HASH] 已从磁盘加载 %d 条哈希记录到内存缓存", len(hashCache))
+	// 利用 Range 快计缓存总数
+	count := 0
+	hashCache.Range(func(_, _ interface{}) bool { count++; return true })
+	log.Printf("[HASH] 已从磁盘加载 %d 条哈希记录到高并发无锁哈希表中", count)
 }
 
-// hashExists 直接查内存哈希集合，O(1) 精确匹配，无磁盘 IO
+// hashExists 直接查内存哈希集合，O(1) 精确匹配，彻底消灭全文件读写锁瓶颈
 func hashExists(h string) bool {
 	if h == "" {
 		return false
 	}
-	hashMu.RLock()
-	defer hashMu.RUnlock()
-	_, ok := hashCache[h]
+	_, ok := hashCache.Load(h)
 	return ok
 }
 
@@ -1470,16 +1522,12 @@ func saveHash(h string) {
 		return
 	}
 
-	hashMu.Lock()
-	defer hashMu.Unlock()
+	// 先写内存缓存，保证下次 hashExists 毫无延迟即可见
+	hashCache.Store(h, struct{}{})
 
-	// 先写内存缓存，保证下次 hashExists 立即可见
-	if hashCache == nil {
-		hashCache = make(map[string]struct{})
-	}
-	hashCache[h] = struct{}{}
-
-	// 再追加磁盘持久化
+	// 追加写入必须锁住 File I/O 以防数据覆盖或坏块
+	hashFileMu.Lock()
+	defer hashFileMu.Unlock()
 	f, err := os.OpenFile(hashFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Printf("[HASH][ERR] 打开哈希库文件失败: %v", err)

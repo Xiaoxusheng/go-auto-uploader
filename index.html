@@ -1822,7 +1822,6 @@
             </div>
         </a-modal>
 
-        <!-- 修复点：修改 @ok 为 @before-ok 以正确支持异步任务关闭回调 -->
         <a-modal v-model:visible="showBatchAddModal" title="批量导入外部引擎名单" @before-ok="handleBatchAdd"
                  @cancel="showBatchAddModal = false" :ok-loading="batchAddLoading">
             <a-alert type="info" style="margin-bottom: 16px;">
@@ -1883,7 +1882,6 @@
             </a-tabs>
         </a-modal>
 
-        <!-- 修复点：修改 @ok 为 @before-ok 以正确支持异步任务关闭回调 -->
         <a-modal v-model:visible="showBuiltinBatchModal" title="📑 批量添加内置引擎任务" @before-ok="handleBatchAddBuiltin"
                  :ok-loading="builtinBatchAdding">
             <div style="margin-bottom: 15px;">
@@ -2341,7 +2339,6 @@
 
             /**
              * 触发浏览器原生动作，下载目标直播间当前缓存的封面图
-             * 【修改内容】：将下载文件名的固定后缀由 .jpg 更改为 .png，以严格匹配后端最新的无损画质提取格式。
              * @param {string} url 图片源网络地址
              * @param {string} anchorName 供文件命名的清洗后主播名字
              */
@@ -2358,7 +2355,6 @@
                     // 3. 清洗主播名称中的非法路径字符，防止下载文件命名报错
                     const safeName = (anchorName || '未命名主播').replace(/[/\\?%*:|"<>]/g, '-');
 
-                    // 4. 拼接最终的下载文件名，【修改点】：此处后缀改为 .png
                     link.download = `${safeName}_封面图_${Date.now()}.png`;
 
                     // 5. 将标签暂时挂载到 DOM 树上并模拟点击，唤起下载任务
@@ -3219,27 +3215,37 @@
                                 duration: 4000
                             });
                         } else if (msg.type === 'builtinTasks') {
+                            // ✨ 核心修复：绝不重新赋值 builtinTasks.value，而是原地操作数组
                             const payloadTasks = msg.payload || [];
-                            const newTasks = [];
+
+                            // 1. 从原数组中移除后端已经不存在的任务
+                            for (let i = builtinTasks.value.length - 1; i >= 0; i--) {
+                                const exists = payloadTasks.find(t => t.platform === builtinTasks.value[i].platform && t.room_id === builtinTasks.value[i].room_id);
+                                if (!exists) {
+                                    builtinTasks.value.splice(i, 1);
+                                }
+                            }
+
+                            // 2. 更新存在的任务，或将新任务追加到原数组
                             payloadTasks.forEach(pTask => {
                                 const existing = builtinTasks.value.find(t => t.platform === pTask.platform && t.room_id === pTask.room_id);
                                 if (existing) {
+                                    // 原地合并属性
                                     existing.anchor_name = pTask.anchor_name;
                                     existing.status = pTask.status;
                                     existing.duration = pTask.duration;
                                     existing.file_size = pTask.file_size;
                                     existing.is_paused = pTask.is_paused;
                                     existing.avatar = pTask.avatar;
+                                    // 维持预览图更新逻辑
                                     if (globalPreview.visible && globalPreview.platform === pTask.platform && globalPreview.roomId === pTask.room_id) {
                                         globalPreview.src = pTask.avatar;
                                     }
-                                    newTasks.push(existing);
                                 } else {
                                     pTask.switching = false;
-                                    newTasks.push(pTask);
+                                    builtinTasks.value.push(pTask);
                                 }
                             });
-                            builtinTasks.value = newTasks;
                         }
                     } catch (e) {
                         console.error("解密流数据发生异常：", e);

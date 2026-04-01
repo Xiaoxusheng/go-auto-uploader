@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -432,6 +433,12 @@ func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 		list = append(list, task)
 		return true
 	})
+
+	// 【极致优化】：修复 Go map 遍历无序导致的乱序乱跳问题，按平台和房间号稳定排序
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Platform+"_"+list[i].RoomID < list[j].Platform+"_"+list[j].RoomID
+	})
+
 	return list
 }
 
@@ -1744,11 +1751,6 @@ func (t *builtinTailBuffer) Write(p []byte) (n int, err error) {
 }
 
 // extractBuiltinCoverFromLocalFile 旁路抽帧大法：只读取本地录像尾部少量字节流交由内存端 ffmpeg 解析，避免卡死并极大降低系统 CPU
-// 【修改内容】：
-// 1. 将读取缓冲从 3MB 提升至 5MB，确保能完整包裹住至少一个高质量的关键帧 (I-Frame)。
-// 2. 引入 FFmpeg 视频滤镜 `-vf "select='eq(pict_type,I)'"`，强制只提取画质最无损的独立关键帧，避免截到模糊的过渡帧(P/B帧)。
-// 3. 采用无损 PNG 编码 (`-c:v png`) 替代有损 JPEG 编码，彻底解除压缩限制，实测 1080P 画质下截图体积将轻松突破 1MB~3MB。
-// 注：生成的文件即使后缀为 .jpg，现代浏览器底层也能完美识别其为 PNG 数据并高清渲染。
 func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
 	// 1. 读取指定目录下的所有文件列表，寻找当前录像切片
 	files, err := os.ReadDir(dir)
@@ -1800,10 +1802,6 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
 	}
 
 	// 5. 组装 FFmpeg 截帧命令 (采用 I 帧精准提取 + PNG 无损编码引擎)
-	// 参数解析：
-	// -vf "select='eq(pict_type,I)'": 滤镜强制仅抓取最高质量的 I 帧 (关键帧)
-	// -frames:v 1: 仅输出 1 张图片
-	// -c:v png: 使用无损的 PNG 编码器，文件大小飙升，画质到达天花板
 	cmd := exec.Command(builtinFfmpegPath,
 		"-y",
 		"-i", "pipe:0",
@@ -1832,9 +1830,6 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
 }
 
 // BuiltinRecordStream 调动底层 FFmpeg 进程并将推流直通本地文件，增加了高度强化的上下文状态管控防止僵尸进程
-// 【修改内容】：
-// 1. 在进程生命周期 select 块结束后、wg.Wait() 执行之前，显式增加了一行 cancelRecord()，解决断流后截帧协程无法结束造成的死锁问题。
-// 2. 将生成封面图的扩展名从 .jpg 修改为 .png，以匹配底层 extractBuiltinCoverFromLocalFile 函数中输出的无损 PNG 编码格式，提升代码严谨性与可维护性。
 func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, anchorName, avatar, quality string, segmentTime int) {
 	updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "录制中")
 	safeName := sanitizeBuiltinFileName(anchorName)
@@ -1874,7 +1869,6 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 		args = append(args, "-c:v", "copy", "-c:a", "copy", "-f", "mpegts", outPath)
 	}
 
-	// 【修改点 1】：将封面图的后缀改为 .png 保持表里如一
 	fileName := fmt.Sprintf("%s_%s.png", platformName, roomID)
 	coverDir := filepath.Join(".", "covers")
 	os.MkdirAll(coverDir, os.ModePerm)
@@ -1938,7 +1932,6 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 								imgArchiveDir := filepath.Join(outDir, "Screenshots")
 								os.MkdirAll(imgArchiveDir, os.ModePerm)
 
-								// 【修改点 2】：归档保存的截图也同步修改为 .png 后缀
 								archiveCoverPath := filepath.Join(imgArchiveDir, fmt.Sprintf("%s_%s_cover_%04d.png", safeName, timestamp, coverCount))
 								_ = os.WriteFile(archiveCoverPath, data, 0644)
 								log.Printf("[BUILTIN] 📸 旁路截帧 (第 %d 次) 已保存至独立截图目录，等待自动上传: %s", coverCount, archiveCoverPath)
@@ -1991,8 +1984,6 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 		}
 	}
 
-	// ✨ 修复核心：必须在此显式调用 cancelRecord()，通知截帧旁路协程立即退出
-	// 否则 wg.Wait() 会造成永久死锁，导致下方的 updateBuiltinStatus 永远不执行
 	cancelRecord()
 
 	wg.Wait() // 彻底等待旁路协程销毁
