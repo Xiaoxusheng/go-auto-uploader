@@ -1,6 +1,13 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
 
-### [v2.3.1] - 最新更新 (Zero-Byte Shield & UI Stability)
+### [v2.3.2] - 最新更新 (Concurrency Lock & Huge File Fix)
+#### 🔧 核心修复与优化 (Bug Fixes & Optimization)
+* **超大文件上传超时修复 (Huge File Timeout Fix)**：将全局 HTTP 客户端 (`httpCli`) 的 `Timeout` 强制设为 `0`。彻底解决了在上传数十 GB 超大文件或极端弱网环境下，因传输耗时过长导致底层连接被系统强行掐断，进而触发安全熔断误挂起的严重 Bug。
+* **高并发读写锁重构 (RWMutex Concurrency Polish)**：全面重构了底层的并发数据结构（`wsClients`, `sessionKeys`, `dirStatuses`, `hashCache` 等）。摒弃了粗暴的全局大锁，转而采用 Go 原生 `map` 配合细粒度的 `sync.RWMutex` 读写锁。特别是在 WebSocket 广播流中引入了“读锁快照拷贝”安全分发机制，从根本上消除了 `concurrent map iteration and map write` 的引擎崩溃风险与广播假死问题。
+* **哈希秒传全内存化 (In-Memory Hash Cache)**：重构了 `uploaded_hash.db` 的读写隔离逻辑。秒传判定 `hashExists` 现已完全剥离磁盘 I/O 阻塞，依靠纯内存级别的并发读写锁实现 O(1) 极速匹配，极大提升了十万级海量文件并发扫盘时的系统效能。
+* **前端录制列表防闪烁 (Built-in Tasks Anti-Flicker)**：优化了前端 `index.html` 接收内置引擎状态推送 (`builtinTasks`) 的渲染逻辑。摒弃了低效的数组全量覆写，改为精准追踪 `room_id` 进行属性的“原地操作与合并”。完美化解了 WebSocket 每秒高频推送时引发的 DOM 重绘与直播封面图频闪问题。
+
+### [v2.3.1] - 历史更新 (Zero-Byte Shield & UI Stability)
 #### 🔧 核心修复 (Bug Fixes)
 * **空切片物理粉碎 (Zero-Byte File Shredding)**：修复了由于 FFmpeg 异常断流或卡顿残留的 `0 Bytes` 空视频切片，导致上传引擎向远端发起无载荷的非法请求，进而触发远端网关 `500 Internal Server Error` 以及本地系统连续 30 次失败后最高级安全熔断挂起的致命 Bug。现在，扫描引擎与处理器已构筑双重护盾，一旦发现 0 字节死文件将直接在底层物理销毁，彻底净化磁盘环境。
 * **浮点除零异常修复 (NaN Progress Fix)**：修复了底层文件流进度读取器 (`ProgressReader`) 在处理空文件时，因分母计算为 0 导致浮点数运算出现 `NaN` (Not a Number) 的安全隐患。彻底清除了由此引发的前端 WebSocket 数据解析异常与界面崩溃风险。
