@@ -1500,23 +1500,39 @@
                         </div>
                     </div>
 
-                    <div class="apple-glass log-container" ref="logContainerRef"
-                         style="height: 420px; margin-bottom: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch;">
-                        <div v-for="(log, index) in logData.items" :key="log.time + index"
-                             style="margin-bottom: 6px; border-bottom: 1px dashed rgba(128,128,128,0.15); padding-bottom: 6px; min-width: 600px;">
-                            <span style="color: var(--color-text-3);">[{{ log.time }}]</span>
-                            <span :style="{ color: getLogLevelColor(log.level), display: 'inline-block', width: '55px', fontWeight: 'bold' }">[{{ log.level.toUpperCase() }}]</span>
-                            <span style="color: var(--color-text-1);">{{ log.message }}</span>
-                            <div v-if="log.error" style="color: var(--color-danger-light-4); margin-left: 175px;">↳ Err:
-                                {{ log.error }}
+                    <a-list
+                            class="apple-glass"
+                            ref="logListRef"
+                            :data="logData.items"
+                            :bordered="false"
+                            :split="false"
+                            :virtual-list-props="{
+                            height: 420,
+                            fixedSize: false,
+                            buffer: 15
+                        }"
+                            style="border: 1px solid var(--glass-border); border-radius: 12px; margin-bottom: 12px; padding: 0;"
+                    >
+                        <template #item="{ item: log, index }">
+                            <a-list-item style="padding: 6px 16px; border-bottom: 1px dashed rgba(128,128,128,0.15); min-width: 600px;">
+                                <span style="color: var(--color-text-3);">[{{ log.time }}]</span>
+                                <span :style="{ color: getLogLevelColor(log.level), display: 'inline-block', width: '55px', fontWeight: 'bold' }">
+                                    [{{ log.level.toUpperCase() }}]
+                                </span>
+                                <span style="color: var(--color-text-1);">{{ log.message }}</span>
+                                <div v-if="log.error" style="color: var(--color-danger-light-4); margin-left: 175px;">
+                                    ↳ Err: {{ log.error }}
+                                </div>
+                            </a-list-item>
+                        </template>
+
+                        <template #empty>
+                            <div style="color: var(--color-text-3); text-align: center; margin-top: 80px;">
+                                <icon-empty style="font-size: 32px; display: block; margin-bottom: 12px;"></icon-empty>
+                                暂无系统日志
                             </div>
-                        </div>
-                        <div v-if="logData.items.length === 0"
-                             style="color: var(--color-text-3); text-align: center; margin-top: 40px;">
-                            <icon-empty style="font-size: 32px; display: block; margin-bottom: 12px;"></icon-empty>
-                            暂无系统日志
-                        </div>
-                    </div>
+                        </template>
+                    </a-list>
 
                     <div style="display: flex; justify-content: flex-end;">
                         <a-pagination
@@ -2637,7 +2653,7 @@
             const logQuery = reactive({page: 1, limit: 50, level: '', keyword: ''});
             const logData = reactive({items: [], total: 0});
             const logExportLimit = ref(1000);
-            const logContainerRef = ref(null);
+            const logListRef = ref(null); // 修改为使用 a-list 虚拟滚动的 ref
 
             const configForm = ref({});
             const configDirsString = ref('');
@@ -2671,6 +2687,7 @@
                         return;
                     }
                     const option = {
+                        title: { show: false }, // ✨ 修复：在此添加 show: false 解决 ECharts 缓存文字残留重叠 Bug
                         backgroundColor: 'transparent',
                         tooltip: {trigger: 'item', formatter: '{b}状态: {c} 个文件 ({d}%)'},
                         legend: {
@@ -3049,6 +3066,11 @@
                 }, 150);
             };
 
+            // ✨ 定义重试状态控制变量用于指数退避算法
+            let reconnectAttempts = 0;
+            const maxReconnectDelay = 30000; // 重试间隔上限设为 30 秒
+            const baseReconnectDelay = 2000; // 基础间隔 2 秒
+
             /**
              * 构建全功能的 WebSocket 客户端信道，并封装断线重连、密文解码鉴别与心跳存活自动确认处理机
              */
@@ -3078,6 +3100,8 @@
                 ws.onopen = () => {
                     wsStatus.value = 'connected';
                     lastPongTime = Date.now();
+                    reconnectAttempts = 0; // ✨ 连上后立刻清零重试次数，恢复健康状态
+
                     if (pingTimer) clearInterval(pingTimer);
                     pingTimer = setInterval(async () => {
                         if (ws.readyState === WebSocket.OPEN) {
@@ -3256,7 +3280,19 @@
                     wsStatus.value = 'disconnected';
                     wsLatency.value = 0;
                     if (pingTimer) clearInterval(pingTimer);
-                    if (isLoggedIn.value) setTimeout(connectWS, 3000);
+
+                    if (isLoggedIn.value) {
+                        // ✨ 核心算法：指数退避 (1.5的幂次方) + Jitter 随机抖动 (0~1000ms)
+                        const delay = Math.min(
+                            maxReconnectDelay,
+                            baseReconnectDelay * Math.pow(1.5, reconnectAttempts)
+                        ) + (Math.random() * 1000);
+
+                        reconnectAttempts++;
+
+                        console.warn(`[WS] 连接断开，将在 ${(delay/1000).toFixed(1)} 秒后进行第 ${reconnectAttempts} 次重连...`);
+                        setTimeout(connectWS, delay);
+                    }
                 };
                 ws.onerror = () => {
                     wsStatus.value = 'disconnected';
@@ -3588,20 +3624,21 @@
                 }
             });
 
-            watch(() => logData.items, () => {
+            // 虚拟滚动日志定位逻辑
+            watch(() => logData.items.length, () => {
                 nextTick(() => {
-                    if (logContainerRef.value) {
-                        logContainerRef.value.scrollTop = logContainerRef.value.scrollHeight;
+                    if (logListRef.value) {
+                        logListRef.value.scrollIntoView({ index: logData.items.length - 1 });
                     }
                 });
-            }, {deep: true});
+            });
 
             return {
                 isMobile, isDarkMode, toggleTheme, openGitHub, isLoggedIn, loginLoading, loginForm, activeTab,
                 handleLogin, handleLogout, wsStatus, wsStats, wsLatency, getLatencyColor, liveTaskFilter,
                 systemStatus, queueStatus, liveTasks, uploadingTasks, completedTasks, control, historyQuery,
                 historyData, pagination, fetchHistory, onPageChange, onPageSizeChange, logQuery, logData,
-                logExportLimit, logContainerRef, fetchLogs, downloadLogs, configForm, configDirsString,
+                logExportLimit, logListRef, fetchLogs, downloadLogs, configForm, configDirsString,
                 fetchConfig, saveConfig, streamers, newStreamer, activeStreamersCount, fetchStreamers,
                 saveStreamers, addStreamer, removeStreamer, activeRecordingStreamers, onlineStreamersCount,
                 showBatchAddModal, batchAddText, batchAddLoading, handleBatchAdd, cookiesForm, cookiesLoading,
