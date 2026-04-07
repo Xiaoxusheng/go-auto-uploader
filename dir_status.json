@@ -1,11 +1,12 @@
 {
   "D:\\upload\\downloads": {
+    "Mu": {},
     "path": "D:\\upload\\downloads",
-    "totalFiles": 2851,
-    "uploadedFiles": 0,
-    "pendingFiles": 2851,
-    "totalSize": 20294729981,
-    "uploadedSize": 0,
-    "lastScanTime": 1774694380281
+    "totalFiles": 2995,
+    "uploadedFiles": 1,
+    "pendingFiles": 2994,
+    "totalSize": 23444166916,
+    "uploadedSize": 89,
+    "lastScanTime": 1775133967887
   }
 }

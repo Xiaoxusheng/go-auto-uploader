@@ -1514,7 +1514,7 @@
                             style="border: 1px solid var(--glass-border); border-radius: 12px; margin-bottom: 12px; padding: 0;"
                     >
                         <template #item="{ item: log, index }">
-                            <a-list-item style="padding: 6px 16px; border-bottom: 1px dashed rgba(128,128,128,0.15); min-width: 600px;">
+                            <a-list-item style="padding: 6px 16px; border-bottom: 1px dashed rgba(128,128,128,0.15); min-width: 600px; font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 13px;">
                                 <span style="color: var(--color-text-3);">[{{ log.time }}]</span>
                                 <span :style="{ color: getLogLevelColor(log.level), display: 'inline-block', width: '55px', fontWeight: 'bold' }">
                                     [{{ log.level.toUpperCase() }}]

@@ -49,7 +49,7 @@ var (
 
 	dirStatuses sync.Map // 升级优化：彻底废弃 dirStatusesMu，改用高性能字典
 
-	logs    = make([]*LogEntry, 0, 1000)
+	logs    = make([]*LogEntry, 0, 5000) // 优化：扩容到 5000 条，重度运行时 1000 条极易打满
 	logsMu  sync.RWMutex
 	logChan = make(chan *LogEntry, 1000)
 
@@ -352,11 +352,10 @@ func handleExchangeKey(w http.ResponseWriter, r *http.Request) {
 	sessionID := fmt.Sprintf("sess-%d-%d", time.Now().UnixNano(), rand.Intn(1000000))
 	sessionKeys.Store(sessionID, aesKey)
 
-	// 【修复 Bug】Session 24小时后自动过期，防止 sessionKeys map 无限增长（内存泄漏）
-	go func() {
-		time.Sleep(24 * time.Hour)
+	// 优化：使用 time.AfterFunc 替代独立 goroutine sleep，避免大量并发登录时产生孤儿 goroutine 堆积
+	time.AfterFunc(24*time.Hour, func() {
 		sessionKeys.Delete(sessionID)
-	}()
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -584,7 +583,7 @@ func wsDashboardBroadcaster() {
 			clientCount := 0
 			wsClients.Range(func(_, _ interface{}) bool {
 				clientCount++
-				return false // Just to check if it's empty quickly
+				return true // 修复 Bug 2：原来 return false 会立即终止遍历，导致 clientCount 永远最多为 1
 			})
 
 			if clientCount > 0 {
@@ -731,12 +730,13 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiry := time.Now().Add(24 * time.Hour).UnixMilli()
-	tokenMu.Lock()
-	if token == "" {
-		token = "test-token-" + strconv.FormatInt(time.Now().Unix(), 10)
+	// 修复 Bug 7：Dashboard 登录 Token 使用独立变量，不再与远端上传 Token 共用
+	dashboardTokenMu.Lock()
+	if dashboardToken == "" {
+		dashboardToken = "dash-token-" + strconv.FormatInt(time.Now().Unix(), 10)
 	}
-	currentToken := token
-	tokenMu.Unlock()
+	currentToken := dashboardToken
+	dashboardTokenMu.Unlock()
 	sendJSONSuccess(w, r, map[string]interface{}{"token": currentToken, "expiry": expiry})
 }
 
@@ -850,6 +850,11 @@ func buildStatusData() map[string]interface{} {
 	configuredDirs := appConfig.Dirs
 	appConfigMu.RUnlock()
 
+	// 修复 Bug 6：token 受 tokenMu 保护，不能裸读，否则 go race detector 会报警
+	tokenMu.Lock()
+	tokenValid := token != ""
+	tokenMu.Unlock()
+
 	dynInterval := atomic.LoadInt64(&currentDynamicIntervalGlobal)
 	if dynInterval == 0 {
 		dynInterval = int64(currentScanInterval)
@@ -900,7 +905,7 @@ func buildStatusData() map[string]interface{} {
 
 	return map[string]interface{}{
 		"running":          isRunning,
-		"tokenValid":       token != "",
+		"tokenValid":       tokenValid,
 		"workers":          currentWorkers,
 		"dirs":             dirs,
 		"scanningInterval": currentScanInterval,
@@ -1465,8 +1470,13 @@ func getActiveStreamers() []string {
 			continue
 		}
 
-		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
+		// 优化：使用 WalkDir 替代 Walk，避免每个文件多一次 Lstat 系统调用
+		_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			info, err := d.Info()
+			if err != nil {
 				return nil
 			}
 			if time.Since(info.ModTime()) < 3*time.Minute {
@@ -1654,7 +1664,7 @@ func logCollector() {
 	for entry := range logChan {
 		logsMu.Lock()
 		logs = append(logs, entry)
-		if len(logs) > 1000 {
+		if len(logs) > 5000 { // 优化：与初始容量对齐，保留 5000 条
 			logs = logs[1:]
 		}
 		logsMu.Unlock()

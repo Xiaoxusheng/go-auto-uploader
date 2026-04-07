@@ -38,8 +38,12 @@ var (
 	dashboardUsername = "admin"
 	dashboardPassword = "admin"
 
-	token   string
-	tokenMu sync.Mutex
+	// 修复 Bug 7：将远端服务器 Token 与 Dashboard 登录 Token 分开
+	// token 原先被 login() 和 handleLogin() 同时写入，两者语义不同会互相覆盖
+	token            string // 远端 Alist 服务器的 Bearer Token（用于文件上传鉴权）
+	tokenMu          sync.Mutex
+	dashboardToken   string // Dashboard 本地会话 Token（用于前端登录验证）
+	dashboardTokenMu sync.Mutex
 
 	// 优化点：为 httpCli 配置连接池，复用空闲连接，极大减少频繁新建 TCP 请求带来的内存和 CPU 消耗
 	httpCli = &http.Client{
@@ -104,6 +108,9 @@ var (
 
 	// 高性能合并落盘脏标记，采用无锁原子操作防止并发瓶颈
 	dirStatusDirty int32
+
+	// 修复 Bug 5：成功记录的合并落盘脏标记，避免每次上传完都全量重写 50 万条 JSON
+	successLogDirty int32
 
 	// 【彻底解耦扫描与上传】新增的全局异步 Worker 池核心组件
 	globalTaskCh  = make(chan string, 100000) // 十万级超大缓冲，保证扫描引擎永不阻塞
@@ -204,11 +211,14 @@ func (l *logInterceptor) Write(p []byte) (n int, err error) {
 }
 
 // saveConfigToFile 将当前内存中的应用运行时设置持久化落盘至 config.json 文件
+// 注意：调用方必须在调用前自行加锁读取副本，此函数不再内部加锁，避免重入死锁
 func saveConfigToFile() {
 	appConfigMu.RLock()
-	defer appConfigMu.RUnlock()
+	cfgCopy := appConfig
+	appConfigMu.RUnlock()
+
 	// 使用带缩进的 json 格式，便于用户直接查看或修改文件内容
-	data, err := json.MarshalIndent(appConfig, "", "  ")
+	data, err := json.MarshalIndent(cfgCopy, "", "  ")
 	if err == nil {
 		os.WriteFile("config.json", data, 0644)
 	} else {
@@ -289,7 +299,9 @@ func manageWorkers() {
 
 		current := atomic.LoadInt32(&workerCount)
 		for current < int32(desired) {
-			atomic.AddInt32(&workerCount, 1)
+			// 先原子递增并拿到本次新建 Worker 的唯一 ID，再启动 goroutine
+			// 修复 Bug：原先 int(current)+1 依赖循环变量快照，current++ 后 workerID 会跳号
+			newID := int(atomic.AddInt32(&workerCount, 1))
 
 			go func(workerID int) {
 				for path := range globalTaskCh {
@@ -317,7 +329,7 @@ func manageWorkers() {
 					atomic.AddInt64(&activeWorker, -1)
 				}
 				atomic.AddInt32(&workerCount, -1)
-			}(int(current) + 1)
+			}(newID)
 
 			current++
 		}
@@ -420,8 +432,9 @@ func main() {
 	go StartWebServer(webPort)
 	go queueStatusLoop()
 	go reportLoop()
-	go dirStatusPersistLoop() // 挂载高性能异步合并落盘守护机制
-	go manageWorkers()        // 挂载全局异步的 Worker 上传线程池
+	go dirStatusPersistLoop()  // 挂载高性能异步合并落盘守护机制
+	go successLogPersistLoop() // 挂载成功记录批量落盘守护机制（修复 Bug 5）
+	go manageWorkers()         // 挂载全局异步的 Worker 上传线程池
 
 	appConfigMu.RLock()
 	baseInterval := appConfig.ScanInterval
@@ -861,6 +874,7 @@ func handleFile(path string) {
 	}
 
 	// 开始执行远端上传
+	// upload() 内部持有文件句柄（defer f.Close()），函数返回后句柄已关闭，此时再 Remove 安全
 	if upload(path, remote, info.Size()) {
 		saveHash(hash)
 		if err := os.Remove(path); err != nil {
@@ -1190,9 +1204,26 @@ func currentRate() int {
 }
 
 // cleanFileName 对文件命中可能包含表情符、敏感词或导致 500 异常的不规则符号进行剔除修剪
+// 优化：对扩展名也做合法性验证，防止含非 ASCII 字符的扩展名污染上传路径
 func cleanFileName(name string) string {
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
+
+	// 校验扩展名：只允许字母和数字，非法字符一律清除（如中文扩展名、含空格的扩展名等）
+	cleanExt := ext
+	if ext != "" {
+		var eb strings.Builder
+		eb.WriteRune('.') // 保留前导点
+		for _, r := range strings.TrimPrefix(ext, ".") {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+				eb.WriteRune(r)
+			}
+		}
+		cleanExt = eb.String()
+		if cleanExt == "." {
+			cleanExt = "" // 扩展名全部是非法字符，直接丢弃
+		}
+	}
 
 	var b strings.Builder
 	lastDash := false
@@ -1211,7 +1242,7 @@ func cleanFileName(name string) string {
 	if res == "" {
 		res = "file"
 	}
-	return res + ext
+	return res + cleanExt
 }
 
 type UploadRecord struct {
@@ -1272,26 +1303,47 @@ func recordSuccess(remote, name string, size int64) {
 		successRecords = successRecords[len(successRecords)-500000:]
 	}
 
-	// 获取目标日志文件所在的具体目录，确保临时文件和目标文件处于同一磁盘分区，彻底解决 invalid cross-device link 报错
+	// 修复 Bug 5：不再每次追加都全量重写整个 JSON 文件（50 万条时 IO 和 GC 压力极大）
+	// 改为打脏标记，由 successLogPersistLoop 每 15 秒批量合并落盘一次
+	atomic.StoreInt32(&successLogDirty, 1)
+}
+
+// flushSuccessLog 将内存中的成功记录全量序列化后以原子替换方式写入磁盘
+func flushSuccessLog() {
+	successLogMu.Lock()
+	snapshot := make([]UploadRecord, len(successRecords))
+	copy(snapshot, successRecords)
+	successLogMu.Unlock()
+
 	targetDir := filepath.Dir(successLogFile)
 	f, err := os.CreateTemp(targetDir, "upload_success_*.json")
 	if err != nil {
-		log.Printf("[CLEAN][SUCCESS_LOG][ERR] 创建临时日志文件失败: %v", err)
+		log.Printf("[SUCCESS_LOG][ERR] 创建临时日志文件失败: %v", err)
 		return
 	}
 	tmpName := f.Name()
 	enc := json.NewEncoder(f)
-	encErr := enc.Encode(successRecords)
+	encErr := enc.Encode(snapshot)
 	f.Close()
 	if encErr != nil {
-		log.Printf("[CLEAN][SUCCESS_LOG][ERR] 序列化日志失败: %v", encErr)
+		log.Printf("[SUCCESS_LOG][ERR] 序列化日志失败: %v", encErr)
 		os.Remove(tmpName)
 		return
 	}
 	// 原子替换，防止写一半时进程崩溃导致文件损坏
 	if err := os.Rename(tmpName, successLogFile); err != nil {
-		log.Printf("[CLEAN][SUCCESS_LOG][ERR] 写入日志失败: %v", err)
+		log.Printf("[SUCCESS_LOG][ERR] 写入日志失败: %v", err)
 		os.Remove(tmpName)
+	}
+}
+
+// successLogPersistLoop 后台守护协程：每 15 秒检查脏标记，批量合并落盘成功记录
+func successLogPersistLoop() {
+	ticker := time.NewTicker(15 * time.Second)
+	for range ticker.C {
+		if atomic.CompareAndSwapInt32(&successLogDirty, 1, 0) {
+			flushSuccessLog()
+		}
 	}
 }
 
