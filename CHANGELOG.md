@@ -1,6 +1,20 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
 
-### [v2.4.0] - 最新更新 (Telegram Bot & Headless Chrome & Performance Ultra)
+### [v2.4.1] - 2026-04-17 (Telegram Interactive UI & OTA & Performance)
+#### 🌟 核心特性 (New Features)
+* **可视化多级交互面板 (Interactive UI Panel)**：彻底重构 Telegram 交互逻辑。引入九宫格主菜单与动态二级菜单，通过 `Inline Keyboard` 实现全按键操控，支持“一键挂起”、“极速恢复”、“画面截取”等功能，告别命令行输入。
+* **海量主播分页引擎 (Pagination Engine)**：针对 200+ 以上的大规模主播列表，开发了智能内存分页系统。支持自动排序、翻页导航（上一页/下一页）及状态就地刷新，突破了 Telegram 单条消息 100 按钮的物理限制。
+* **OTA CGroup 逃逸更新 (CGroup-Escape Hot Update)**：引入企业级 `systemd-run` 逃逸技术。在执行二进制热替换后，通过独立的临时系统单元触发重启，彻底解决了重启脚本被原 Systemd 进程组连坐杀死的 Bug，并支持重启成功后的 ChatID 定向回执。
+* **零指令智能链接嗅探 (Zero-Command Sniffer)**：为机器人注入了链接感知识别引擎。用户只需在聊天框直接发送直播间链接，系统将自动拦截并触发解析挂载流程，实现无缝添加任务。
+
+#### 🚀 性能与架构极致优化 (Performance & Architecture)
+* **全链路防假死网络动力引擎 (Anti-Deadlock Network Engine)**：针对旁路由/透明代理环境，注入了自定义的高心跳 `http.Client`。开启 15s 级 TCP Keep-Alive 并缩短轮询超时，主动预防长连接被路由器静默掐断导致的“僵尸假死”现象。
+* **MD5 指纹映射系统 (Key Fingerprint Mapping)**：利用 MD5 算法为主播生成 8 位短指纹替代原始超长 URL 塞入按键数据。完美规避了 Telegram 64 字节 Callback Data 限制及 UTF-8 截断导致的 UI 报错。
+* **内存级日志秒发 (Memory Log Export)**：直接从系统高性能环形日志队列中实时抽取数据并生成 `.txt` 附件发送，实现 0 磁盘读写损耗的实时日志导出。
+
+---
+
+### [v2.4.0] - 历史更新 (Telegram Bot & Headless Chrome & Performance Ultra)
 #### 🌟 核心特性 (New Features)
 * **全功能 Telegram 机器人接管 (Telegram Bot Console)**：引入了纯原生的 Telegram Bot 控制台底座。通过绑定专属 `ChatID` 实现严格的安全鉴权。支持通过 `/list`, `/add`, `/pause`, `/resume`, `/status` 等指令实现脱离 Web UI 的全天候极速移动端管控，并内置了针对超长监控列表的“智能分片发送”引擎，突破单条消息字符限制。
 * **无头浏览器短链解析 (Headless Chrome Parsing)**：彻底重构短链接解析引擎。引入 `chromedp` 无头浏览器进行深度穿透，完美绕过重定向与前端风控滑块；同时辅以原生 HTTP 客户端作为保底降级策略 (Fallback)，实现抖音等平台短链到真实房间号的 100% 极速无感解析。
@@ -13,7 +27,7 @@
 * **WS 广播长短周期分离 (Slow/Fast WS Broadcaster)**：优化前端 WebSocket 推送性能。将高频变化数据（队列、流量）的 2 秒级快刷新与重度 I/O 数据（硬盘容量、目录遍历）的 10 秒级慢刷新进行分离降级，避免前端雷达高频拉取打满底层 I/O。
 
 #### 🔧 核心修复与稳定性 (Bug Fixes & Stability)
-* **Token 语义安全隔离 (Token Semantic Isolation)**：【修复 Bug 7】修复了远端 Alist 服务器鉴权 Token 与前端 Dashboard 本地登录 Token 共用单一变量导致互相覆盖的严重鉴权混乱问题。现已将两者在内存与加锁维度（`tokenMu` / `dashboardTokenMu`）完全物理隔离。
+* **Token 语义安全隔离 (Token Semantic Isolation)**：【修复 Bug 7】修复了远端 Openlist 服务器鉴权 Token 与前端 Dashboard 本地登录 Token 共用单一变量导致互相覆盖的严重鉴权混乱问题。现已将两者在内存与加锁维度（`tokenMu` / `dashboardTokenMu`）完全物理隔离。
 * **开播通知防抖护盾 (Notification Debounce)**：针对弱网环境下 FFmpeg 频繁断流重连导致的微信/TG“开播-下播”消息轰炸现象，在内核中引入了 `builtinNotifyDebounce` 并发防抖字典。强制设立 3 分钟的冷却缓冲期，实现无感知的底层静默重连恢复。
 * **ECharts 渲染重叠修复 (ECharts Render Fix)**：修复了由于 Vue 响应式数据频繁驱动导致 ECharts 饼状图中心文字残留与图层重叠的排版 Bug（新增 `show: false` 显式屏蔽）。
 
