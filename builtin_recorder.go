@@ -64,6 +64,9 @@ var (
 	builtinTaskStates  sync.Map // key: platform_roomID, value: "running", "paused", "deleted"
 	builtinCancels     sync.Map // key: platform_roomID, value: context.CancelFunc
 	builtinCustomNames sync.Map // 内存中保存的自定义名称 (由 txt 提供)
+
+	// ✨ 添加全局防抖缓冲池：彻底消除由于网络颠簸引起的 FFmpeg 开播/下播反复横跳现象
+	builtinNotifyDebounce sync.Map
 )
 
 var builtinAnchorLinesMutex sync.Mutex
@@ -91,7 +94,7 @@ func triggerBuiltinBroadcast() {
 	broadcastWS("builtinTasks", GetBuiltinRecorderTasks())
 }
 
-// updateBuiltinStatus 更新指定内置引擎任务的内存运行状态，并识别录制状态变更以触发广播
+// updateBuiltinStatus 更新指定内置引擎任务的内存运行状态，并识别录制状态变更以触发广播与微信通知
 func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMsg string) {
 	key := platform + "_" + roomID
 	now := time.Now()
@@ -107,18 +110,38 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 		if avatar == "" {
 			avatar = oldTask.Avatar
 		}
+
 		if statusMsg == "录制中" {
 			if oldTask.Status != "录制中" {
-				sTime = now
-				isNewlyRecording = true
+				// ✨ 防抖判定：确保两次相同的【开播通知】之间至少缓冲 3 分钟，否则静默恢复时间戳
+				cacheKey := "live_" + key
+				if last, has := builtinNotifyDebounce.Load(cacheKey); !has || time.Since(last.(time.Time)) > 3*time.Minute {
+					builtinNotifyDebounce.Store(cacheKey, now)
+					sTime = now
+					isNewlyRecording = true
+					sendWeChatNotify("开播通知", fmt.Sprintf("检测到平台 [%s] 的主播 [%s] 开始直播并已成功接管录制！", platform, anchorName))
+				} else {
+					sTime = oldTask.startTime // 静默无感知恢复推流，避免惊扰管理员
+				}
 			} else {
 				sTime = oldTask.startTime
+			}
+		} else if statusMsg == "未开播等待中" || statusMsg == "断流缓冲中" || statusMsg == "已暂停" {
+			if oldTask.Status == "录制中" {
+				// ✨ 防抖判定：防下播通知连发
+				cacheKey := "offline_" + key
+				if last, has := builtinNotifyDebounce.Load(cacheKey); !has || time.Since(last.(time.Time)) > 3*time.Minute {
+					builtinNotifyDebounce.Store(cacheKey, now)
+					sendWeChatNotify("下播通知", fmt.Sprintf("检测到平台 [%s] 的主播 [%s] 已经下播或断流停止录制！", platform, anchorName))
+				}
 			}
 		}
 	} else {
 		if statusMsg == "录制中" {
 			sTime = now
 			isNewlyRecording = true
+			builtinNotifyDebounce.Store("live_"+key, now)
+			sendWeChatNotify("开播通知", fmt.Sprintf("检测到平台 [%s] 的主播 [%s] 开始直播并已成功接管录制！", platform, anchorName))
 		}
 	}
 
@@ -1272,7 +1295,7 @@ func (k *KuaishouBuiltinPlatform) GetStreamURL(roomID string, quality string) (s
 		return k.fallbackWeb(roomID, quality)
 	}
 
-	req.Header.Set("User-Agent", "ios/7.830 (ios 17.0; ; iPhone 15 (A2846/A3089/A3090/A3092))")
+	req.Header.Set("User-Agent", "ios/7.830 (ios 17.0; ; iPhone 15 (A2846/A3089/A3090/A3090/A3092))")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Referer", "https://www.kuaishou.com/short-video/3x224rwabjmuc9y?fid=1712760877&cc=share_copylink&followRefer=151&shareMethod=TOKEN&docId=9&kpn=KUAISHOU&subBiz=BROWSE_SLIDE_PHOTO&photoId=3x224rwabjmuc9y&shareId=17144298796566&shareToken=X-6FTMeYTsY97qYL&shareResourceType=PHOTO_OTHER&userId=3xtnuitaz2982eg&shareType=1&et=1_i/2000048330179867715_h3052&shareMode=APP&originShareId=17144298796566&appType=21&shareObjectId=5230086626478274600&shareUrlOpened=0&timestamp=1663833792288&utm_source=app_share&utm_medium=app_share&utm_campaign=app_share&location=app_share")
@@ -1899,7 +1922,7 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 		return
 	}
 
-	// 使用 WaitGroup 精确阻塞与释放旁路抽帧子协程
+	// 使用 WaitGroup 精确实阻塞与释放旁路抽帧子协程
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {

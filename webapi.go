@@ -41,7 +41,7 @@ var (
 	}
 
 	wsClients   sync.Map // 升级优化：无锁化的 WS 客户端广播池
-	wsBroadcast = make(chan WSMessage, 100)
+	wsBroadcast = make(chan WSMessage, 512)
 
 	running   = false
 	runningMu sync.RWMutex
@@ -68,6 +68,7 @@ type WSClient struct {
 	AESKey []byte
 }
 
+// WSMessage WebSocket 标准通信载荷
 type WSMessage struct {
 	Type    string      `json:"type"`
 	Payload interface{} `json:"payload"`
@@ -85,6 +86,7 @@ type DirStatus struct {
 	LastScanTime  int64  `json:"lastScanTime"`
 }
 
+// Config 定义系统核心配置结构 (✨ 已修复：补充 Telegram 核心配置字段)
 type Config struct {
 	ScanInterval       int      `json:"scanInterval"`
 	Workers            int      `json:"workers"`
@@ -107,14 +109,19 @@ type Config struct {
 	MailAuthCode       string   `json:"mailAuthCode"`
 	MailTo             string   `json:"mailTo"`
 	EnableEncryption   bool     `json:"enableEncryption"` // 决定是否开启通信层的数据安全加密
+	WechatToken        string   `json:"wechatToken"`      // 推送加微信通知 Token
+	TelegramToken      string   `json:"telegramToken"`    // ✨ 接入 Telegram 机器人的 Token
+	TelegramChatID     int64    `json:"telegramChatID"`   // ✨ 用于鉴权和主动推送的 TG UserID/ChatID
 }
 
+// Streamer 录制主播配置
 type Streamer struct {
 	URL    string `json:"url"`
 	Name   string `json:"name"`
 	Active bool   `json:"active"`
 }
 
+// LogEntry 标准日志实体
 type LogEntry struct {
 	Time    string `json:"time"`
 	Level   string `json:"level"`
@@ -122,23 +129,27 @@ type LogEntry struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// APIResponse 统一前端接口返回结构
 type APIResponse struct {
 	Code    int         `json:"code"`
 	Message string      `json:"message,omitempty"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
+// TrendPointRes 前端图表展示使用的数据点
 type TrendPointRes struct {
 	Date  string  `json:"date"`
 	Size  float64 `json:"size"`
 	Count int     `json:"count"`
 }
 
+// StreamerRank 主播流量排行榜展示结构
 type StreamerRank struct {
 	Name string  `json:"name"`
 	Size float64 `json:"size"`
 }
 
+// EncryptedRequest 加密通信的载体结构
 type EncryptedRequest struct {
 	Encrypted string `json:"encrypted"`
 }
@@ -429,11 +440,98 @@ func StartWebServer(port int) {
 	go logCollector()
 	go wsDashboardBroadcaster()
 
+	// ✨ 已修复：启动 Web 服务器前同时挂载 Telegram 机器人监听协程
+	go InitTelegramBot()
+
 	addr := fmt.Sprintf(":%d", port)
 	log.Printf("[WEB] 控制台已就绪: http://127.0.0.1%s", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("[WEB] Server error: %v", err)
 	}
+}
+
+// sendWeChatNotify ✨使用 PushPlus (pushplus.plus) 接口发送带高级 SVG 矢量图标的极简现代微信通知
+func sendWeChatNotify(title, body string) {
+	// ✨ 已修复：向底层派发一份到 Telegram 的副本协程，实现微信/Telegram 双路推送
+	go SendTelegramNotification(title, body)
+
+	appConfigMu.RLock()
+	token := appConfig.WechatToken
+	appConfigMu.RUnlock()
+
+	if token == "" {
+		return // Token为空代表用户未开启功能，静默返回
+	}
+
+	// 清理掉调用端可能带入的 Emoji 前缀，让标题纯净干练
+	title = strings.ReplaceAll(title, "▶️ ", "")
+	title = strings.ReplaceAll(title, "⏹️ ", "")
+	title = strings.ReplaceAll(title, "🛑 ", "")
+	title = strings.ReplaceAll(title, "⏸️ ", "")
+
+	// 极简现代的指示点颜色与 SVG 库 (配合透明色块框)
+	iconColor := "#3B82F6" // 科技蓝
+	iconBg := "#EFF6FF"    // 极浅蓝
+	var svgIcon string
+
+	if strings.Contains(title, "开播") {
+		iconColor = "#10B981" // 现代绿
+		iconBg = "#ECFDF5"    // 极浅绿
+		// Phosphor Icon: Broadcast
+		svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 256 256"><path fill="currentColor" d="M168,128a40,40,0,1,1-40-40A40,40,0,0,1,168,128Zm40-8a8,8,0,0,0-8,8,72,72,0,0,1-72,72,8,8,0,0,0,0,16,88.1,88.1,0,0,0,88-88A8,8,0,0,0,208,120Zm48,8a136.15,136.15,0,0,1-136,136,8,8,0,0,1,0-16,120.14,120.14,0,0,0,120-120,8,8,0,0,1,16,0ZM72,128a72,72,0,0,1,72-72,8,8,0,0,0,0-16,88.1,88.1,0,0,0-88,88,8,8,0,0,0,16,0ZM24,128A136.15,136.15,0,0,1,160,8a8,8,0,0,1,0,16A120.14,120.14,0,0,0,40,128a8,8,0,0,1-16,0Z"></path></svg>`
+	} else if strings.Contains(title, "下播") || strings.Contains(title, "暂停") {
+		iconColor = "#F59E0B" // 警示橙
+		iconBg = "#FFFBEB"    // 极浅橙
+		// Phosphor Icon: MinusCircle
+		svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 256 256"><path fill="currentColor" d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm32-88a8,8,0,0,1-8,8H104a8,8,0,0,1,0-16h48A8,8,0,0,1,160,128Z"></path></svg>`
+	} else if strings.Contains(title, "停止") || strings.Contains(title, "异常") || strings.Contains(title, "失败") {
+		iconColor = "#EF4444" // 危险红
+		iconBg = "#FEF2F2"    // 极浅红
+		// Phosphor Icon: WarningCircle
+		svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 256 256"><path fill="currentColor" d="M236.8,188.09,149.35,36.22h0a24.76,24.76,0,0,0-42.7,0L19.2,188.09a23.51,23.51,0,0,0,0,23.72A24.35,24.35,0,0,0,40.55,224h174.9a24.35,24.35,0,0,0,21.33-12.19A23.51,23.51,0,0,0,236.8,188.09ZM222.93,203.8a8.5,8.5,0,0,1-7.48,4.2H40.55a8.5,8.5,0,0,1-7.48-4.2,7.59,7.59,0,0,1,0-7.72L120.52,44.21a8.75,8.75,0,0,1,15,0l87.45,151.87A7.59,7.59,0,0,1,222.93,203.8ZM120,104v40a8,8,0,0,0,16,0V104a8,8,0,0,0-16,0Zm20,68a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"></path></svg>`
+	} else {
+		// Phosphor Icon: Info
+		svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 256 256"><path fill="currentColor" d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z"></path></svg>`
+	}
+
+	// 格式化文本流，兼容微信 HTML 解析
+	formattedBody := strings.ReplaceAll(body, "\n", "<br>")
+	currentTime := time.Now().Format("2006-01-02 15:04:05")
+
+	// 构建带高级 SVG 矢量图标的通知卡片 HTML 模板
+	htmlContent := fmt.Sprintf(`
+	<div style="background: #ffffff; padding: 24px; border-radius: 16px; border: 1px solid #f3f4f6; box-shadow: 0 4px 20px rgba(0,0,0,0.03); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+		<div style="display: flex; align-items: center; margin-bottom: 20px;">
+			<div style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 10px; background-color: %s; color: %s; margin-right: 14px;">
+				%s
+			</div>
+			<div style="font-size: 18px; font-weight: 600; color: #111827; letter-spacing: 0.3px;">%s</div>
+		</div>
+		<div style="font-size: 15px; color: #4b5563; line-height: 1.6; margin-bottom: 24px; letter-spacing: 0.2px;">
+			%s
+		</div>
+		<div style="border-top: 1px solid #f3f4f6; padding-top: 16px; font-size: 12px; color: #9ca3af; display: flex; justify-content: space-between; align-items: center;">
+			<span style="font-family: monospace;">%s</span>
+			<span style="color: #d1d5db; font-weight: 500;">go-auto-uploader</span>
+		</div>
+	</div>
+	`, iconBg, iconColor, svgIcon, title, formattedBody, currentTime)
+
+	reqBody := map[string]string{
+		"token":    token,
+		"title":    title,
+		"content":  htmlContent,
+		"template": "html",
+	}
+	jsonData, _ := json.Marshal(reqBody)
+
+	resp, err := httpCli.Post("http://www.pushplus.plus/send", "application/json", strings.NewReader(string(jsonData)))
+	if err != nil {
+		log.Printf("[NOTIFY][ERR] 微信通知网络请求发送失败: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	log.Printf("[NOTIFY] 📩 现代高级 SVG 版微信通知下发成功: %s", title)
 }
 
 // SendAlert 向前端发送系统弹窗级别的警告通知
@@ -1046,23 +1144,27 @@ func handleControlStart(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, r, nil)
 }
 
-// handleControlPause 响应用户暂停系统的控制指令
+// handleControlPause 响应用户暂停系统的控制指令，并触发微信通知
 func handleControlPause(w http.ResponseWriter, r *http.Request) {
 	runningMu.Lock()
 	running = false
 	runningMu.Unlock()
 
 	log.Println("[CONTROL] ⏸️ 用户下发指令：暂停系统运行")
+	// 发送微信暂停通知
+	sendWeChatNotify("系统暂停上传通知", "管理员已通过控制台下发指令，系统目前已暂停文件上传。")
 	sendJSONSuccess(w, r, nil)
 }
 
-// handleControlStop 响应用户停止系统的控制指令
+// handleControlStop 响应用户停止系统的控制指令，并触发微信通知
 func handleControlStop(w http.ResponseWriter, r *http.Request) {
 	runningMu.Lock()
 	running = false
 	runningMu.Unlock()
 
 	log.Println("[CONTROL] 🛑 用户下发指令：停止系统运行")
+	// 发送微信停止通知
+	sendWeChatNotify("系统停止上传通知", "管理员已通过控制台下发指令，系统目前已完全停止一切上传活动。")
 	sendJSONSuccess(w, r, nil)
 }
 
@@ -1456,58 +1558,6 @@ func handleRecorderStatus(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, r, getRecorderStatus())
 }
 
-// getActiveStreamers 通过探测各目录内是否存在时间较新的文件，推断当前正在处于写入(活跃录制)状态的主播名单
-func getActiveStreamers() []string {
-	appConfigMu.RLock()
-	configuredDirs := appConfig.Dirs
-	appConfigMu.RUnlock()
-
-	activeMap := make(map[string]bool)
-
-	for _, dir := range configuredDirs {
-		dir = strings.TrimSpace(dir)
-		if dir == "" {
-			continue
-		}
-
-		// 优化：使用 WalkDir 替代 Walk，避免每个文件多一次 Lstat 系统调用
-		_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
-			}
-			info, err := d.Info()
-			if err != nil {
-				return nil
-			}
-			if time.Since(info.ModTime()) < 3*time.Minute {
-				rel, err := filepath.Rel(dir, path)
-				if err == nil {
-					parts := strings.Split(filepath.ToSlash(rel), "/")
-					if len(parts) >= 2 {
-						streamerName := parts[len(parts)-2]
-						activeMap[streamerName] = true
-					} else if len(parts) == 1 {
-						name := strings.Split(parts[0], "_")[0]
-						activeMap[name] = true
-					}
-				}
-			}
-			return nil
-		})
-	}
-
-	var result []string
-	for k := range activeMap {
-		result = append(result, k)
-	}
-	return result
-}
-
-// handleActiveStreamers 响应查询正在活跃录制的主播列表接口
-func handleActiveStreamers(w http.ResponseWriter, r *http.Request) {
-	sendJSONSuccess(w, r, getActiveStreamers())
-}
-
 // handleRecorderControl 执行对宿主机底层外部 Docker 容器的启动、停止、重启指令操作
 func handleRecorderControl(w http.ResponseWriter, r *http.Request) {
 	action := r.URL.Query().Get("action")
@@ -1575,41 +1625,34 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	logsMu.RUnlock()
 
 	total := len(filtered)
-
-	end := total - (page-1)*limit
-	if end <= 0 {
+	start := (page - 1) * limit
+	end := start + limit
+	if start >= total {
 		sendJSONSuccess(w, r, map[string]interface{}{"items": []*LogEntry{}, "total": total})
 		return
 	}
-
-	start := end - limit
-	if start < 0 {
-		start = 0
+	if end > total {
+		end = total
 	}
 
 	result := filtered[start:end]
 	sendJSONSuccess(w, r, map[string]interface{}{"items": result, "total": total})
 }
 
-// restoreQueueCounts 系统启动时通过对内存内日志的复用来还原历史排队数，彻底杜绝 I/O 开销
-func restoreQueueCounts() {
-	successLogMu.Lock()
-	listLen := int64(len(successRecords))
-	successLogMu.Unlock()
-
-	// 快速填充内存中表示历史容量的值
-	atomic.StoreInt64(&queueSuccessCount, listLen)
-}
-
-// handleLogsDownload 组装导出的文本系统运行日志，并判断是否需要使用 Base64+AES 进行加密导出
+// handleLogsDownload 提供全量应用系统日志文件的物理导出与下载功能（包含明密文自动协商）
 func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	level := query.Get("level")
 	keyword := query.Get("keyword")
-	exportLimit, _ := strconv.Atoi(query.Get("limit"))
+	limitStr := query.Get("limit")
 
-	w.Header().Set("Content-Type", "text/plain")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=logs-%s.txt", time.Now().Format("20060102-150405")))
+	var exportLimit int
+	if limitStr != "" {
+		exportLimit, _ = strconv.Atoi(limitStr)
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"system_logs_%s.txt\"", time.Now().Format("20060102-150405")))
 
 	logsMu.RLock()
 	filtered := make([]*LogEntry, 0)
@@ -1655,11 +1698,10 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 
 	encryptedLogData, _ := encryptPayload([]byte(sb.String()), key)
 	w.Write([]byte(encryptedLogData))
-
-	log.Printf("[CONTROL] 📥 用户导出了 %d 条系统日志，为确保安全已在文件层全链路加密处理\n", len(filtered))
+	log.Printf("[CONTROL] 🛡️ 用户导出了 %d 条加密系统日志", len(filtered))
 }
 
-// logCollector 后台独立长时运行协程，将 Channel 内部抛出的各级系统日志合并缓存后广播至 WebSocket 流
+// logCollector 异步日志收集器，通过通道接收系统各处投递的日志并维护定长的内存队列，超限则修剪
 func logCollector() {
 	for entry := range logChan {
 		logsMu.Lock()
@@ -1671,4 +1713,25 @@ func logCollector() {
 
 		broadcastWS("newLog", entry)
 	}
+}
+
+// restoreQueueCounts 从恢复内存数据状态计算当前待处理、成功和失败的队列长度
+func restoreQueueCounts() {
+	var waiting, uploading, success, failed, retrying int64
+	enqueuedFiles.Range(func(_, _ interface{}) bool { waiting++; return true })
+	queueUploading.Range(func(_, _ interface{}) bool { uploading++; return true })
+	queueSuccess.Range(func(_, _ interface{}) bool { success++; return true })
+	queueFail.Range(func(_, _ interface{}) bool { failed++; return true })
+	queueRetrying.Range(func(_, _ interface{}) bool { retrying++; return true })
+
+	atomic.StoreInt64(&queueCount, waiting)
+	atomic.StoreInt64(&queueUploadingCount, uploading)
+	atomic.StoreInt64(&queueSuccessCount, success)
+	atomic.StoreInt64(&queueFailCount, failed)
+	atomic.StoreInt64(&queueRetryingCount, retrying)
+}
+
+// handleActiveStreamers 获取活跃的主播列表
+func handleActiveStreamers(w http.ResponseWriter, r *http.Request) {
+	sendJSONSuccess(w, r, getActiveStreamers())
 }

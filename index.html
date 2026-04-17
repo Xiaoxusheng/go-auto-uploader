@@ -1704,6 +1704,39 @@
                             </a-form-item>
 
                             <a-divider style="margin: 12px 0;"><span
+                                    style="color: var(--color-text-3); font-size: 12px;">微信通知服务 (PushPlus)</span></a-divider>
+                            <a-form-item field="wechatToken" label="个人通知 Token">
+                                <a-input v-model="configForm.wechatToken" size="small" placeholder="请输入 pushplus.plus 获取的 Token" allow-clear>
+                                    <template #prefix>
+                                        <icon-message></icon-message>
+                                    </template>
+                                </a-input>
+                                <template #help>填入后系统将在关键事件（如：主播开播、下播以及服务器挂起）时向您的微信推送实时警告。请前往 <a href="https://www.pushplus.plus/" target="_blank" style="color: rgb(var(--primary-6)); text-decoration: none;">PushPlus 官网</a> 免费获取。</template>
+                            </a-form-item>
+
+                            <a-divider style="margin: 12px 0;"><span
+                                    style="color: var(--color-text-3); font-size: 12px;">Telegram 机器人控制台设置</span></a-divider>
+                            <a-row :gutter="24">
+                                <a-col :xs="24" :sm="12">
+                                    <a-form-item field="telegramToken" label="Bot Token" tooltip="从 @BotFather 获取的机器人 Token">
+                                        <a-input v-model="configForm.telegramToken" size="small" placeholder="例如: 1234567890:AAH_XYZ..." allow-clear>
+                                            <template #prefix>
+                                                <icon-robot></icon-robot>
+                                            </template>
+                                        </a-input>
+                                    </a-form-item>
+                                </a-col>
+                                <a-col :xs="24" :sm="12">
+                                    <a-form-item field="telegramChatID" label="管理员 Chat ID" tooltip="你的专属 ID，用于接收通知并拦截陌生人指令">
+                                        <a-input-number v-model="configForm.telegramChatID" size="small" placeholder="例如: 123456789" hide-button allow-clear>
+                                            <template #prefix>
+                                                <icon-user></icon-user>
+                                            </template>
+                                        </a-input-number>
+                                    </a-form-item>
+                                </a-col>
+                            </a-row>
+                            <a-divider style="margin: 12px 0;"><span
                                     style="color: var(--color-text-3); font-size: 12px;">本地监控配置</span></a-divider>
                             <a-form-item field="dirs" label="需被监听扫描的本地目录 (多目录用逗号 , 隔开)">
                                 <a-textarea v-model="configDirsString" :auto-size="{ minRows: 3 }" size="small"
@@ -3476,7 +3509,7 @@
             /**
              * 系统级长时间跨度秒值分解转换为小时及分钟等高纬时间的显示解析构造法
              * @param {number} seconds 累计流转逝去时间秒钟计算标示
-             * @returns {string} 合并修整完成带标签展示文本串
+             * @returns {string} 合合并修整完成带标签展示文本串
              */
             const formatDuration = (seconds) => {
                 const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60);

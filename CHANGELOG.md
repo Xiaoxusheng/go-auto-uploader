@@ -1,6 +1,24 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
 
-### [v2.3.2] - 最新更新 (Concurrency Lock & Huge File Fix)
+### [v2.4.0] - 最新更新 (Telegram Bot & Headless Chrome & Performance Ultra)
+#### 🌟 核心特性 (New Features)
+* **全功能 Telegram 机器人接管 (Telegram Bot Console)**：引入了纯原生的 Telegram Bot 控制台底座。通过绑定专属 `ChatID` 实现严格的安全鉴权。支持通过 `/list`, `/add`, `/pause`, `/resume`, `/status` 等指令实现脱离 Web UI 的全天候极速移动端管控，并内置了针对超长监控列表的“智能分片发送”引擎，突破单条消息字符限制。
+* **无头浏览器短链解析 (Headless Chrome Parsing)**：彻底重构短链接解析引擎。引入 `chromedp` 无头浏览器进行深度穿透，完美绕过重定向与前端风控滑块；同时辅以原生 HTTP 客户端作为保底降级策略 (Fallback)，实现抖音等平台短链到真实房间号的 100% 极速无感解析。
+* **现代级 PushPlus 微信通知 (Modern WeChat Notify)**：升级了通知模块，全面接入 PushPlus 接口。结合现代化的 SVG 矢量图标与情感色彩体系（科技蓝、现代绿、警示橙、危险红），为开播、下播、系统熔断等关键事件提供高颜值的富文本卡片推送。
+
+#### 🚀 性能与架构极致优化 (Performance & Architecture)
+* **O(1) 增量聚合图表引擎 (O(1) Incremental Stats)**：彻底重构了数据大盘的计算逻辑。废弃了每次刷新均需全量遍历五十万条记录的 O(N) 灾难级消耗，改用 `sync.Map` 构建高并发无锁的增量聚合池 (`trendStats` 与 `rankStats`)。微秒级吐出图表数据，彻底铲除了高负载下的 CPU 尖峰卡顿。
+* **成功记录脏标记落盘剥离 (Dirty Write I/O Optimization)**：【修复 Bug 5】重构了海量成功日志的持久化机制。引入 `successLogDirty` 原子脏标记与独立的 `successLogPersistLoop` 后台守护协程。将全量 JSON 重写操作改为在内存中缓存并在每 15 秒批量合并落盘一次。将磁盘 I/O 压力与 GC 开销降低了数个数量级。
+* **HTTP 连接池全局复用 (HTTP Connection Pool)**：为全局 `httpCli` 配置了底层的 TCP Keep-Alive 连接池（`MaxIdleConns` 等参数）。在高频检测与海量小文件通信时，免去了频繁握手挥手的开销，极大降低了网络层的 CPU 与内存消耗。
+* **WS 广播长短周期分离 (Slow/Fast WS Broadcaster)**：优化前端 WebSocket 推送性能。将高频变化数据（队列、流量）的 2 秒级快刷新与重度 I/O 数据（硬盘容量、目录遍历）的 10 秒级慢刷新进行分离降级，避免前端雷达高频拉取打满底层 I/O。
+
+#### 🔧 核心修复与稳定性 (Bug Fixes & Stability)
+* **Token 语义安全隔离 (Token Semantic Isolation)**：【修复 Bug 7】修复了远端 Alist 服务器鉴权 Token 与前端 Dashboard 本地登录 Token 共用单一变量导致互相覆盖的严重鉴权混乱问题。现已将两者在内存与加锁维度（`tokenMu` / `dashboardTokenMu`）完全物理隔离。
+* **开播通知防抖护盾 (Notification Debounce)**：针对弱网环境下 FFmpeg 频繁断流重连导致的微信/TG“开播-下播”消息轰炸现象，在内核中引入了 `builtinNotifyDebounce` 并发防抖字典。强制设立 3 分钟的冷却缓冲期，实现无感知的底层静默重连恢复。
+* **ECharts 渲染重叠修复 (ECharts Render Fix)**：修复了由于 Vue 响应式数据频繁驱动导致 ECharts 饼状图中心文字残留与图层重叠的排版 Bug（新增 `show: false` 显式屏蔽）。
+
+---
+### [v2.3.2] - 历史更新 (Concurrency Lock & Huge File Fix)
 #### 🔧 核心修复与优化 (Bug Fixes & Optimization)
 * **超大文件上传超时修复 (Huge File Timeout Fix)**：将全局 HTTP 客户端 (`httpCli`) 的 `Timeout` 强制设为 `0`。彻底解决了在上传数十 GB 超大文件或极端弱网环境下，因传输耗时过长导致底层连接被系统强行掐断，进而触发安全熔断误挂起的严重 Bug。
 * **高并发读写锁重构 (RWMutex Concurrency Polish)**：全面重构了底层的并发数据结构（`wsClients`, `sessionKeys`, `dirStatuses`, `hashCache` 等）。摒弃了粗暴的全局大锁，转而采用 Go 原生 `map` 配合细粒度的 `sync.RWMutex` 读写锁。特别是在 WebSocket 广播流中引入了“读锁快照拷贝”安全分发机制，从根本上消除了 `concurrent map iteration and map write` 的引擎崩溃风险与广播假死问题。
@@ -9,7 +27,7 @@
 
 ### [v2.3.1] - 历史更新 (Zero-Byte Shield & UI Stability)
 #### 🔧 核心修复 (Bug Fixes)
-* **空切片物理粉碎 (Zero-Byte File Shredding)**：修复了由于 FFmpeg 异常断流或卡顿残留的 `0 Bytes` 空视频切片，导致上传引擎向远端发起无载荷的非法请求，进而触发远端网关 `500 Internal Server Error` 以及本地系统连续 30 次失败后最高级安全熔断挂起的致命 Bug。现在，扫描引擎与处理器已构筑双重护盾，一旦发现 0 字节死文件将直接在底层物理销毁，彻底净化磁盘环境。
+* **空切片物理粉碎 (Zero-Byte File Shredding)**：修复了由于 FFmpeg 异常断流或卡顿残留的 `0 Bytes` 空视频切片，导致上传引擎向远端发起无载荷的非法请求，进而触发远端网关 `500 Internal Server Error` 以及本地系统连续 30 次失败后最高级安全熔断挂起的致命 Bug。现在，扫描引擎与处理器已构构筑双重护盾，一旦发现 0 字节死文件将直接在底层物理销毁，彻底净化磁盘环境。
 * **浮点除零异常修复 (NaN Progress Fix)**：修复了底层文件流进度读取器 (`ProgressReader`) 在处理空文件时，因分母计算为 0 导致浮点数运算出现 `NaN` (Not a Number) 的安全隐患。彻底清除了由此引发的前端 WebSocket 数据解析异常与界面崩溃风险。
 * **远端拦截明细透传 (Remote Error Exposing)**：优化了 HTTP 客户端的错误捕捉逻辑。当远端服务器拒绝接收文件（如格式不符或抛出异常）时，系统不再笼统提示“解析响应体失败”，而是精准截获并向前端拦截气泡透传远端的真实状态码（如 500）与详细报错信息，极大提升了排错效率。
 

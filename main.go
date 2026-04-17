@@ -116,6 +116,10 @@ var (
 	globalTaskCh  = make(chan string, 100000) // 十万级超大缓冲，保证扫描引擎永不阻塞
 	enqueuedFiles sync.Map                    // 任务防重防漏护盾
 	workerCount   int32                       // 当前实际运行的 Worker 数量
+
+	// ✨ 记录外部引擎活跃主播字典，用于对比下发开播/下播通知
+	lastActiveMap   = make(map[string]bool)
+	lastActiveMapMu sync.Mutex
 )
 
 var (
@@ -338,7 +342,7 @@ func manageWorkers() {
 	}
 }
 
-// pauseSystemOnFailure 当网络故障或远端拒绝频繁到达阈值时，触发系统自动保护熔断挂起功能
+// pauseSystemOnFailure 当网络故障或远端拒绝频繁到达阈值时，触发系统自动保护熔断挂起功能，并通过微信向管理员发起强警告
 func pauseSystemOnFailure(reason string) {
 	runningMu.Lock()
 	wasRunning := running
@@ -349,6 +353,8 @@ func pauseSystemOnFailure(reason string) {
 		log.Printf("[SYSTEM][AUTO-PAUSE] 🚨 触发安全熔断机制: %s", reason)
 		// 向前端下发最高优先级的系统强弹窗警告
 		SendAlert("error", "🛑 触发系统熔断保护", reason+"\n为防止本地任务大量报错，上传引擎已自动挂起！请检查远端服务器状态后，手动点击【启动扫描】恢复运行。")
+		// 新增：向管理员微信推送重大中断警报
+		sendWeChatNotify("异常通知", fmt.Sprintf("系统已触发自动保护熔断并挂起队列上传。异常原因：\n%s", reason))
 	}
 }
 
@@ -1638,4 +1644,102 @@ func addLog(level, message, errorMsg string) {
 	case logChan <- entry:
 	default:
 	}
+}
+
+// getActiveStreamers 通过探测各目录内是否存在时间较新的文件，推断当前正在处于写入(活跃录制)状态的主播名单，并与上次比对触发微信开播/下播通知
+func getActiveStreamers() []string {
+	appConfigMu.RLock()
+	configuredDirs := appConfig.Dirs
+	appConfigMu.RUnlock()
+
+	activeMap := make(map[string]bool)
+
+	for _, dir := range configuredDirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+
+		// 优化：使用 WalkDir 替代 Walk，避免每个文件多一次 Lstat 系统调用
+		_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
+			if time.Since(info.ModTime()) < 3*time.Minute {
+				rel, err := filepath.Rel(dir, path)
+				if err == nil {
+					parts := strings.Split(filepath.ToSlash(rel), "/")
+					if len(parts) >= 2 {
+						streamerName := parts[len(parts)-2]
+						activeMap[streamerName] = true
+					} else if len(parts) == 1 {
+						name := strings.Split(parts[0], "_")[0]
+						activeMap[name] = true
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	var result []string
+	for k := range activeMap {
+		result = append(result, k)
+	}
+
+	// ✨ 核心防重排斥机制：提取当前处于活跃状态的内置引擎任务名单
+	builtinNames := make(map[string]bool)
+	for _, t := range GetBuiltinRecorderTasks() {
+		if t.Status == "录制中" { // 只排斥确实在录制中的任务，防止干扰
+			// 将特殊字符去除，匹配目录名可能发生的清洗化逻辑
+			safeName := t.AnchorName
+			invalidChars := []string{"\\", "/", ":", "*", "?", "\"", "<", ">", "|", "\r", "\n", "\t", "　"}
+			for _, char := range invalidChars {
+				safeName = strings.ReplaceAll(safeName, char, "")
+			}
+			safeName = strings.TrimSpace(safeName)
+			safeName = strings.Trim(safeName, " ._-")
+			if safeName == "" {
+				safeName = t.RoomID
+			}
+			builtinNames[safeName] = true
+			builtinNames[t.AnchorName] = true // 原名也存一份备用比对
+		}
+	}
+
+	// 提取差异，推送微信开播和下播通知
+	lastActiveMapMu.Lock()
+
+	// 检测新开播
+	for streamer := range activeMap {
+		if !lastActiveMap[streamer] {
+			// ✨ 【防碰撞】：如果这个主播已经在内置引擎的录制名单里，雷达保持静默
+			if !builtinNames[streamer] {
+				sendWeChatNotify("开播通知", fmt.Sprintf("检测到外部录制引擎中主播 [%s] 的文件夹有新数据写入，判断为开始录制！", streamer))
+			}
+		}
+	}
+
+	// 检测已下播
+	for streamer := range lastActiveMap {
+		if !activeMap[streamer] {
+			// ✨ 【防碰撞】：同理，如果是内置引擎负责录制的，外部雷达不发下播通知
+			if !builtinNames[streamer] {
+				sendWeChatNotify("下播通知", fmt.Sprintf("检测到外部录制引擎中主播 [%s] 的文件夹已停止数据写入，判断为结束录制！", streamer))
+			}
+		}
+	}
+
+	// 更新缓存状态供下轮对比
+	lastActiveMap = make(map[string]bool)
+	for k, v := range activeMap {
+		lastActiveMap[k] = v
+	}
+	lastActiveMapMu.Unlock()
+
+	return result
 }
