@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/json" // ✨ 新增：用于将 Telegram 修改的水印配置持久化写入本地
 	"fmt"
 	"html"
 	"io"
@@ -24,7 +25,8 @@ import (
 
 /* ==========================================
  * 高性能 Telegram 机器人控制守护模块 (终极版)
- * 包含：全链路防假死网络引擎、动态分页 UI、MD5 按键指纹、OTA 逃逸更新、内存极速搜索
+ * 包含：全链路防假死网络引擎、动态分页 UI、MD5 按键指纹、OTA 逃逸更新、内存极速搜索、水印热控
+ * ✨ 新增：指数退避重连机制、MediaGroup 防风控相册发送、EditMessageMedia 原地幻灯片动态刷新
  * ========================================== */
 
 var (
@@ -33,7 +35,7 @@ var (
 )
 
 // InitTelegramBot 初始化 Telegram 机器人引擎。
-// 职责：注入防假死网络客户端，读取全局配置，建立长连接，挂载异步监听，并自动注册原生快捷菜单栏。
+// 职责：注入防假死网络客户端，读取全局配置，建立长连接。增加独立守护协程与指数退避重连机制，彻底解决系统启动时断网导致的失效问题。
 func InitTelegramBot() {
 	log.Println("[TG-BOT] 🚀 开始初始化 Telegram 引擎...")
 	appConfigMu.RLock()
@@ -63,22 +65,36 @@ func InitTelegramBot() {
 		Timeout: 90 * time.Second, // 给整个 Client 加上超时上限，彻底杜绝僵尸死锁
 	}
 
-	var err error
-	log.Println("[TG-BOT] 🔌 正在连接 Telegram 官方服务器...")
+	// 核心架构升级：启动专属初始化守护协程，加入指数退避(Exponential Backoff)算法
+	go func() {
+		var err error
+		backoff := 2 * time.Second
+		maxBackoff := 60 * time.Second
 
-	// 使用自定义的强力 Client 替代默认的 http.DefaultClient
-	tgBot, err = tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, customClient)
-	if err != nil {
-		log.Printf("[TG-BOT] ❌ 机器人连接失败 (可能网络不通): %v\n", err)
-		return
-	}
+		for {
+			log.Println("[TG-BOT] 🔌 正在连接 Telegram 官方服务器...")
+			// 使用自定义的强力 Client 替代默认的 http.DefaultClient
+			tgBot, err = tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, customClient)
+			if err != nil {
+				log.Printf("[TG-BOT] ❌ 机器人连接失败 (网络异常或 Token 错误)，将在 %v 后重试: %v\n", backoff, err)
+				time.Sleep(backoff)
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
 
-	tgEnabled = true
-	log.Printf("[TG-BOT] ✅ 已成功接管机器人: @%s", tgBot.Self.UserName)
+			tgEnabled = true
+			log.Printf("[TG-BOT] ✅ 已成功接管机器人: @%s", tgBot.Self.UserName)
 
-	go checkAndNotifyOTASuccess()
-	go registerBotCommands()
-	go startTelegramListener()
+			go checkAndNotifyOTASuccess()
+			go registerBotCommands()
+			go startTelegramListener()
+
+			break // 成功接管后退出初始化死循环
+		}
+	}()
 }
 
 // registerBotCommands 自动化注册 Telegram 原生快捷菜单栏。
@@ -120,74 +136,117 @@ func checkAndNotifyOTASuccess() {
 }
 
 // startTelegramListener 启动长轮询监听器。
-// 职责：拦截文本、智能嗅探链接、处理文件更新，并极速响应 CallbackQuery 按钮点击，设置极短轮询超时防假死。
+// 职责：通过外层看门狗无限循环与 panic 恢复，保证底层监听协程永不假死。彻底异步化主事件流，并引入动态退避重连避免资源浪费。
 func startTelegramListener() {
-	log.Println("[TG-BOT] 📡 开启长轮询，正在监听所有来自 Telegram 的事件...")
-	u := tgbotapi.NewUpdate(0)
+	backoff := 2 * time.Second
+	maxBackoff := 60 * time.Second
 
-	// 核心网络优化：把等待超时从 60 秒降低到 15 秒
-	// 抢在路由器的 NAT 连接闲置失效之前主动结束并重新发起请求
-	u.Timeout = 15
-
-	updates := tgBot.GetUpdatesChan(u)
-
-	for update := range updates {
-		appConfigMu.RLock()
-		allowedChatID := appConfig.TelegramChatID
-		appConfigMu.RUnlock()
-
-		if update.CallbackQuery != nil {
-			if allowedChatID != 0 && update.CallbackQuery.Message.Chat.ID != allowedChatID {
-				log.Printf("[TG-BOT-DEBUG] ⛔ 非法越权按钮点击，已拦截\n")
-				tgBot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "⛔ 无权限操作"))
-				continue
-			}
-			go handleTelegramCallback(update.CallbackQuery)
-			continue
-		}
-
-		if update.Message == nil {
-			continue
-		}
-
-		if allowedChatID != 0 && update.Message.Chat.ID != allowedChatID {
-			log.Printf("[TG-BOT-DEBUG] ⛔ 拦截到陌生人发消息 (ChatID: %d)\n", update.Message.Chat.ID)
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "⛔ <b>[安全拦截]</b> 您没有权限控制此录制基站。")
-			msg.ParseMode = "HTML"
-			tgBot.Send(msg)
-			continue
-		}
-
-		// ✨ 捕获 ForceReply 回复内容 (用于交互式搜索)
-		if update.Message.ReplyToMessage != nil && strings.Contains(update.Message.ReplyToMessage.Text, "请输入要搜索的主播名称") {
-			go tgHandleSearch(update.Message.Chat.ID, update.Message.Text)
-			continue
-		}
-
-		if update.Message.Document != nil && strings.TrimSpace(update.Message.Caption) == "/update" {
-			log.Println("[TG-BOT] 🚀 触发 OTA 热更新流程")
-			go tgHandleUpdateBinary(update.Message)
-			continue
-		}
-
-		if strings.Contains(update.Message.Text, "http://") || strings.Contains(update.Message.Text, "https://") {
-			log.Println("[TG-BOT] 🔍 触发零指令链接嗅探添加...")
-			go func() {
-				chatID := update.Message.Chat.ID
-				loadingMsg := tgbotapi.NewMessage(chatID, "⏳ 嗅探到链接，正在解析目标直播间特征...")
-				sent, _ := tgBot.Send(loadingMsg)
-
-				res := tgHandleAdd(update.Message.Text)
-
-				if sent.MessageID != 0 {
-					tgBot.Send(tgbotapi.NewDeleteMessage(chatID, sent.MessageID))
+	for {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[TG-BOT-ERROR] 💥 监听协程发生严重崩溃，正在尝试重启: %v\n", r)
 				}
-				splitAndSendTelegramMsg(chatID, res)
 			}()
-			continue
-		}
 
-		go handleTelegramCommand(update.Message)
+			log.Println("[TG-BOT] 📡 开启长轮询，正在监听所有来自 Telegram 的事件...")
+			u := tgbotapi.NewUpdate(0)
+
+			// 核心网络优化：把等待超时从 60 秒降低到 15 秒
+			// 抢在路由器的 NAT 连接闲置失效之前主动结束并重新发起请求
+			u.Timeout = 15
+
+			updates := tgBot.GetUpdatesChan(u)
+
+			for update := range updates {
+				// 网络通信健康，重置退避时间
+				backoff = 2 * time.Second
+
+				appConfigMu.RLock()
+				allowedChatID := appConfig.TelegramChatID
+				appConfigMu.RUnlock()
+
+				if update.CallbackQuery != nil {
+					if allowedChatID != 0 && update.CallbackQuery.Message.Chat.ID != allowedChatID {
+						log.Printf("[TG-BOT-DEBUG] ⛔ 非法越权按钮点击，已拦截\n")
+						// 优化：异步发送网络请求，防止堵塞主事件分发通道
+						go tgBot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "⛔ 无权限操作"))
+						continue
+					}
+					go handleTelegramCallback(update.CallbackQuery)
+					continue
+				}
+
+				if update.Message == nil {
+					continue
+				}
+
+				if allowedChatID != 0 && update.Message.Chat.ID != allowedChatID {
+					log.Printf("[TG-BOT-DEBUG] ⛔ 拦截到陌生人发消息 (ChatID: %d)\n", update.Message.Chat.ID)
+					// 优化：使用传参匿名协程，实现无锁并发发送，抵御恶意刷屏风暴
+					go func(chatID int64) {
+						msg := tgbotapi.NewMessage(chatID, "⛔ <b>[安全拦截]</b> 您没有权限控制此录制基站。")
+						msg.ParseMode = "HTML"
+						tgBot.Send(msg)
+					}(update.Message.Chat.ID)
+					continue
+				}
+
+				// ✨ 捕获 ForceReply 回复内容 (用于交互式搜索与水印设置等极客体验流)
+				if update.Message.ReplyToMessage != nil {
+					replyText := update.Message.ReplyToMessage.Text
+					if strings.Contains(replyText, "请输入要搜索的主播名称") {
+						go tgHandleSearch(update.Message.Chat.ID, update.Message.Text)
+						continue
+					}
+					if strings.Contains(replyText, "请输入新的自定义水印内容") {
+						go tgHandleSetWatermarkText(update.Message.Chat.ID, update.Message.Text)
+						continue
+					}
+					if strings.Contains(replyText, "请输入新的水印字体大小") {
+						go tgHandleSetWatermarkSize(update.Message.Chat.ID, update.Message.Text)
+						continue
+					}
+					if strings.Contains(replyText, "请输入新的水印字体颜色") {
+						go tgHandleSetWatermarkColor(update.Message.Chat.ID, update.Message.Text)
+						continue
+					}
+				}
+
+				if update.Message.Document != nil && strings.TrimSpace(update.Message.Caption) == "/update" {
+					log.Println("[TG-BOT] 🚀 触发 OTA 热更新流程")
+					go tgHandleUpdateBinary(update.Message)
+					continue
+				}
+
+				if strings.Contains(update.Message.Text, "http://") || strings.Contains(update.Message.Text, "https://") {
+					log.Println("[TG-BOT] 🔍 触发零指令链接嗅探添加...")
+					// 优化：变量提取与闭包传参，防止高并发下指针地址被覆写串线
+					go func(msg *tgbotapi.Message) {
+						chatID := msg.Chat.ID
+						loadingMsg := tgbotapi.NewMessage(chatID, "⏳ 嗅探到链接，正在解析目标直播间特征...")
+						sent, _ := tgBot.Send(loadingMsg)
+
+						res := tgHandleAdd(msg.Text)
+
+						if sent.MessageID != 0 {
+							tgBot.Send(tgbotapi.NewDeleteMessage(chatID, sent.MessageID))
+						}
+						splitAndSendTelegramMsg(chatID, res)
+					}(update.Message)
+					continue
+				}
+
+				go handleTelegramCommand(update.Message)
+			}
+		}()
+
+		log.Printf("[TG-BOT-WARNING] ⚠️ Telegram 监听通道因底层网络震荡异常关闭，%v 后执行看门狗重连...\n", backoff)
+		time.Sleep(backoff)
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
 	}
 }
 
@@ -198,7 +257,7 @@ func getTaskHash(key string) string {
 }
 
 // handleTelegramCallback 路由动态按钮点击事件中心。
-// 职责：解析多级菜单请求、处理分页参数，反向解析 MD5 指纹定位内存目标，并向下兼容旧版本面板的点击。
+// 职责：解析多级菜单请求、处理分页参数，反向解析 MD5 指纹定位内存目标，并支持原地刷新封面动作。
 func handleTelegramCallback(query *tgbotapi.CallbackQuery) {
 	chatID := query.Message.Chat.ID
 	action := query.Data
@@ -213,16 +272,15 @@ func handleTelegramCallback(query *tgbotapi.CallbackQuery) {
 		tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
 		tgHandleHelp(chatID, msgID)
 
-	case action == "action_search": // ✨ 新增的搜索回调拦截
+	case action == "action_search":
 		tgBot.Request(tgbotapi.NewCallback(query.ID, "请在键盘输入关键字"))
 		msg := tgbotapi.NewMessage(chatID, "🔍 <b>请输入要搜索的主播名称或房间号：</b>\n*(直接回复本条消息，或随时使用 <code>/find 关键字</code>)*")
 		msg.ParseMode = "HTML"
-		// 启用 ForceReply，让用户体验极其顺滑
 		msg.ReplyMarkup = tgbotapi.ForceReply{ForceReply: true, Selective: true}
 		tgBot.Send(msg)
 
 	case action == "action_list":
-		tgBot.Request(tgbotapi.NewCallback(query.ID, "正在抓取画面..."))
+		tgBot.Request(tgbotapi.NewCallback(query.ID, "正在打包装配相册..."))
 		tgHandleList(chatID)
 
 	case action == "action_status":
@@ -236,11 +294,61 @@ func handleTelegramCallback(query *tgbotapi.CallbackQuery) {
 	case action == "action_add":
 		tgBot.Request(tgbotapi.NewCallbackWithAlert(query.ID, "💡 智能添加模式已开启：\n\n无需任何指令，请直接将直播链接粘贴并发送给机器人即可！"))
 
+	case action == "action_watermark":
+		tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
+		tgEditToWatermarkMenu(chatID, msgID)
+
+	case action == "toggle_watermark":
+		if builtinConfig != nil {
+			builtinConfig.WatermarkEnable = !builtinConfig.WatermarkEnable
+			saveBuiltinConfigTG()
+		}
+		tgBot.Request(tgbotapi.NewCallback(query.ID, "引擎水印状态已切换！"))
+		tgEditToWatermarkMenu(chatID, msgID) // 原地刷新面板
+
+	case action == "set_watermark_text":
+		tgBot.Request(tgbotapi.NewCallback(query.ID, "请在键盘输入新水印内容"))
+		msg := tgbotapi.NewMessage(chatID, "🔔 <b>请输入新的自定义水印内容：</b>\n*(直接回复本条消息即可生效)*")
+		msg.ParseMode = "HTML"
+		msg.ReplyMarkup = tgbotapi.ForceReply{ForceReply: true, Selective: true}
+		tgBot.Send(msg)
+
+	case action == "set_watermark_size":
+		tgBot.Request(tgbotapi.NewCallback(query.ID, "请在键盘输入新字体大小"))
+		msg := tgbotapi.NewMessage(chatID, "📏 <b>请输入新的水印字体大小（纯数字，例如 38）：</b>\n*(直接回复本条消息即可生效)*")
+		msg.ParseMode = "HTML"
+		msg.ReplyMarkup = tgbotapi.ForceReply{ForceReply: true, Selective: true}
+		tgBot.Send(msg)
+
+	case action == "set_watermark_color":
+		tgBot.Request(tgbotapi.NewCallback(query.ID, "请在键盘输入新字体颜色"))
+		msg := tgbotapi.NewMessage(chatID, "🎨 <b>请输入新的水印字体颜色：</b>\n支持颜色名或带透明度的格式（例如 <code>white@0.95</code> 或 <code>yellow</code> 或 <code>black@0.5</code>）：\n*(直接回复本条消息即可生效)*")
+		msg.ParseMode = "HTML"
+		msg.ReplyMarkup = tgbotapi.ForceReply{ForceReply: true, Selective: true}
+		tgBot.Send(msg)
+
 	case action == "action_close":
 		tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
 		tgBot.Send(tgbotapi.NewDeleteMessage(chatID, msgID))
 
-	// 二级菜单展开逻辑 (智能兼容旧版无分页数据: menu_pause vs 新版: menu_pause_1)
+	// ✨ 新增拦截器：拦截幻灯片原地动态刷新的热更新请求
+	case strings.HasPrefix(action, "refresh_cover_"):
+		hash := strings.TrimPrefix(action, "refresh_cover_")
+		var key string
+		// 通过 MD5 短指纹反向寻址内存全称键值
+		builtinStatusMap.Range(func(k, v interface{}) bool {
+			if getTaskHash(k.(string)) == hash {
+				key = k.(string)
+				return false
+			}
+			return true
+		})
+		if key == "" {
+			tgBot.Request(tgbotapi.NewCallback(query.ID, "⚠️ 任务已过期或未找到"))
+			return
+		}
+		tgHandleRefreshCover(chatID, msgID, key, query.ID)
+
 	case strings.HasPrefix(action, "menu_"):
 		parts := strings.Split(action, "_")
 		if len(parts) >= 2 {
@@ -253,7 +361,6 @@ func handleTelegramCallback(query *tgbotapi.CallbackQuery) {
 			tgEditToTargetMenu(chatID, msgID, targetAction, page)
 		}
 
-	// 精确指令执行逻辑 (带指纹映射，防数据截断报错)
 	case strings.HasPrefix(action, "do_"):
 		parts := strings.Split(action, "_")
 		var cmd, key string
@@ -304,8 +411,138 @@ func handleTelegramCallback(query *tgbotapi.CallbackQuery) {
 	}
 }
 
+// saveBuiltinConfigTG 将内置引擎配置落盘保存。
+// 职责：序列化内存中的 builtinConfig 并覆盖本地文件，确保在 Telegram 做的设置更改在系统重启后不会丢失。
+func saveBuiltinConfigTG() {
+	if builtinConfig == nil {
+		return
+	}
+	data, err := json.MarshalIndent(builtinConfig, "", "    ")
+	if err == nil {
+		os.WriteFile("builtin_config.json", data, 0644)
+	} else {
+		log.Printf("[TG-BOT-DEBUG] ⚠️ Telegram 保存配置文件异常: %v\n", err)
+	}
+}
+
+// tgEditToWatermarkMenu 渲染水印与截图设置控制面板。
+// 职责：提供一个独立的可视化界面，用于开关截图和录制画面的水印，并可直接进入各项参数修改流。
+func tgEditToWatermarkMenu(chatID int64, messageID int) {
+	status := "🔴 已关闭"
+	if builtinConfig != nil && builtinConfig.WatermarkEnable {
+		status = "🟢 已开启"
+	}
+
+	textStr := "默认"
+	if builtinConfig != nil && builtinConfig.WatermarkText != "" {
+		textStr = builtinConfig.WatermarkText
+	}
+
+	formatStr := "%Y-%m-%d %H:%M:%S"
+	if builtinConfig != nil && builtinConfig.WatermarkFormat != "" {
+		formatStr = builtinConfig.WatermarkFormat
+	}
+
+	posStr := "bottom-right"
+	if builtinConfig != nil && builtinConfig.WatermarkPosition != "" {
+		posStr = builtinConfig.WatermarkPosition
+	}
+
+	fontSize := 38
+	if builtinConfig != nil && builtinConfig.WatermarkFontSize > 0 {
+		fontSize = builtinConfig.WatermarkFontSize
+	}
+
+	fontColor := "white@0.95"
+	if builtinConfig != nil && builtinConfig.WatermarkFontColor != "" {
+		fontColor = builtinConfig.WatermarkFontColor
+	}
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("🎚️ 切换水印状态: %s", status), "toggle_watermark"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📝 修改文本", "set_watermark_text"),
+			tgbotapi.NewInlineKeyboardButtonData("📏 修改字号", "set_watermark_size"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🎨 修改颜色及透明度", "set_watermark_color"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔙 返回主控制台", "action_main"),
+		),
+	)
+
+	text := fmt.Sprintf("🔔 <b>截图水印设置面板</b>\n\n开启此功能后，每次进行监控截图时，底层 FFmpeg 将零损耗自动烧录自定义文本与精确时间。\n\n当前状态：<b>%s</b>\n当前文本：<code>%s</code>\n时间格式：<code>%s</code>\n显示方位：<code>%s</code>\n字体大小：<code>%d</code>\n字体颜色：<code>%s</code>\n\n*(提示：时间格式等进阶修改，请移步 Web 控制台操作)*",
+		status, html.EscapeString(textStr), html.EscapeString(formatStr), html.EscapeString(posStr), fontSize, html.EscapeString(fontColor))
+
+	msg := tgbotapi.NewEditMessageTextAndMarkup(chatID, messageID, text, keyboard)
+	msg.ParseMode = "HTML"
+	if _, err := tgBot.Send(msg); err != nil {
+		log.Printf("[TG-BOT-DEBUG] ⚠️ 水印面板刷新异常 (或状态未变被系统忽略): %v\n", err)
+	}
+}
+
+// tgHandleSetWatermarkText 接收用户回复的水印文本并应用生效。
+// 职责：将用户发送的文本清洗、转义后存入内存架构中，随后唤起数据持久化存储。
+func tgHandleSetWatermarkText(chatID int64, text string) {
+	text = strings.TrimSpace(text)
+	if builtinConfig != nil {
+		builtinConfig.WatermarkText = text
+		saveBuiltinConfigTG()
+
+		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("✅ <b>自定义水印更新成功！</b>\n\n最新文案已生效: <code>%s</code>\n未来的所有快照都将带上此印记。\n\n*(可发送 /menu 返回主面板继续控制)*", html.EscapeString(text)))
+		msg.ParseMode = "HTML"
+		tgBot.Send(msg)
+		log.Printf("[TG-BOT] 📝 成功通过 Telegram 动态热更新水印内容为: %s\n", text)
+	}
+}
+
+// tgHandleSetWatermarkSize 接收用户回复的字体大小并应用生效。
+// 职责：解析安全数字边际，确保热重载的字号具备合法性以防止底层 FFmpeg 图形渲染崩溃。
+func tgHandleSetWatermarkSize(chatID int64, text string) {
+	text = strings.TrimSpace(text)
+	size, err := strconv.Atoi(text)
+	if err != nil || size <= 0 {
+		msg := tgbotapi.NewMessage(chatID, "❌ <b>格式错误！</b>\n字体大小必须是纯数字（如 38），请重新操作。")
+		msg.ParseMode = "HTML"
+		tgBot.Send(msg)
+		return
+	}
+
+	if builtinConfig != nil {
+		builtinConfig.WatermarkFontSize = size
+		saveBuiltinConfigTG()
+
+		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("✅ <b>水印字体大小更新成功！</b>\n\n最新字号已生效: <code>%d</code>\n\n*(可发送 /menu 返回主面板继续控制)*", size))
+		msg.ParseMode = "HTML"
+		tgBot.Send(msg)
+		log.Printf("[TG-BOT] 📝 成功通过 Telegram 动态热更新水印字号为: %d\n", size)
+	}
+}
+
+// tgHandleSetWatermarkColor 接收用户回复的字体颜色并应用生效。
+// 职责：接受并固化包含 Alpha 透明度与标准色系代码在内的渲染指令属性至配置流中。
+func tgHandleSetWatermarkColor(chatID int64, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+
+	if builtinConfig != nil {
+		builtinConfig.WatermarkFontColor = text
+		saveBuiltinConfigTG()
+
+		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("✅ <b>水印字体颜色更新成功！</b>\n\n最新颜色已生效: <code>%s</code>\n\n*(可发送 /menu 返回主面板继续控制)*", html.EscapeString(text)))
+		msg.ParseMode = "HTML"
+		tgBot.Send(msg)
+		log.Printf("[TG-BOT] 📝 成功通过 Telegram 动态热更新水印颜色为: %s\n", text)
+	}
+}
+
 // tgEditToMainMenu 将现有消息就地刷新为九宫格主菜单。
-// 职责：构建主界面的核心入口控制台键盘。
+// 职责：构建主界面的核心入口控制台键盘，新版已无缝融合水印设置功能入口。
 func tgEditToMainMenu(chatID int64, messageID int) {
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -314,7 +551,7 @@ func tgEditToMainMenu(chatID int64, messageID int) {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📸 单独寻址截图", "menu_cover_1"),
-			tgbotapi.NewInlineKeyboardButtonData("📁 导出系统日志", "action_log"),
+			tgbotapi.NewInlineKeyboardButtonData("🔔 水印与截图设置", "action_watermark"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("⏸️ 挂起指定", "menu_pause_1"),
@@ -322,13 +559,14 @@ func tgEditToMainMenu(chatID int64, messageID int) {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("➕ 智能添加新主播", "action_add"),
-			tgbotapi.NewInlineKeyboardButtonData("🔍 搜索与快捷操作", "action_search"), // ✨ 新增搜索控制流入口
+			tgbotapi.NewInlineKeyboardButtonData("🔍 搜索与快捷操作", "action_search"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🗑️ 彻底删除指定", "menu_delete_1"),
-			tgbotapi.NewInlineKeyboardButtonData("📖 使用指南", "action_help"),
+			tgbotapi.NewInlineKeyboardButtonData("📁 导出系统日志", "action_log"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📖 使用指南", "action_help"),
 			tgbotapi.NewInlineKeyboardButtonData("❌ 阅后即焚", "action_close"),
 		),
 	)
@@ -341,6 +579,7 @@ func tgEditToMainMenu(chatID int64, messageID int) {
 }
 
 // MenuTask 用于存储从并发安全的 map 中提取出排序快照的结构体。
+// 职责：为分页 UI 和内存暴搜提供轻量级的数据载体。
 type MenuTask struct {
 	Key      string
 	Name     string
@@ -545,7 +784,7 @@ func tgExecutePreciseControl(action, key string) string {
 }
 
 // tgHandlePreciseCover 从精准提取内存 Key 读取封面并下发。
-// 职责：在内存中找到主播数据，从文件系统读取无损截图并作为 Photo 发送。
+// 职责：在内存中找到主播数据，从文件系统读取无损截图并作为 Photo 发送，并挂载「原地动态刷新」控制键盘。
 func tgHandlePreciseCover(chatID int64, key string) {
 	log.Printf("[TG-BOT] 📸 正在寻址获取封面: %s\n", key)
 	value, exists := builtinStatusMap.Load(key)
@@ -566,10 +805,94 @@ func tgHandlePreciseCover(chatID int64, key string) {
 
 	go func() {
 		log.Printf("[TG-BOT-DEBUG] 📤 正在上传封装封面文件: %s...\n", coverPath)
-		photo := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(coverPath))
-		photo.Caption = fmt.Sprintf("📸 <b>%s</b> 实时画面", html.EscapeString(task.AnchorName))
-		photo.ParseMode = "HTML"
-		tgBot.Send(photo)
+		data, readErr := os.ReadFile(coverPath)
+		if readErr == nil {
+			fileBytes := tgbotapi.FileBytes{
+				Name:  fmt.Sprintf("cover_%d.png", time.Now().UnixMilli()),
+				Bytes: data,
+			}
+			photo := tgbotapi.NewPhoto(chatID, fileBytes)
+			photo.Caption = fmt.Sprintf("📸 <b>%s</b> 实时画面", html.EscapeString(task.AnchorName))
+			photo.ParseMode = "HTML"
+
+			// ✨ 核心升级：下发图片时附加带有 MD5 路由的专属刷新控制器
+			keyboard := tgbotapi.NewInlineKeyboardMarkup(
+				tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("🔄 实时刷新画面", "refresh_cover_"+getTaskHash(key)),
+				),
+				tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("🔙 返回控制台", "menu_cover_1"),
+				),
+			)
+			photo.ReplyMarkup = keyboard
+
+			tgBot.Send(photo)
+		}
+	}()
+}
+
+// tgHandleRefreshCover 执行原地动态刷新画面（Live Updating）特性。
+// 职责：读取底层最新截帧，通过 EditMessageMedia 接口原地热更替当前消息的图片与文本，实现幻灯片无痕监控。
+func tgHandleRefreshCover(chatID int64, messageID int, key string, queryID string) {
+	log.Printf("[TG-BOT] 🔄 正在动态刷新获取封面: %s\n", key)
+	value, exists := builtinStatusMap.Load(key)
+	if !exists {
+		tgBot.Request(tgbotapi.NewCallback(queryID, "⚠️ 该任务已不存在或已结束"))
+		return
+	}
+	task := value.(*BuiltinTaskStatus)
+
+	fileName := fmt.Sprintf("%s_%s.png", task.Platform, task.RoomID)
+	coverPath := filepath.Join(".", "covers", fileName)
+
+	info, err := os.Stat(coverPath)
+	if err != nil || info.Size() == 0 {
+		tgBot.Request(tgbotapi.NewCallback(queryID, "⚠️ 暂无更新的画面"))
+		return
+	}
+
+	go func() {
+		data, readErr := os.ReadFile(coverPath)
+		if readErr != nil {
+			tgBot.Request(tgbotapi.NewCallback(queryID, "⚠️ 画面读取失败"))
+			return
+		}
+
+		// 构建需要更新的媒体数据包裹
+		fileBytes := tgbotapi.FileBytes{
+			Name:  fmt.Sprintf("cover_%d.png", time.Now().UnixMilli()),
+			Bytes: data,
+		}
+
+		media := tgbotapi.NewInputMediaPhoto(fileBytes)
+		media.Caption = fmt.Sprintf("📸 <b>%s</b> 实时画面\n⏱️ 最新抓取于: <code>%s</code>", html.EscapeString(task.AnchorName), time.Now().Format("15:04:05"))
+		media.ParseMode = "HTML"
+
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("🔄 实时刷新画面", "refresh_cover_"+getTaskHash(key)),
+			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("🔙 返回控制台", "menu_cover_1"),
+			),
+		)
+
+		editMsg := tgbotapi.EditMessageMediaConfig{
+			BaseEdit: tgbotapi.BaseEdit{
+				ChatID:      chatID,
+				MessageID:   messageID,
+				ReplyMarkup: &keyboard, // 保留刷新按钮不丢失
+			},
+			Media: media,
+		}
+
+		// 触发更新调用，向回调抛出气泡提示
+		if _, err := tgBot.Send(editMsg); err != nil {
+			log.Printf("[TG-BOT-DEBUG] ⚠️ 刷新画面未变更或接口受限: %v\n", err)
+			tgBot.Request(tgbotapi.NewCallback(queryID, "画面仍是最新，无变化"))
+		} else {
+			tgBot.Request(tgbotapi.NewCallback(queryID, "✅ 画面已完成热更替"))
+		}
 	}()
 }
 
@@ -625,7 +948,7 @@ func handleTelegramCommand(message *tgbotapi.Message) {
 		sentMsg, _ := tgBot.Send(msg)
 		tgEditToMainMenu(chatID, sentMsg.MessageID)
 
-	case "find", "search": // ✨ 拦截搜索指令
+	case "find", "search":
 		keyword := message.CommandArguments()
 		if keyword == "" {
 			msg := tgbotapi.NewMessage(chatID, "🔍 请输入要搜索的关键字。例如: <code>/find 张三</code>")
@@ -659,7 +982,7 @@ func handleTelegramCommand(message *tgbotapi.Message) {
 	}
 }
 
-// tgHandleSearch 高性能内存搜索引擎。 (✨ 全新增加)
+// tgHandleSearch 高性能内存搜索引擎。
 // 职责：通过关键字忽略大小写无锁极速遍历内存状态表，渲染出自带停止/恢复按钮的结果面板。
 func tgHandleSearch(chatID int64, keyword string) {
 	keyword = strings.ToLower(strings.TrimSpace(keyword))
@@ -749,9 +1072,9 @@ func tgHandleHelp(chatID int64, messageID int) {
 
 🤖 <b>快捷基础指令</b>
 <code>/menu</code> 或 <code>/start</code> - 唤起可视化全能主控制台
-<code>/find [关键字]</code> - 🔍 <b>新增</b>：极速搜索主播并快速挂起或恢复
-<code>/list</code> - 极速获取当前在线录制的主播列表与实时画面截图
-<code>/status</code> - 实时查看服务器资源负载及上传队列积压情况
+<code>/find [关键字]</code> - 极速搜索主播并快速挂起或恢复
+<code>/list</code> - 极速获取当前在线录制的主播列表与实时相册流
+<code>/status</code> - 实时查看服务器资源负载及上传流量统计
 <code>/log</code> - 导出底层系统最新运行内存日志包
 <code>/help</code> - 显示此操作说明
 
@@ -760,7 +1083,10 @@ func tgHandleHelp(chatID int64, messageID int) {
 🔄 <b>OTA 热更新</b>：直接将新版编译好的核心引擎二进制文件发送给机器人，并在文本说明(Caption)处填写 <code>/update</code>，即可无缝触发底层逃逸与原子替换重启。
 
 🎛️ <b>控制台功能指引</b>
-通过 <code>/menu</code> 打开面板后，您可以点击对应按钮进行图形化操作，包括：<b>挂起、恢复、彻底删除</b>特定任务，或单独拉取指定主播的最新<b>实时截图</b>。
+通过 <code>/menu</code> 打开面板后，您可以：
+1. 点击进行图形化的 <b>挂起、恢复、彻底删除</b> 等特定任务操作。
+2. 在 <b>📸 单独寻址截图</b> 中唤起监视器，点击【🔄 实时刷新画面】进行无损流媒体动态刷新。
+3. 进入 <b>🔔 水印与截图设置</b>，实时热更新监控截帧所生成的水印内容，更可动态调节字号与颜色！
 *(系统所有按钮交互均采用 MD5 指纹安全寻址，绝对防碰撞与长文本截断)*`
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
@@ -850,7 +1176,12 @@ func tgHandleUpdateBinary(message *tgbotapi.Message) {
 		return
 	}
 	_, err = io.Copy(out, resp.Body)
-	out.Close()
+	out.Close() // ⚠️ 优化：必须在重命名与权限修改前显式关闭文件句柄
+
+	// 🚀 核心修复 1：强制赋予可执行权限，防止严苛的 Linux umask 策略剥夺文件的执行(x)权限
+	if err := os.Chmod(tmpPath, 0755); err != nil {
+		log.Printf("[TG-BOT-DEBUG] ⚠️ 权限提权失败 (可能影响拉起): %v\n", err)
+	}
 
 	bakPath := exePath + ".bak"
 	os.Remove(bakPath)
@@ -879,17 +1210,25 @@ func tgHandleUpdateBinary(message *tgbotapi.Message) {
 		scriptDir := filepath.Dir(exePath)
 		scriptPath := filepath.Join(scriptDir, "restart.sh")
 
-		cmd := exec.Command("systemd-run", "--unit=uploader-ota-task", "bash", scriptPath)
+		// 🚀 核心修复 2：动态生成 systemd Unit 名称，防止历史遗留的瞬态 Unit 产生命名冲突拒绝启动
+		unitName := fmt.Sprintf("uploader-ota-task-%d", time.Now().Unix())
+		cmd := exec.Command("systemd-run", "--unit="+unitName, "bash", scriptPath)
 		cmd.Dir = scriptDir
+
 		if err := cmd.Start(); err != nil {
-			log.Printf("[TG-BOT-DEBUG] ❌ systemd-run 触发失败，紧急自尽重启: %v\n", err)
+			log.Printf("[TG-BOT-DEBUG] ❌ systemd-run 触发失败，尝试执行兜底降级重启: %v\n", err)
+
+			// 🚀 核心修复 3：如果 systemd-run 环境不兼容失败，降级执行直连重启作为保底
+			fallbackCmd := exec.Command("bash", scriptPath)
+			fallbackCmd.Dir = scriptDir
+			fallbackCmd.Start()
 			os.Exit(0)
 		}
 	}()
 }
 
 // tgHandleList 获取内存快照遍历发送截图。
-// 职责：提取活跃录制数据，引入微秒休眠解决发送过多图片被官方封禁 Flood Wait 的危险。
+// 职责：提取活跃录制数据，引入 MediaGroup 相册聚合发送机制彻底规避官方 Flood Wait 风控。
 func tgHandleList(chatID int64) string {
 	log.Printf("[TG-BOT] 📋 开始处理全员画面抓取请求...\n")
 	tasks := GetBuiltinRecorderTasks()
@@ -905,13 +1244,17 @@ func tgHandleList(chatID int64) string {
 		return "📭 当前监控引擎中没有正在录制的主播。"
 	}
 
-	summaryMsg := fmt.Sprintf("📋 <b>当前在线录制名单</b> (共 %d 个)\n⏳ 正在提取实时截图...", len(onlineTasks))
+	summaryMsg := fmt.Sprintf("📋 <b>当前在线录制名单</b> (共 %d 个)\n⏳ 正在提取并打包实时相册...", len(onlineTasks))
 	msg := tgbotapi.NewMessage(chatID, summaryMsg)
 	msg.ParseMode = "HTML"
 	tgBot.Send(msg)
 
 	go func() {
-		log.Printf("[TG-BOT-DEBUG] ⏳ 正在后台异步推送 %d 张截图，启用防风控节流引擎...\n", len(onlineTasks))
+		log.Printf("[TG-BOT-DEBUG] ⏳ 正在后台异步打包推送 %d 张截图，启用相册聚合防风控引擎...\n", len(onlineTasks))
+
+		var mediaGroup []interface{}
+		var textFallbacks []string // 用于存储无法读取图片的纯文本兜底信息
+
 		for _, t := range onlineTasks {
 			name := t.AnchorName
 			if name == "" || name == t.RoomID {
@@ -924,18 +1267,51 @@ func tgHandleList(chatID int64) string {
 			coverPath := filepath.Join(".", "covers", fileName)
 
 			if info, err := os.Stat(coverPath); err == nil && info.Size() > 0 {
-				photo := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(coverPath))
-				photo.Caption = caption
-				photo.ParseMode = "HTML"
-				tgBot.Send(photo)
+				data, readErr := os.ReadFile(coverPath)
+				if readErr == nil {
+					fileBytes := tgbotapi.FileBytes{
+						Name:  fmt.Sprintf("%s_%s_%d.png", t.Platform, t.RoomID, time.Now().UnixMilli()),
+						Bytes: data,
+					}
+					media := tgbotapi.NewInputMediaPhoto(fileBytes)
+					media.Caption = caption
+					media.ParseMode = "HTML"
+					mediaGroup = append(mediaGroup, media)
+				} else {
+					textFallbacks = append(textFallbacks, caption+"\n<i>(画面读取异常...)</i>")
+				}
 			} else {
-				textMsg := tgbotapi.NewMessage(chatID, caption+"\n<i>(画面初始化中...)</i>")
-				textMsg.ParseMode = "HTML"
-				tgBot.Send(textMsg)
+				textFallbacks = append(textFallbacks, caption+"\n<i>(画面初始化中...)</i>")
 			}
-			time.Sleep(300 * time.Millisecond) // 防风控节流
+
+			// ✨ 核心重构：Telegram 官方接口要求，单个 MediaGroup 最多只能包含 10 个媒体文件
+			if len(mediaGroup) == 10 {
+				mgConfig := tgbotapi.NewMediaGroup(chatID, mediaGroup)
+				if _, err := tgBot.Send(mgConfig); err != nil {
+					log.Printf("[TG-BOT-DEBUG] ⚠️ 相册分块发送失败: %v\n", err)
+				}
+				mediaGroup = nil            // 清理数据，迎接下一批次
+				time.Sleep(1 * time.Second) // 批次发送间稍微节流减压
+			}
 		}
-		log.Printf("[TG-BOT] ✅ 全部截图推送完成\n")
+
+		// 收尾发送不足 10 个的残存媒体文件
+		if len(mediaGroup) > 0 {
+			mgConfig := tgbotapi.NewMediaGroup(chatID, mediaGroup)
+			if _, err := tgBot.Send(mgConfig); err != nil {
+				log.Printf("[TG-BOT-DEBUG] ⚠️ 相册尾块发送失败: %v\n", err)
+			}
+		}
+
+		// 发送纯文本兜底，确保坏掉画面的任务不会因此丢掉监控提示
+		for _, text := range textFallbacks {
+			textMsg := tgbotapi.NewMessage(chatID, text)
+			textMsg.ParseMode = "HTML"
+			tgBot.Send(textMsg)
+			time.Sleep(300 * time.Millisecond)
+		}
+
+		log.Printf("[TG-BOT] ✅ 全部相册流推送完成\n")
 	}()
 
 	return ""
@@ -1055,8 +1431,23 @@ func tgHandleLog(chatID int64) string {
 	return ""
 }
 
+// tgFormatBytes 将庞大的字节数据格式化为易读的 KB/MB/GB 规格字符串。
+// 职责：用于 Telegram 机器人面板展示时，将底层字节级数据转为直观的人类可读格式。
+func tgFormatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.2f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
 // tgHandleStatus 拉取底层监控格式化排版。
-// 职责：向终端呈现直观的资源堆栈负载情况。
+// 职责：向终端呈现直观的资源堆栈负载情况，包含新增的实时上传速度与累计流量统计。
 func tgHandleStatus() string {
 	log.Printf("[TG-BOT] 📊 正在汇聚系统监控面板资源数据...\n")
 	stats := buildStatusData()
@@ -1066,12 +1457,48 @@ func tgHandleStatus() string {
 	h := uptime / 3600
 	m := (uptime % 3600) / 60
 
+	// ✨ 动态计算当前瞬时上传速度
+	var totalSpeed int64 = 0
+	liveTasks.Range(func(key, value interface{}) bool {
+		task := value.(*Task)
+		task.Mu.RLock()
+		if task.Status == "uploading" {
+			totalSpeed += task.Speed
+		}
+		task.Mu.RUnlock()
+		return true
+	})
+
+	// ✨ 动态计算累计上传流量总量
+	var totalUploadedSize int64 = 0
+	if dirs, ok := stats["dirs"].([]map[string]interface{}); ok {
+		for _, d := range dirs {
+			if size, ok := d["uploadedSize"].(int64); ok {
+				totalUploadedSize += size
+			}
+		}
+	}
+
+	// ✨ 动态计算今日上传流量 (读取内存中的 O(1) 增量统计池)
+	todayStr := time.Now().Format("01-02")
+	var todayTrafficBytes int64 = 0
+	if val, exists := trendStats.Load(todayStr); exists {
+		tp := val.(*TrendPoint)
+		tp.Mu.Lock()
+		// 由于主系统在追加写入时已转换为了 GB (除以了三次 1024)，此处逆向还原为 Byte 方便复用现成的高级格式化函数
+		todayTrafficBytes = int64(tp.Size * 1024 * 1024 * 1024)
+		tp.Mu.Unlock()
+	}
+
 	var sb strings.Builder
 	sb.WriteString("📊 <b>系统运行资源状态</b>\n\n")
 	sb.WriteString(fmt.Sprintf("⏱️ 运行时间: <code>%d小时 %d分</code>\n", h, m))
-	sb.WriteString(fmt.Sprintf("💾 磁盘剩余: <code>%d MB</code>\n", stats["diskFree"].(int64)/1024/1024))
-	sb.WriteString(fmt.Sprintf("🧠 引擎内存: <code>%d MB</code>\n", stats["ffmpegMem"].(int64)/1024/1024))
-	sb.WriteString(fmt.Sprintf("⚙️ 工作线程: <code>%d</code>\n\n", stats["workers"]))
+	sb.WriteString(fmt.Sprintf("💾 磁盘剩余: <code>%s</code>\n", tgFormatBytes(stats["diskFree"].(int64))))
+	sb.WriteString(fmt.Sprintf("🧠 引擎内存: <code>%s</code>\n", tgFormatBytes(stats["ffmpegMem"].(int64))))
+	sb.WriteString(fmt.Sprintf("⚙️ 工作线程: <code>%d</code>\n", stats["workers"]))
+	sb.WriteString(fmt.Sprintf("🚀 瞬时上行: <code>%s/s</code>\n", tgFormatBytes(totalSpeed)))
+	sb.WriteString(fmt.Sprintf("📅 今日流量: <code>%s</code>\n", tgFormatBytes(todayTrafficBytes)))
+	sb.WriteString(fmt.Sprintf("☁️ 累计流量: <code>%s</code>\n\n", tgFormatBytes(totalUploadedSize)))
 
 	sb.WriteString("📤 <b>上传队列积压</b>\n")
 	sb.WriteString(fmt.Sprintf("├ 等待中: <code>%v</code>\n", queues["waiting"]))

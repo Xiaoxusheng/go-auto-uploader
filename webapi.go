@@ -33,15 +33,18 @@ var (
 	//go:embed index.html
 	indexHTML string
 
-	// WebSocket 升级器配置，允许跨域
+	// WebSocket 升级器配置，允许跨域，针对局域网极速响应进行调优
 	wsUpgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			return true
 		},
+		ReadBufferSize:    4096,
+		WriteBufferSize:   4096,
+		EnableCompression: false, // 核心优化：局域网内关闭压缩，用带宽换取极致的低延迟
 	}
 
 	wsClients   sync.Map // 升级优化：无锁化的 WS 客户端广播池
-	wsBroadcast = make(chan WSMessage, 512)
+	wsBroadcast = make(chan WSMessage, 1024)
 
 	running   = false
 	runningMu sync.RWMutex
@@ -53,6 +56,11 @@ var (
 	logsMu  sync.RWMutex
 	logChan = make(chan *LogEntry, 1000)
 
+	// 新增全局缓存变量：用于彻底消除通过 OS Shell 获取系统状态带来的致命阻塞延迟
+	cachedDiskFree  int64
+	cachedFFmpegMem int64
+	sysStatsMu      sync.RWMutex
+
 	// ==========================================
 	// 动态密钥交换中心 (RSA + AES PFS 完美前向保密)
 	// ==========================================
@@ -61,11 +69,11 @@ var (
 	sessionKeys        sync.Map // 升级优化：支持极速无锁查询的专属隧道密钥池
 )
 
-// WSClient 增加专属的 AES 密钥字段，实现独立加密广播
+// WSClient 增加专属的 AES 密钥字段和独立消息通道，实现真正的无阻塞 Fan-out 广播
 type WSClient struct {
 	conn   *websocket.Conn
-	mu     sync.Mutex
 	AESKey []byte
+	send   chan []byte // 核心优化：替换互斥锁，采用无锁高并发通道
 }
 
 // WSMessage WebSocket 标准通信载荷
@@ -86,7 +94,7 @@ type DirStatus struct {
 	LastScanTime  int64  `json:"lastScanTime"`
 }
 
-// Config 定义系统核心配置结构 (✨ 已修复：补充 Telegram 核心配置字段)
+// Config 定义系统核心配置结构 (✨ 已修复：补充 Telegram 及 QQ 核心配置字段)
 type Config struct {
 	ScanInterval       int      `json:"scanInterval"`
 	Workers            int      `json:"workers"`
@@ -109,9 +117,13 @@ type Config struct {
 	MailAuthCode       string   `json:"mailAuthCode"`
 	MailTo             string   `json:"mailTo"`
 	EnableEncryption   bool     `json:"enableEncryption"` // 决定是否开启通信层的数据安全加密
+	EnableUpload       bool     `json:"enableUpload"`     // ✨ 控制是否开启文件自动上传云端
 	WechatToken        string   `json:"wechatToken"`      // 推送加微信通知 Token
 	TelegramToken      string   `json:"telegramToken"`    // ✨ 接入 Telegram 机器人的 Token
 	TelegramChatID     int64    `json:"telegramChatID"`   // ✨ 用于鉴权和主动推送的 TG UserID/ChatID
+	QQBotWSURL         string   `json:"qqBotWsUrl"`       // ✨ 新增：QQ 机器人 OneBot WebSocket 地址 (例: ws://127.0.0.1:3001)
+	QQBotToken         string   `json:"qqBotToken"`       // ✨ 新增：QQ 机器人鉴权 Token (可选)
+	QQAdminID          int64    `json:"qqAdminId"`        // ✨ 新增：QQ 管理员号码
 }
 
 // Streamer 录制主播配置
@@ -375,6 +387,36 @@ func handleExchangeKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// sysStatsCollector 后台异步收集极度耗时的 OS 级别系统指标（磁盘/内存）
+// 核心优化：彻底砍掉主播循环里 2 秒一次的 exec.Command 阻塞调用，让其在后台默默运行
+func sysStatsCollector() {
+	ticker := time.NewTicker(10 * time.Second) // 10 秒获取一次系统底层指标足够了
+	defer ticker.Stop()
+
+	update := func() {
+		appConfigMu.RLock()
+		configuredDirs := appConfig.Dirs
+		appConfigMu.RUnlock()
+		targetDir := "."
+		if len(configuredDirs) > 0 && configuredDirs[0] != "" {
+			targetDir = configuredDirs[0]
+		}
+
+		df := getDiskFreeSpaceStd(targetDir)
+		mem := getFFmpegMemoryStd()
+
+		sysStatsMu.Lock()
+		cachedDiskFree = df
+		cachedFFmpegMem = mem
+		sysStatsMu.Unlock()
+	}
+
+	update() // 启动时先获取一次
+	for range ticker.C {
+		update()
+	}
+}
+
 // StartWebServer 启动动态安全的 Web 服务器，挂载所有路由端点
 func StartWebServer(port int) {
 	// 系统启动时动态生成 RSA-2048 密钥对，彻底抛弃硬编码密钥
@@ -436,12 +478,14 @@ func StartWebServer(port int) {
 
 	mux.HandleFunc("/ws/live", handleWebSocket)
 
+	go sysStatsCollector() // 开启系统级指标缓存采集器
 	go wsBroadcastLoop()
 	go logCollector()
 	go wsDashboardBroadcaster()
 
-	// ✨ 已修复：启动 Web 服务器前同时挂载 Telegram 机器人监听协程
+	// ✨ 已修复：启动 Web 服务器前同时挂载 Telegram 与 QQ 机器人双链路监听协程
 	go InitTelegramBot()
+	go InitQQBot()
 
 	addr := fmt.Sprintf(":%d", port)
 	log.Printf("[WEB] 控制台已就绪: http://127.0.0.1%s", addr)
@@ -450,10 +494,13 @@ func StartWebServer(port int) {
 	}
 }
 
-// sendWeChatNotify ✨使用 PushPlus (pushplus.plus) 接口发送带高级 SVG 矢量图标的极简现代微信通知
+// sendWeChatNotify ✨使用 PushPlus 接口发送带高级 SVG 矢量图标的极简现代微信通知
 func sendWeChatNotify(title, body string) {
 	// ✨ 已修复：向底层派发一份到 Telegram 的副本协程，实现微信/Telegram 双路推送
 	go SendTelegramNotification(title, body)
+
+	// ✨ 新增：向底层派发一份到 QQ 的副本协程，实现全通讯矩阵监控无死角
+	go SendQQNotification(title, body)
 
 	appConfigMu.RLock()
 	token := appConfig.WechatToken
@@ -559,8 +606,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, indexHTML)
 }
 
-// buildStatsTrendData 【性能核心引擎】不再遍历五十万海量节点切片！
-// 以无锁微秒级的速度从后台维护在内存的增量聚合统计库中直接抓取，彻底铲除图表刷新导致的 CPU 卡顿
+// buildStatsTrendData 以无锁微秒级的速度从后台维护在内存的增量聚合统计库中直接抓取图表数据
 func buildStatsTrendData() map[string]interface{} {
 	trendMap := make(map[string]*TrendPointRes)
 	now := time.Now()
@@ -572,7 +618,6 @@ func buildStatsTrendData() map[string]interface{} {
 	trendResult := make([]TrendPointRes, 0)
 	for i := 6; i >= 0; i-- {
 		d := now.AddDate(0, 0, -i).Format("01-02")
-		// 从增量池快速拉取此日期的预结集数据
 		if val, exists := trendStats.Load(d); exists {
 			tp := val.(*TrendPoint)
 			tp.Mu.Lock()
@@ -610,14 +655,13 @@ func buildStatsTrendData() map[string]interface{} {
 	}
 }
 
-// wsBroadcastLoop 处理 WebSocket 广播队列，实时向所有连接客户端下发报文(支持明密文切换)
+// wsBroadcastLoop 处理 WebSocket 广播队列，极速非阻塞向客户端通道投递预先拼接好的字节流
 func wsBroadcastLoop() {
-	// 【优化】每5秒刷新一次加密开关缓存，避免每条消息都加读锁
+	encRefreshTicker := time.NewTicker(5 * time.Second)
 	var encEnabled bool
 	appConfigMu.RLock()
 	encEnabled = appConfig.EnableEncryption
 	appConfigMu.RUnlock()
-	encRefreshTicker := time.NewTicker(5 * time.Second)
 
 	for {
 		select {
@@ -626,22 +670,28 @@ func wsBroadcastLoop() {
 
 			wsClients.Range(func(key, value interface{}) bool {
 				client := key.(*WSClient)
-				client.mu.Lock()
-				client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 
-				var err error
+				var finalBytes []byte
+				// 优化：彻底避免单向广播时对每个客户端做二次 json.Marshal 的 CPU 开销
 				if encEnabled && client.AESKey != nil {
-					encryptedPayload, _ := encryptPayload(rawBytes, client.AESKey)
-					err = client.conn.WriteJSON(EncryptedRequest{Encrypted: encryptedPayload})
+					encryptedPayload, err := encryptPayload(rawBytes, client.AESKey)
+					if err == nil {
+						// 极致性能直接字符串拼接组装 JSON
+						finalBytes = []byte(`{"encrypted":"` + encryptedPayload + `"}`)
+					}
 				} else {
-					err = client.conn.WriteJSON(msg)
+					finalBytes = rawBytes
 				}
 
-				client.mu.Unlock()
-
-				if err != nil {
-					client.conn.Close()
-					wsClients.Delete(client)
+				if finalBytes != nil {
+					// 无锁且非阻塞式推送：如果客户端网络过差导致通道写满，直接丢弃避免影响全局
+					select {
+					case client.send <- finalBytes:
+					default:
+						wsClients.Delete(client)
+						close(client.send)
+						client.conn.Close()
+					}
 				}
 				return true
 			})
@@ -656,20 +706,16 @@ func wsBroadcastLoop() {
 
 // wsDashboardBroadcaster 定时向面板广播系统实时状态数据、系统负载及图表
 func wsDashboardBroadcaster() {
-	// 快速刷新：状态、队列、流量 (每2秒)
 	fastTicker := time.NewTicker(2 * time.Second)
-	// 慢速刷新：磁盘 IO 和目录遍历类数据 (每10秒)
 	slowTicker := time.NewTicker(10 * time.Second)
 	defer fastTicker.Stop()
 	defer slowTicker.Stop()
 
-	// 缓存慢速数据，避免每次都重新采集
 	var cachedStreamersData interface{}
 	var cachedActiveStreamers interface{}
 	var cachedStatsTrend interface{}
 	var cachedRecorderStatus interface{}
 
-	// 首次立即采集一次慢速数据
 	cachedStreamersData = getStreamersData()
 	cachedActiveStreamers = getActiveStreamers()
 	cachedStatsTrend = buildStatsTrendData()
@@ -681,7 +727,7 @@ func wsDashboardBroadcaster() {
 			clientCount := 0
 			wsClients.Range(func(_, _ interface{}) bool {
 				clientCount++
-				return true // 修复 Bug 2：原来 return false 会立即终止遍历，导致 clientCount 永远最多为 1
+				return true
 			})
 
 			if clientCount > 0 {
@@ -704,7 +750,6 @@ func wsDashboardBroadcaster() {
 					"time":  time.Now().UnixMilli(),
 				})
 
-				// 使用缓存的慢速数据
 				broadcastWS("statsTrend", cachedStatsTrend)
 				broadcastWS("recorderStatus", cachedRecorderStatus)
 				broadcastWS("activeStreamers", cachedActiveStreamers)
@@ -713,7 +758,6 @@ func wsDashboardBroadcaster() {
 			}
 
 		case <-slowTicker.C:
-			// 【优化】慢速数据只每10秒更新一次，避免高频磁盘IO和目录遍历
 			cachedStreamersData = getStreamersData()
 			cachedActiveStreamers = getActiveStreamers()
 			cachedStatsTrend = buildStatsTrendData()
@@ -722,15 +766,36 @@ func wsDashboardBroadcaster() {
 	}
 }
 
-// broadcastWS 将指定类型的消息压入广播队列，待加密发送给各个前端页面
+// broadcastWS 将指定类型的消息压入广播队列
 func broadcastWS(msgType string, payload interface{}) {
 	select {
 	case wsBroadcast <- WSMessage{Type: msgType, Payload: payload}:
-	default:
+	default: // 如果全局广播队列满了直接丢弃，保证非阻塞
 	}
 }
 
-// handleWebSocket 处理 WebSocket 升级及接收逻辑，增加明密文双模控制支持
+// writePump 独立处理每个客户端的网络写入，彻底解除老版本基于 Mutex 的全局广播阻塞瓶颈
+func (c *WSClient) writePump() {
+	defer func() {
+		c.conn.Close()
+	}()
+	for {
+		select {
+		case message, ok := <-c.send:
+			if !ok {
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+			// 单个客户端拥有严格独立的写入超时，网络再差也不会牵连整个系统
+			c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// handleWebSocket 处理 WebSocket 升级及接收逻辑，增加明密文双模控制支持并启动分离的 I/O 协程
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	appConfigMu.RLock()
 	encEnabled := appConfig.EnableEncryption
@@ -739,7 +804,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	var key []byte
 	var err error
 
-	// 若开启加密，要求具备合法的 SessionID 以获得协商好的密钥
 	if encEnabled {
 		key, err = getSessionKey(r)
 		if err != nil {
@@ -753,13 +817,22 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := &WSClient{conn: conn, AESKey: key}
+	// 赋予独立高并发通道
+	client := &WSClient{
+		conn:   conn,
+		AESKey: key,
+		send:   make(chan []byte, 1024),
+	}
 
 	wsClients.Store(client, true)
 
+	// 核心架构升级：启动专属的非阻塞写入协程
+	go client.writePump()
+
 	defer func() {
-		client.conn.Close()
 		wsClients.Delete(client)
+		close(client.send) // 读协程退出时通知写协程结束
+		client.conn.Close()
 	}()
 
 	for {
@@ -772,7 +845,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 
-			// 商业级网络入口处立刻使用客户端专属密钥解密报文
 			decryptedBytes, err := decryptPayload(encMsg.Encrypted, client.AESKey)
 			if err != nil {
 				log.Printf("[WS][ERR] WebSocket 密文非法或解密失败: %v", err)
@@ -783,7 +855,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		} else {
-			// 明文降级处理
 			err := client.conn.ReadJSON(&msg)
 			if err != nil {
 				break
@@ -793,16 +864,18 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		if msg.Type == "ping" {
 			pongRaw, _ := json.Marshal(WSMessage{Type: "pong", Payload: msg.Payload})
 
-			client.mu.Lock()
-			client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-
+			var finalBytes []byte
 			if encEnabled && client.AESKey != nil {
 				pongEnc, _ := encryptPayload(pongRaw, client.AESKey)
-				_ = client.conn.WriteJSON(EncryptedRequest{Encrypted: pongEnc})
+				finalBytes = []byte(`{"encrypted":"` + pongEnc + `"}`)
 			} else {
-				_ = client.conn.WriteMessage(websocket.TextMessage, pongRaw)
+				finalBytes = pongRaw
 			}
-			client.mu.Unlock()
+
+			select {
+			case client.send <- finalBytes:
+			default:
+			}
 		}
 	}
 }
@@ -828,7 +901,6 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiry := time.Now().Add(24 * time.Hour).UnixMilli()
-	// 修复 Bug 7：Dashboard 登录 Token 使用独立变量，不再与远端上传 Token 共用
 	dashboardTokenMu.Lock()
 	if dashboardToken == "" {
 		dashboardToken = "dash-token-" + strconv.FormatInt(time.Now().Unix(), 10)
@@ -876,7 +948,6 @@ func getDiskFreeSpaceStd(pathStr string) int64 {
 			lines := strings.Split(string(out), "\n")
 			if len(lines) >= 2 {
 				fields := strings.Fields(lines[1])
-				// available column is generally index 3 on standard Linux df
 				if len(fields) >= 4 {
 					if freeKb, err := strconv.ParseInt(fields[3], 10, 64); err == nil {
 						return freeKb * 1024
@@ -934,7 +1005,7 @@ func getFFmpegMemoryStd() int64 {
 }
 
 // buildStatusData 构建系统运行参数与目录状态聚合的大宽表
-// 改编至通过高并发读锁提取各项结构体内状态，消除瓶颈
+// 核心优化：不再同步阻塞执行 OS 原生命令抓取系统指标，而是直接读取后台协程写入的高性能内存快照
 func buildStatusData() map[string]interface{} {
 	runningMu.RLock()
 	isRunning := running
@@ -948,7 +1019,6 @@ func buildStatusData() map[string]interface{} {
 	configuredDirs := appConfig.Dirs
 	appConfigMu.RUnlock()
 
-	// 修复 Bug 6：token 受 tokenMu 保护，不能裸读，否则 go race detector 会报警
 	tokenMu.Lock()
 	tokenValid := token != ""
 	tokenMu.Unlock()
@@ -991,15 +1061,11 @@ func buildStatusData() map[string]interface{} {
 		}
 	}
 
-	var diskFree int64 = 0
-	var ffmpegMem int64 = 0
-
-	targetDir := "."
-	if len(configuredDirs) > 0 && configuredDirs[0] != "" {
-		targetDir = configuredDirs[0]
-	}
-	diskFree = getDiskFreeSpaceStd(targetDir)
-	ffmpegMem = getFFmpegMemoryStd()
+	// 从缓存锁中获取，延迟为 O(1) 级别
+	sysStatsMu.RLock()
+	diskFree := cachedDiskFree
+	ffmpegMem := cachedFFmpegMem
+	sysStatsMu.RUnlock()
 
 	return map[string]interface{}{
 		"running":          isRunning,
@@ -1013,8 +1079,8 @@ func buildStatusData() map[string]interface{} {
 		"dayRate":          currentDayRate,
 		"nightRate":        currentNightRate,
 		"uptime":           int64(time.Since(startTime).Seconds()),
-		"diskFree":         diskFree,  // 使用系统原生命令获取的剩余空间
-		"ffmpegMem":        ffmpegMem, // 使用系统原生命令获取的 ffmpeg 内存占用
+		"diskFree":         diskFree,
+		"ffmpegMem":        ffmpegMem,
 	}
 }
 
@@ -1151,7 +1217,6 @@ func handleControlPause(w http.ResponseWriter, r *http.Request) {
 	runningMu.Unlock()
 
 	log.Println("[CONTROL] ⏸️ 用户下发指令：暂停系统运行")
-	// 发送微信暂停通知
 	sendWeChatNotify("系统暂停上传通知", "管理员已通过控制台下发指令，系统目前已暂停文件上传。")
 	sendJSONSuccess(w, r, nil)
 }
@@ -1163,7 +1228,6 @@ func handleControlStop(w http.ResponseWriter, r *http.Request) {
 	runningMu.Unlock()
 
 	log.Println("[CONTROL] 🛑 用户下发指令：停止系统运行")
-	// 发送微信停止通知
 	sendWeChatNotify("系统停止上传通知", "管理员已通过控制台下发指令，系统目前已完全停止一切上传活动。")
 	sendJSONSuccess(w, r, nil)
 }
@@ -1188,7 +1252,6 @@ func handleControlRescan(w http.ResponseWriter, r *http.Request) {
 
 // handleControlClearFailQueue 响应用户清空失败队列的指令
 func handleControlClearFailQueue(w http.ResponseWriter, r *http.Request) {
-	// 使用 O(1) 效率彻底更换为空表
 	queueFail = sync.Map{}
 	atomic.StoreInt64(&queueFailCount, 0)
 
@@ -1198,7 +1261,6 @@ func handleControlClearFailQueue(w http.ResponseWriter, r *http.Request) {
 
 // handleControlRetryFailQueue 响应用户重试全部失败任务的指令
 func handleControlRetryFailQueue(w http.ResponseWriter, r *http.Request) {
-	// 充入计数并清空记录
 	queueFailCountVal := atomic.LoadInt64(&queueFailCount)
 	atomic.AddInt64(&queueCount, queueFailCountVal)
 
@@ -1206,7 +1268,6 @@ func handleControlRetryFailQueue(w http.ResponseWriter, r *http.Request) {
 	atomic.StoreInt64(&queueFailCount, 0)
 	log.Println("[CONTROL] 🔄 用户下发指令：失败任务已全部压入等待队列准备重试")
 
-	// 核心修复：向引擎发送重扫指令，让 Worker 真正去把硬盘里残留的失败文件捡起来
 	triggerScan("rescan")
 
 	sendJSONSuccess(w, r, nil)
@@ -1234,7 +1295,6 @@ func handleDirsStatus(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if val, exists := dirStatuses.Load(dir); exists {
-			// 在构建前端结构前短暂的读取锁确保数据一致性
 			ds := val.(*DirStatus)
 			ds.Mu.RLock()
 			clone := &DirStatus{
@@ -1279,7 +1339,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 		saveConfigToFile()
 
-		log.Printf("[CONTROL] ⚙️ 用户保存了新配置，目标扫描目录已变更为: [%s]，加密模式: %v", strings.Join(newConfig.Dirs, " | "), newConfig.EnableEncryption)
+		log.Printf("[CONTROL] ⚙️ 用户保存了新配置，目标扫描目录已变更为: [%s]，加密模式: %v，上传开关: %v", strings.Join(newConfig.Dirs, " | "), newConfig.EnableEncryption, newConfig.EnableUpload)
 
 		triggerScan("config-update")
 		triggerReportReset()
@@ -1613,7 +1673,8 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	logsMu.RLock()
 	filtered := make([]*LogEntry, 0)
-	for _, entry := range logs {
+	for i := len(logs) - 1; i >= 0; i-- {
+		entry := logs[i]
 		if level != "" && entry.Level != level {
 			continue
 		}
@@ -1639,7 +1700,7 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, r, map[string]interface{}{"items": result, "total": total})
 }
 
-// handleLogsDownload 提供全量应用系统日志文件的物理导出与下载功能（包含明密文自动协商）
+// handleLogsDownload 提供全量应用系统日志文件的物理导出与下载功能
 func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	level := query.Get("level")
@@ -1689,7 +1750,6 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 安全获取当前请求客户端的私有 AES 密钥
 	key, err := getSessionKey(r)
 	if err != nil {
 		http.Error(w, "Unauthorized Session", 401)
@@ -1701,12 +1761,12 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[CONTROL] 🛡️ 用户导出了 %d 条加密系统日志", len(filtered))
 }
 
-// logCollector 异步日志收集器，通过通道接收系统各处投递的日志并维护定长的内存队列，超限则修剪
+// logCollector 异步日志收集器，通过通道接收系统各处投递的日志并维护定长的内存队列
 func logCollector() {
 	for entry := range logChan {
 		logsMu.Lock()
 		logs = append(logs, entry)
-		if len(logs) > 5000 { // 优化：与初始容量对齐，保留 5000 条
+		if len(logs) > 5000 {
 			logs = logs[1:]
 		}
 		logsMu.Unlock()

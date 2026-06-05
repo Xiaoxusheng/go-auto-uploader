@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/chromedp/chromedp v0.14.2
-	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
+	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.2-0.20221020003552-4126fa611266
 	github.com/gorilla/websocket v1.5.3
 )
 

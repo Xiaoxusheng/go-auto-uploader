@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -71,11 +73,18 @@ var (
 
 var builtinAnchorLinesMutex sync.Mutex
 
+// BuiltinConfig 存储内置录制引擎的所有核心配置参数，新增了字体大小和颜色的动态控制
 type BuiltinConfig struct {
-	Quality       string `json:"quality"`
-	SegmentTime   int    `json:"segment_time"`
-	CheckInterval int    `json:"check_interval"`
-	SavePath      string `json:"save_path"`
+	Quality            string `json:"quality"`
+	SegmentTime        int    `json:"segment_time"`
+	CheckInterval      int    `json:"check_interval"`
+	SavePath           string `json:"save_path"`
+	WatermarkEnable    bool   `json:"watermark_enable"`
+	WatermarkText      string `json:"watermark_text"`
+	WatermarkFormat    string `json:"watermark_format"`
+	WatermarkPosition  string `json:"watermark_position"`
+	WatermarkFontSize  int    `json:"watermark_font_size"`  // ✨ 新增：动态控制字体大小
+	WatermarkFontColor string `json:"watermark_font_color"` // ✨ 新增：动态控制字体颜色，支持 alpha 通道透视
 }
 
 type BuiltinCookieConfig struct {
@@ -110,6 +119,8 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 		if avatar == "" {
 			avatar = oldTask.Avatar
 		}
+		// ✨ 修复核心：默认继承上一次的 startTime，防止其他非录制状态将其重置为零值
+		sTime = oldTask.startTime
 
 		if statusMsg == "录制中" {
 			if oldTask.Status != "录制中" {
@@ -346,18 +357,42 @@ func builtinHotReloadLoop() {
 	}
 }
 
-// InitBuiltinRecorder 初始化内置录制引擎模块，挂载相关 API 路由并启动系统常驻协程
+// InitBuiltinRecorder 初始化内置录制引擎模块，挂载相关 API 路由并启动系统常驻协程，默认注入高级字幕配置
 func InitBuiltinRecorder(mux *http.ServeMux) {
 	checkFFmpegBuiltin()
 
 	if _, err := os.Stat("builtin_config.json"); os.IsNotExist(err) {
-		builtinConfig = &BuiltinConfig{Quality: "uhd", CheckInterval: 30, SavePath: "./downloads"}
+		builtinConfig = &BuiltinConfig{
+			Quality:            "uhd",
+			CheckInterval:      30,
+			SavePath:           "./downloads",
+			WatermarkEnable:    false,
+			WatermarkText:      "go-auto-uploader",
+			WatermarkFormat:    "%Y-%m-%d %H:%M:%S",
+			WatermarkPosition:  "bottom-right",
+			WatermarkFontSize:  38,           // ✨ 初始化：默认字号为精美的 38px
+			WatermarkFontColor: "white@0.95", // ✨ 初始化：默认颜色为 95% 偏磨砂质感的白色
+		}
 		data, _ := json.MarshalIndent(builtinConfig, "", "    ")
 		os.WriteFile("builtin_config.json", data, 0644)
 	} else {
 		d, _ := os.ReadFile("builtin_config.json")
 		builtinConfig = &BuiltinConfig{}
 		json.Unmarshal(d, builtinConfig)
+
+		// 补足旧版本配置文件可能缺少的参数
+		if builtinConfig.WatermarkFormat == "" {
+			builtinConfig.WatermarkFormat = "%Y-%m-%d %H:%M:%S"
+		}
+		if builtinConfig.WatermarkPosition == "" {
+			builtinConfig.WatermarkPosition = "bottom-right"
+		}
+		if builtinConfig.WatermarkFontSize == 0 {
+			builtinConfig.WatermarkFontSize = 38
+		}
+		if builtinConfig.WatermarkFontColor == "" {
+			builtinConfig.WatermarkFontColor = "white@0.95"
+		}
 	}
 
 	if builtinConfig.CheckInterval == 0 {
@@ -1773,9 +1808,12 @@ func (t *builtinTailBuffer) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// extractBuiltinCoverFromLocalFile 旁路抽帧大法：只读取本地录像尾部少量字节流交由内存端 ffmpeg 解析，避免卡死并极大降低系统 CPU
-func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
-	// 1. 读取指定目录下的所有文件列表，寻找当前录像切片
+// extractBuiltinCoverFromLocalFile 旁路抽帧大法：只读取本地录像尾部少量字节流交由内存端 ffmpeg 解析。
+// 此方案避免了全量读取大文件导致的 I/O 阻塞，极大降低系统 CPU 负担，并安全处理了动态水印的烧录。
+// 返回值：bool 表示是否成功提取并生成封面图。
+// ✨ 修改内容：增加 anchorName 参数，当未配置全局水印文本时，自动回退使用主播名称作为水印。
+func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string) bool {
+	// 读取目标目录下所有文件
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		return false
@@ -1784,11 +1822,11 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
 	var latestFile string
 	var maxTime time.Time
 
-	// 2. 遍历筛选出符合前缀且最新的 .ts 视频分片文件
+	// 遍历筛选，定位当前录制任务最新的有效 .ts 视频分片
 	for _, f := range files {
 		if !f.IsDir() && strings.HasPrefix(f.Name(), prefix) && strings.HasSuffix(f.Name(), ".ts") {
 			info, err := f.Info()
-			// 确保文件大小大于 512KB 以防止读取到损坏或不完整的切片
+			// 过滤掉小于 512KB 的无效碎片，找到修改时间最晚的文件
 			if err == nil && info.ModTime().After(maxTime) && info.Size() > 512*1024 {
 				maxTime = info.ModTime()
 				latestFile = filepath.Join(dir, f.Name())
@@ -1796,58 +1834,159 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath string) bool {
 		}
 	}
 
-	// 如果没有找到有效文件，则直接返回失败，等待下一轮轮询
+	// 如果没有找到符合条件的录像文件，直接退出
 	if latestFile == "" {
 		return false
 	}
 
-	// 3. 打开最新写入的视频文件准备读取尾部数据
+	// 打开定位到的最新录像文件
 	file, err := os.Open(latestFile)
 	if err != nil {
 		return false
 	}
 	defer file.Close()
 
-	// 4. 计算并提取文件尾部的数据块 (提升至最高读取 5MB，确保绝对能命中一个完整的 I 帧)
 	stat, _ := file.Stat()
 	size := stat.Size()
+
+	// 性能优化核心：仅截取文件尾部最多 5MB 的字节流数据，防范大文件 I/O 卡死
 	readSize := int64(5 * 1024 * 1024)
 	if size < readSize {
 		readSize = size
 	}
 
-	// 将文件指针移动到尾部并读取数据到缓冲区中
+	// 将文件指针移动到倒数 readSize 的位置
 	file.Seek(-readSize, 2)
 	buf := make([]byte, readSize)
+
+	// 将尾部数据载入内存缓冲区
 	_, err = io.ReadFull(file, buf)
-	if err != nil && err != io.ErrUnexpectedEOF {
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return false
 	}
 
-	// 5. 组装 FFmpeg 截帧命令 (采用 I 帧精准提取 + PNG 无损编码引擎)
+	// 基础视频滤镜：精准抓取第一个关键帧 (I-frame)，避免花屏和解码黑屏
+	vfFilter := "select='eq(pict_type,I)'"
+
+	// ✨ 水印渲染核心逻辑 (最高性能优化：临时文件挂载降维打击法)
+	if builtinConfig != nil && builtinConfig.WatermarkEnable {
+		fontPath := "/home/upload/font.ttf"
+
+		// 校验字体文件状态
+		if _, err := os.Stat(fontPath); os.IsNotExist(err) {
+			log.Printf("[BUILTIN] ⚠️ 警告：开启了截图水印，但未找到物理字体文件 %s！", fontPath)
+		} else {
+			// 剥离所有的单引号，保持纯净文本
+			formatStr := strings.ReplaceAll(builtinConfig.WatermarkFormat, "'", "")
+			textStr := strings.ReplaceAll(builtinConfig.WatermarkText, "'", "")
+
+			// ✨ 核心功能追加：如果未设置水印文本，则智能降级将主播名字作为水印
+			if strings.TrimSpace(textStr) == "" {
+				textStr = strings.ReplaceAll(anchorName, "'", "")
+			}
+
+			// 【终极修复】：将时间格式中的冒号强制转义为 \:，防止 FFmpeg 的动态宏解析器误判参数数量
+			formatStr = strings.ReplaceAll(formatStr, ":", "\\:")
+
+			fullText := textStr
+			if fullText != "" {
+				fullText += " "
+			}
+			// 拼接动态时间宏，现在时间格式里的冒号已经被转义了
+			fullText += "%{localtime:" + formatStr + "}"
+
+			// 核心终极修复 1：将相对路径转为绝对路径，防止底层 FFmpeg 进程工作目录不一致导致找不到文件
+			textFileName := fmt.Sprintf("wm_%d.txt", time.Now().UnixNano())
+			absTextFileName, _ := filepath.Abs(textFileName)
+
+			// 核心终极修复 2：写入临时文件并确保其在 FFmpeg 执行完毕后销毁
+			if err := os.WriteFile(absTextFileName, []byte(fullText), 0644); err == nil {
+				defer os.Remove(absTextFileName)
+
+				// 解析水印的九宫格坐标方位
+				var posStr string
+				switch builtinConfig.WatermarkPosition {
+				case "top-left":
+					posStr = "x=20:y=20"
+				case "top-right":
+					posStr = "x=w-tw-20:y=20"
+				case "bottom-left":
+					posStr = "x=20:y=h-th-20"
+				case "bottom-right":
+					posStr = "x=w-tw-20:y=h-th-20"
+				default:
+					posStr = "x=w-tw-20:y=h-th-20" // 默认右下角
+				}
+
+				// ✨ 动态提取用户配置的字体大小和颜色（并设置默认安全回退值）
+				fontSize := builtinConfig.WatermarkFontSize
+				if fontSize <= 0 {
+					fontSize = 38
+				}
+				fontColor := builtinConfig.WatermarkFontColor
+				if fontColor == "" {
+					fontColor = "white@0.95"
+				}
+
+				// 核心终极修复 3：动态注入用户配置的字号与颜色，并融合电影级字幕特效投影
+				drawtext := fmt.Sprintf("drawtext=fontfile='%s':textfile='%s':fontcolor=%s:fontsize=%d:borderw=2:bordercolor=black@0.75:shadowcolor=black@0.5:shadowx=3:shadowy=3:%s", fontPath, absTextFileName, fontColor, fontSize, posStr)
+				vfFilter += "," + drawtext
+
+			} else {
+				log.Printf("[BUILTIN] ⚠️ 水印临时文件写入失败，将跳过水印生成: %v", err)
+			}
+		}
+	}
+
+	// 构建 FFmpeg 执行指令，通过 pipe:0 读取内存流，直接输出 png 图片
 	cmd := exec.Command(builtinFfmpegPath,
 		"-y",
 		"-i", "pipe:0",
-		"-vf", "select='eq(pict_type,I)'",
+		"-vf", vfFilter,
 		"-frames:v", "1",
 		"-c:v", "png",
 		"-f", "image2",
 		coverPath,
 	)
 
-	// 6. 将内存中的尾部视频流通过标准输入管道 (pipe) 传给 FFmpeg 进程
+	// 挂载错误日志捕获缓冲池
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	// 获取管道输入口
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return false
 	}
 
-	// 启动进程并异步写入流数据
-	cmd.Start()
+	// 启动 FFmpeg 进程
+	if err := cmd.Start(); err != nil {
+		log.Printf("[BUILTIN] ❌ FFmpeg 启动失败: %v", err)
+		return false
+	}
+
+	// 高速将内存字节注入 FFmpeg 管道，写完立即关闭 stdin 触发 EOF 处理
 	stdin.Write(buf)
 	stdin.Close()
 
-	// 等待截帧真正执行完毕并落盘
-	cmd.Wait()
+	// 等待底层图像渲染和编码结束
+	err = cmd.Wait()
+
+	// ✨ 核心追踪日志：只要开启了水印，就强行把 FFmpeg 的底层报错池抖出来！
+	// 无论截帧成功与否，只要检测到 "No such filter" 或滤镜相关的错误，立即高亮暴露问题
+	if builtinConfig != nil && builtinConfig.WatermarkEnable {
+		stderrStr := stderrBuf.String()
+		if strings.Contains(stderrStr, "No such filter") {
+			log.Printf("[BUILTIN-ERROR] 💀 致命错误：你的 FFmpeg 未编译 drawtext 滤镜 (缺少 libfreetype)！请重新安装完整版 FFmpeg！")
+		} else if strings.Contains(stderrStr, "Parsed_drawtext") || strings.Contains(stderrStr, "Error") || err != nil {
+			//log.Printf("[BUILTIN-DEBUG] ⚠️ FFmpeg 水印滤镜执行追踪：\n%s", stderrStr)
+		}
+	}
+
+	if err != nil {
+		log.Printf("[BUILTIN] ❌ FFmpeg 截图底层进程异常崩溃: %v\n", err)
+		return false
+	}
 
 	return true
 }
@@ -1935,14 +2074,16 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 		filePrefix := fmt.Sprintf("%s_%s", safeName, timestamp)
 
 		time.Sleep(5 * time.Second)
-		extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath)
+		// ✨ 修改点：传入 anchorName 用于智能水印
+		extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath, anchorName)
 
 		for {
 			select {
 			case <-recordCtx.Done(): // 收到严格终止指令，立刻结束旁路监测
 				return
 			case <-ticker.C:
-				extracted := extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath)
+				// ✨ 修改点：传入 anchorName 用于智能水印
+				extracted := extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath, anchorName)
 
 				if extracted {
 					if info, err := os.Stat(coverPath); err == nil && info.Size() > 0 {
@@ -1957,7 +2098,6 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 
 								archiveCoverPath := filepath.Join(imgArchiveDir, fmt.Sprintf("%s_%s_cover_%04d.png", safeName, timestamp, coverCount))
 								_ = os.WriteFile(archiveCoverPath, data, 0644)
-								log.Printf("[BUILTIN] 📸 旁路截帧 (第 %d 次) 已保存至独立截图目录，等待自动上传: %s", coverCount, archiveCoverPath)
 								coverCount++
 							}
 
@@ -2149,6 +2289,19 @@ func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 		if c.SavePath != "" {
 			builtinConfig.SavePath = c.SavePath
 		}
+
+		// ✨ 更新前端传来的水印参数
+		builtinConfig.WatermarkEnable = c.WatermarkEnable
+		builtinConfig.WatermarkText = c.WatermarkText
+		builtinConfig.WatermarkFormat = c.WatermarkFormat
+		builtinConfig.WatermarkPosition = c.WatermarkPosition
+		if c.WatermarkFontSize > 0 {
+			builtinConfig.WatermarkFontSize = c.WatermarkFontSize
+		}
+		if c.WatermarkFontColor != "" {
+			builtinConfig.WatermarkFontColor = c.WatermarkFontColor
+		}
+
 		data, _ := json.MarshalIndent(builtinConfig, "", "    ")
 		os.WriteFile("builtin_config.json", data, 0644)
 		sendJSONSuccess(w, r, nil)

@@ -362,7 +362,7 @@ func pauseSystemOnFailure(reason string) {
 func main() {
 	// 解析命令行参数
 	flag.StringVar(&dirs, "dirs", "", "扫描目录(逗号分隔)")
-	flag.StringVar(&server, "server", "https://wustwust.cn:8081", "服务器")
+	flag.StringVar(&server, "server", "http://127.0.0.1:5244", "服务器")
 	flag.IntVar(&workers, "workers", 3, "并发")
 	flag.IntVar(&rateMB, "rate", 0, "手动限速 MB/s")
 	flag.IntVar(&dayRateMB, "day-rate", 20, "白天限速 MB/s")
@@ -421,6 +421,7 @@ func main() {
 		appConfig.RecorderContainer = recorderContainer
 		appConfig.RecorderConfigPath = recorderConfigPath
 		appConfig.EnableEncryption = true // 默认开启通信加密
+		appConfig.EnableUpload = false    // ✨ 默认关闭上传，仅录制
 
 		// 写入默认的邮件配置参数（在此预设原有的硬编码值）
 		appConfig.MailFrom = "your_email@qq.com"
@@ -585,6 +586,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	currentWorkers := appConfig.Workers
 	currentDirs := make([]string, len(appConfig.Dirs))
 	copy(currentDirs, appConfig.Dirs)
+	enableUpload := appConfig.EnableUpload // ✨ 获取全局上传开关
 	appConfigMu.RUnlock()
 
 	runningMu.RLock()
@@ -676,6 +678,18 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 				if info.Size() == 0 {
 					log.Printf("[SCAN][CLEAN] 检测到遗留的 0 字节无效切片，已自动物理删除: %s", path)
 					os.Remove(path)
+					return nil
+				}
+
+				// ✨ 核心逻辑：如果上传被关闭，只做目录统计和录制状态监测，不加入待处理队列
+				if !enableUpload {
+					if val, exists := dirStatuses.Load(scanRoot); exists {
+						ds := val.(*DirStatus)
+						ds.Mu.Lock()
+						ds.PendingFiles++
+						ds.TotalSize += info.Size()
+						ds.Mu.Unlock()
+					}
 					return nil
 				}
 

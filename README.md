@@ -318,7 +318,12 @@
 
 ### 1. 环境准备与编译
 
-请确保你的本地环境已安装 [Go 1.20+](https://go.dev/dl/)。
+请确保你的本地环境已安装
+1. **Go 语言环境** [Go 1.20+](https://go.dev/dl/)。
+2. **FFmpeg 多媒体处理核心 (⚠️ 必须)**：内置的轻量级录制引擎与无损截帧引擎高度依赖操作系统的 FFmpeg 进程。
+  * **Windows**: 请前往 [FFmpeg 官网](https://ffmpeg.org/download.html) 下载预编译的 `.exe`，并将其路径加入到系统环境变量 `Path` 中（或直接将 `ffmpeg.exe` 放置在与本项目编译产物同级的目录中）。
+  * **Linux**: 执行 `sudo apt install ffmpeg` (Debian/Ubuntu) 或 `sudo yum install ffmpeg` (CentOS)。
+  * **macOS**: 执行 `brew install ffmpeg`。
 
 ```bash
 # 克隆项目到本地

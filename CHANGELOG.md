@@ -1,5 +1,15 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
 
+### [v2.5.0] - 2026-06-05 (QQ Bot & Lock-Free Architecture & Built-in Ultra)
+#### 🌟 核心特性 (New Features)
+* **全面接管 QQ 机器人体系 (QQ Bot / NapCatQQ)**：原生接入 OneBot v11 标准，完美适配 NapCatQQ。底层引入 Base64 流封包技术，彻底解决了跨 Docker 容器部署时的文件物理隔离难题；构建 JSON-RPC Echo 机制，支持通过 `file_id` 穿透提取并下发更新文件。
+* **Telegram 动态相册与退避重连 (TG MediaGroup & Backoff)**：TG 机器人引擎再度进化。新增 MediaGroup 防风控相册聚合发送机制，以及基于 `EditMessageMedia` 的原地幻灯片动态刷新。核心网络层引入**指数退避重连机制**，彻底解决系统启动瞬间无网络导致的崩溃失效问题，并支持通过 TG 交互面板直接修改并持久化保存水印配置。
+* **双引擎智能防碰撞护盾 (Dual-Engine Anti-Collision)**：外置扫描雷达与内置录制引擎实现内存级状态互通。当检测到某个主播已被内置引擎接管并正处于“录制中”状态时，扫描雷达将触发智能避让，从源头上防止多路引擎并发写入导致的文件破坏与重复录制。
+
+#### 🚀 性能与架构极致优化 (Performance & Architecture)
+* **全局无锁化与低延迟通讯 (Lock-Free & Low Latency)**：彻底废弃底层的 `RWMutex` 读写锁，将核心连接池（`wsClients`）与状态树（`dirStatuses`）全面升级为底层原生的无锁 `sync.Map`。同时针对局域网环境深度调优，强制关闭 WebSocket 的内网压缩（`EnableCompression: false`），用极小的带宽开销换取极致的零延迟数据推流。
+
+---
 ### [v2.4.1] - 2026-04-17 (Telegram Interactive UI & OTA & Performance)
 #### 🌟 核心特性 (New Features)
 * **可视化多级交互面板 (Interactive UI Panel)**：彻底重构 Telegram 交互逻辑。引入九宫格主菜单与动态二级菜单，通过 `Inline Keyboard` 实现全按键操控，支持“一键挂起”、“极速恢复”、“画面截取”等功能，告别命令行输入。
@@ -13,7 +23,6 @@
 * **内存级日志秒发 (Memory Log Export)**：直接从系统高性能环形日志队列中实时抽取数据并生成 `.txt` 附件发送，实现 0 磁盘读写损耗的实时日志导出。
 
 ---
-
 ### [v2.4.0] - 历史更新 (Telegram Bot & Headless Chrome & Performance Ultra)
 #### 🌟 核心特性 (New Features)
 * **全功能 Telegram 机器人接管 (Telegram Bot Console)**：引入了纯原生的 Telegram Bot 控制台底座。通过绑定专属 `ChatID` 实现严格的安全鉴权。支持通过 `/list`, `/add`, `/pause`, `/resume`, `/status` 等指令实现脱离 Web UI 的全天候极速移动端管控，并内置了针对超长监控列表的“智能分片发送”引擎，突破单条消息字符限制。
@@ -22,12 +31,12 @@
 
 #### 🚀 性能与架构极致优化 (Performance & Architecture)
 * **O(1) 增量聚合图表引擎 (O(1) Incremental Stats)**：彻底重构了数据大盘的计算逻辑。废弃了每次刷新均需全量遍历五十万条记录的 O(N) 灾难级消耗，改用 `sync.Map` 构建高并发无锁的增量聚合池 (`trendStats` 与 `rankStats`)。微秒级吐出图表数据，彻底铲除了高负载下的 CPU 尖峰卡顿。
-* **成功记录脏标记落盘剥离 (Dirty Write I/O Optimization)**：【修复 Bug 5】重构了海量成功日志的持久化机制。引入 `successLogDirty` 原子脏标记与独立的 `successLogPersistLoop` 后台守护协程。将全量 JSON 重写操作改为在内存中缓存并在每 15 秒批量合并落盘一次。将磁盘 I/O 压力与 GC 开销降低了数个数量级。
+* **成功记录脏标记落盘剥离 (Dirty Write I/O Optimization)**：重构了海量成功日志的持久化机制。引入 `successLogDirty` 原子脏标记与独立的 `successLogPersistLoop` 后台守护协程。将全量 JSON 重写操作改为在内存中缓存并在每 15 秒批量合并落盘一次。将磁盘 I/O 压力与 GC 开销降低了数个数量级。
 * **HTTP 连接池全局复用 (HTTP Connection Pool)**：为全局 `httpCli` 配置了底层的 TCP Keep-Alive 连接池（`MaxIdleConns` 等参数）。在高频检测与海量小文件通信时，免去了频繁握手挥手的开销，极大降低了网络层的 CPU 与内存消耗。
 * **WS 广播长短周期分离 (Slow/Fast WS Broadcaster)**：优化前端 WebSocket 推送性能。将高频变化数据（队列、流量）的 2 秒级快刷新与重度 I/O 数据（硬盘容量、目录遍历）的 10 秒级慢刷新进行分离降级，避免前端雷达高频拉取打满底层 I/O。
 
 #### 🔧 核心修复与稳定性 (Bug Fixes & Stability)
-* **Token 语义安全隔离 (Token Semantic Isolation)**：【修复 Bug 7】修复了远端 Openlist 服务器鉴权 Token 与前端 Dashboard 本地登录 Token 共用单一变量导致互相覆盖的严重鉴权混乱问题。现已将两者在内存与加锁维度（`tokenMu` / `dashboardTokenMu`）完全物理隔离。
+* **Token 语义安全隔离 (Token Semantic Isolation)**：修复了远端 Openlist 服务器鉴权 Token 与前端 Dashboard 本地登录 Token 共用单一变量导致互相覆盖的严重鉴权混乱问题。现已将两者在内存与加锁维度（`tokenMu` / `dashboardTokenMu`）完全物理隔离。
 * **开播通知防抖护盾 (Notification Debounce)**：针对弱网环境下 FFmpeg 频繁断流重连导致的微信/TG“开播-下播”消息轰炸现象，在内核中引入了 `builtinNotifyDebounce` 并发防抖字典。强制设立 3 分钟的冷却缓冲期，实现无感知的底层静默重连恢复。
 * **ECharts 渲染重叠修复 (ECharts Render Fix)**：修复了由于 Vue 响应式数据频繁驱动导致 ECharts 饼状图中心文字残留与图层重叠的排版 Bug（新增 `show: false` 显式屏蔽）。
 
@@ -50,11 +59,11 @@
 #### 🌟 核心特性 (New Features)
 * **抖音原画级录制 (Origin Quality Support)**：全面升级内置录制引擎的画质嗅探逻辑。当用户选择最高画质时，底层将优先去平台字典中提取 `ORIGIN1` 或 `ORIGIN` 无损原画流，若主播未开启原画则自动平滑降级至 `FULL_HD1` (蓝光)，彻底释放最高录制画质潜力。
 * **画质天花板级截帧 (Lossless Cover Extraction)**：全面升级内置引擎的旁路抽帧黑科技。采用 I 帧 (关键帧) 精准提取与无损 PNG 编码引擎 (`-c:v png`)，彻底解除原有 JPEG 的有损压缩限制。直播封面截图画质达到无损天花板（单张体积可突破 1MB~3MB），完美保留原始直播画面的每一处高清细节。
-
+---
 #### 🔧 底层与架构调整 (Backend & Architecture)
 * **零依赖硬件探针 (Zero-Dependency Monitoring)**：为了大幅降低跨平台编译的复杂度和最终二进制文件的体积，彻底剥离了沉重的 `gopsutil` 第三方硬件库。重构为利用 Go 原生标准库调用底层跨平台 Shell 命令 (`wmic`/`df`/`tasklist`/`ps`) 来实现极低开销的磁盘与内存监控。
 * **高并发 IO 锁修复 (Concurrency I/O Fix)**：修复了在高并发触发秒传或写入成功日志时，导致 `uploaded_hash.db` 数据库文件尾部出现乱码、结构破坏或漏检的严重 Bug。全面引入 `sync.RWMutex` 读写锁，保障多 Worker 状态下的绝对数据安全。
-
+---
 #### 🎨 界面与交互优化 (UI/UX)
 * **严谨的界面术语 (UI Terminology)**：为配合底层原画抓取能力的升级，将前端引擎全局设置中的“蓝光/超清”术语严谨地更正为“原画/蓝光 (最高画质)”。
 * **语法规范修复 (Syntax Polish)**：修复了前端 Vue/Arco Design 组件树中存在的下拉框闭合标签错误 (`</select>` 修正为 `</a-select>`)，提升了 DOM 的健壮性。
@@ -67,6 +76,7 @@
 #### 🎨 界面与交互优化 (UI/UX)
 * **自适应流式卡片重构 (Responsive Cards Polish)**：重构了【系统概览】顶部核心数据指标的响应式栅格系统（由三列优化为平滑的四/六列布局）。
 * **防撑爆折行保护 (Anti-Wrap Protection)**：针对数据面板引入了严格的 `white-space: nowrap` 防换行保护机制与动态字号（Desktop 22px / Mobile 18px）自适应缩放引擎。彻底解决了当监控数值字符过长（如 "18.06 MB"）时，文本换行导致卡片高度被异常撑爆、整体排版错位的不美观问题。
+
 
 ---
 ### [v2.1.0] - 历史更新 (Dynamic RSA+AES API Encryption)

@@ -1764,6 +1764,11 @@
                                         <a-switch v-model="configForm.enableEncryption" size="small"></a-switch>
                                     </a-form-item>
                                 </a-col>
+                                <a-col :xs="24" :sm="6">
+                                    <a-form-item field="enableUpload" label="自动上传到云端">
+                                        <a-switch v-model="configForm.enableUpload" size="small"></a-switch>
+                                    </a-form-item>
+                                </a-col>
                             </a-row>
                             <a-divider style="margin: 12px 0 24px 0"></a-divider>
                             <div class="mobile-action-buttons">
@@ -1900,8 +1905,62 @@
                             <a-input-number v-model="builtinSettings.segment_time" :min="0"
                                             :max="1440"></a-input-number>
                         </a-form-item>
+
+                        <a-divider style="margin: 12px 0;"><span style="color: var(--color-text-3); font-size: 12px;">FFmpeg 截图水印设置</span></a-divider>
+
+                        <a-form-item field="watermark_enable" label="开启截图中自带时间和自定义水印">
+                            <a-switch v-model="builtinSettings.watermark_enable" checked-color="#165DFF" unchecked-color="#C9CDD4">
+                                <template #checked>ON</template>
+                                <template #unchecked>OFF</template>
+                            </a-switch>
+                        </a-form-item>
+
+                        <template v-if="builtinSettings.watermark_enable">
+                            <a-form-item label="自定义水印前缀内容" tooltip="显示在时间前方的固定文字">
+                                <a-input v-model="builtinSettings.watermark_text" placeholder="例如：监控画面"></a-input>
+                            </a-form-item>
+
+                            <a-row :gutter="16">
+                                <a-col :span="12">
+                                    <a-form-item label="水印字号" tooltip="建议设置在 30 到 50 之间">
+                                        <a-input-number v-model="builtinSettings.watermark_font_size" :min="10" :max="120" placeholder="默认 38"></a-input-number>
+                                    </a-form-item>
+                                </a-col>
+                                <a-col :span="12">
+                                    <a-form-item label="水印颜色及透明度" tooltip="点击右侧色块以可视化调整颜色与透明通道">
+                                        <a-color-picker
+                                                v-model="builtinSettings.watermark_font_color"
+                                                show-text
+                                                show-preset
+                                                show-alpha
+                                                format="hex"
+                                                style="width: 100%;"
+                                        />
+                                    </a-form-item>
+                                </a-col>
+                            </a-row>
+
+                            <a-row :gutter="16">
+                                <a-col :span="12">
+                                    <a-form-item label="时间格式化" tooltip="支持标准的 strftime 格式">
+                                        <a-input v-model="builtinSettings.watermark_format" placeholder="%Y-%m-%d %H:%M:%S"></a-input>
+                                    </a-form-item>
+                                </a-col>
+                                <a-col :span="12">
+                                    <a-form-item label="水印位置">
+                                        <a-select v-model="builtinSettings.watermark_position">
+                                            <a-option value="top-left">左上角 (Top-Left)</a-option>
+                                            <a-option value="top-right">右上角 (Top-Right)</a-option>
+                                            <a-option value="bottom-left">左下角 (Bottom-Left)</a-option>
+                                            <a-option value="bottom-right">右下角 (Bottom-Right)</a-option>
+                                        </a-select>
+                                    </a-form-item>
+                                </a-col>
+                            </a-row>
+                        </template>
+
                         <a-button type="primary" status="success" long @click="saveBuiltinConfig"
-                                  :loading="builtinSaving">保存基础设置
+                                  :loading="builtinSaving" style="margin-top: 15px;">保存基础设置
                         </a-button>
                     </a-form>
                 </a-tab-pane>
@@ -2161,6 +2220,12 @@
 
     const app = createApp({
         setup() {
+            /**
+             * 【性能优化模块】响应式状态：追踪当前浏览器标签页是否可见
+             * 用于拦截和挂起不可见时的网络图片拉取，节省海量流量
+             */
+            const isPageVisible = ref(!document.hidden);
+
             const isMobile = ref(window.innerWidth <= 768);
 
             /**
@@ -2327,7 +2392,18 @@
             const builtinPageSize = ref(10);
             const builtinForm = ref({platform: 'Douyin', url: ''});
             const builtinBatchForm = ref({platform: 'Douyin', urls: ''});
-            const builtinSettings = ref({quality: 'uhd', segment_time: 0, save_path: './downloads'});
+
+            const builtinSettings = ref({
+                quality: 'uhd',
+                segment_time: 0,
+                save_path: './downloads',
+                watermark_enable: false,
+                watermark_text: 'go-auto-uploader',
+                watermark_format: '%Y-%m-%d %H:%M:%S',
+                watermark_position: 'bottom-right',
+                watermark_font_size: 38,
+                watermark_font_color: '#FFFFFFE6'
+            });
             const builtinCookies = ref({douyin: '', kuaishou: '', soop: ''});
             const builtinTasks = ref([]);
 
@@ -2374,6 +2450,21 @@
             const isAllBuiltinActive = computed(() => builtinTasks.value.length > 0 && builtinTasks.value.some(t => !t.is_paused));
 
             /**
+             * 【性能优化核心机制】监听标签页切换与页面可见性
+             * 当页面重新回到视野，并且用户切换到了内置引擎标签卡时，主动清算后台积压的待更新封面图
+             */
+            watch([activeTab, isPageVisible], ([newTab, visible]) => {
+                if (newTab === 'builtin_recorder' && visible) {
+                    builtinTasks.value.forEach(t => {
+                        if (t._pending_avatar) {
+                            t.avatar = t._pending_avatar;
+                            t._pending_avatar = null; // 消费并释放内存
+                        }
+                    });
+                }
+            });
+
+            /**
              * 构建并返回各个平台的直达跳转外链
              * @param {string} platform 平台名称标识
              * @param {string} roomId 平台对应的纯净房间 ID
@@ -2393,27 +2484,16 @@
              */
             const downloadBuiltinCover = async (url, anchorName) => {
                 try {
-                    // 1. 发起网络请求获取图片的二进制流数据
                     const response = await fetch(url);
                     const blob = await response.blob();
-
-                    // 2. 动态创建一个隐藏的 <a> 标签，用于触发浏览器的原生下载机制
                     const link = document.createElement('a');
                     link.href = URL.createObjectURL(blob);
-
-                    // 3. 清洗主播名称中的非法路径字符，防止下载文件命名报错
                     const safeName = (anchorName || '未命名主播').replace(/[/\\?%*:|"<>]/g, '-');
-
                     link.download = `${safeName}_封面图_${Date.now()}.png`;
-
-                    // 5. 将标签暂时挂载到 DOM 树上并模拟点击，唤起下载任务
                     document.body.appendChild(link);
                     link.click();
-
-                    // 6. 下载触发后立即清理 DOM 节点，并释放内存中的 Blob URL 避免内存泄漏
                     document.body.removeChild(link);
                     URL.revokeObjectURL(link.href);
-
                     Message.success('封面图片已开始下载');
                 } catch (e) {
                     Message.error('图片下载失败，请直接右键保存图片');
@@ -2430,6 +2510,18 @@
                         builtinSettings.value.quality = res1.data.quality || 'uhd';
                         builtinSettings.value.segment_time = res1.data.segment_time || 0;
                         builtinSettings.value.save_path = res1.data.save_path || './downloads';
+
+                        builtinSettings.value.watermark_enable = res1.data.watermark_enable || false;
+                        builtinSettings.value.watermark_text = res1.data.watermark_text || 'go-auto-uploader';
+                        builtinSettings.value.watermark_format = res1.data.watermark_format || '%Y-%m-%d %H:%M:%S';
+                        builtinSettings.value.watermark_position = res1.data.watermark_position || 'bottom-right';
+                        builtinSettings.value.watermark_font_size = res1.data.watermark_font_size || 38;
+
+                        let savedColor = res1.data.watermark_font_color || '#FFFFFFE6';
+                        if (savedColor.includes('@') || savedColor.includes('white') || savedColor.includes('black')) {
+                            savedColor = '#FFFFFFE6';
+                        }
+                        builtinSettings.value.watermark_font_color = savedColor;
                     }
                     const res2 = await api.get('/builtin_recorder/cookies');
                     if (res2.data) {
@@ -2454,7 +2546,7 @@
                 builtinSaving.value = true;
                 try {
                     await api.post('/builtin_recorder/config', builtinSettings.value);
-                    Message.success("内置引擎基础设置已生效！");
+                    Message.success("内置引擎基础设置及截图水印参数已生效！");
                     showBuiltinSettingsModal.value = false;
                 } catch (e) {
                 } finally {
@@ -2686,7 +2778,7 @@
             const logQuery = reactive({page: 1, limit: 50, level: '', keyword: ''});
             const logData = reactive({items: [], total: 0});
             const logExportLimit = ref(1000);
-            const logListRef = ref(null); // 修改为使用 a-list 虚拟滚动的 ref
+            const logListRef = ref(null);
 
             const configForm = ref({});
             const configDirsString = ref('');
@@ -2720,7 +2812,7 @@
                         return;
                     }
                     const option = {
-                        title: { show: false }, // ✨ 修复：在此添加 show: false 解决 ECharts 缓存文字残留重叠 Bug
+                        title: { show: false },
                         backgroundColor: 'transparent',
                         tooltip: {trigger: 'item', formatter: '{b}状态: {c} 个文件 ({d}%)'},
                         legend: {
@@ -2860,7 +2952,6 @@
                     Message.success('网关认证成功');
                     initDashboard();
 
-                    // 在下一个微任务周期中执行图表绘制，避开因 Vue 的 v-if 更新延迟带来的 DOM Null 异常
                     nextTick(() => {
                         if (activeTab.value === 'overview') {
                             renderChart();
@@ -3099,16 +3190,14 @@
                 }, 150);
             };
 
-            // ✨ 定义重试状态控制变量用于指数退避算法
             let reconnectAttempts = 0;
-            const maxReconnectDelay = 30000; // 重试间隔上限设为 30 秒
-            const baseReconnectDelay = 2000; // 基础间隔 2 秒
+            const maxReconnectDelay = 30000;
+            const baseReconnectDelay = 2000;
 
             /**
              * 构建全功能的 WebSocket 客户端信道，并封装断线重连、密文解码鉴别与心跳存活自动确认处理机
              */
             const connectWS = async () => {
-                // 如果开启了加密但是未获取到 SessionID 则主动握手
                 if (window._encryptionEnabled && !_sessionId) {
                     await initSecurity();
                 }
@@ -3120,7 +3209,6 @@
                 wsStatus.value = 'connecting';
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 
-                // 拼接 session_id 让后端识别当前 WebSocket 连接属于哪个加密上下文
                 let wsUrl = `${protocol}//${window.location.host}/ws/live`;
                 if (window._encryptionEnabled && _sessionId) {
                     wsUrl += `?session_id=${_sessionId}`;
@@ -3133,7 +3221,7 @@
                 ws.onopen = () => {
                     wsStatus.value = 'connected';
                     lastPongTime = Date.now();
-                    reconnectAttempts = 0; // ✨ 连上后立刻清零重试次数，恢复健康状态
+                    reconnectAttempts = 0;
 
                     if (pingTimer) clearInterval(pingTimer);
                     pingTimer = setInterval(async () => {
@@ -3145,7 +3233,6 @@
                             }
                             const pingRaw = JSON.stringify({type: 'ping', payload: Date.now()});
 
-                            // 心跳包的独立加密机制
                             if (window._encryptionEnabled && _cryptoKey) {
                                 const encryptedPing = await encryptPayload(pingRaw);
                                 ws.send(JSON.stringify({encrypted: encryptedPing}));
@@ -3162,7 +3249,6 @@
 
                         let msgObj = JSON.parse(event.data);
 
-                        // 信道密文截获解析分发器
                         if (window._encryptionEnabled && msgObj.encrypted) {
                             const decryptedStr = await decryptPayload(msgObj.encrypted);
                             msgObj = JSON.parse(decryptedStr);
@@ -3177,7 +3263,6 @@
 
                         triggerWsPulse(msg.type);
 
-                        // 全局业务信号指令路由
                         if (msg.type === 'systemAlert') {
                             const payload = msg.payload;
                             Notification[payload.level || 'error']({
@@ -3241,10 +3326,10 @@
                         } else if (msg.type === 'newLog') {
                             const log = msg.payload;
                             if (logQuery.page === 1 && !logQuery.keyword && (!logQuery.level || logQuery.level === log.level)) {
-                                logData.items.push(log);
+                                logData.items.unshift(log);
                                 logData.total++;
                                 if (logData.items.length > logQuery.limit) {
-                                    logData.items.shift();
+                                    logData.items.pop();
                                 }
                             }
                         } else if (msg.type === 'scanStarted') {
@@ -3272,7 +3357,7 @@
                                 duration: 4000
                             });
                         } else if (msg.type === 'builtinTasks') {
-                            // ✨ 核心修复：绝不重新赋值 builtinTasks.value，而是原地操作数组
+                            // ✨ 性能优化修改点：处理后端海量推送时的视觉静默拦截
                             const payloadTasks = msg.payload || [];
 
                             // 1. 从原数组中移除后端已经不存在的任务
@@ -3293,13 +3378,25 @@
                                     existing.duration = pTask.duration;
                                     existing.file_size = pTask.file_size;
                                     existing.is_paused = pTask.is_paused;
-                                    existing.avatar = pTask.avatar;
-                                    // 维持预览图更新逻辑
-                                    if (globalPreview.visible && globalPreview.platform === pTask.platform && globalPreview.roomId === pTask.room_id) {
-                                        globalPreview.src = pTask.avatar;
+
+                                    // 【核心流量拦截】只有在页面可见且停留在当前 Tab 时，才主动更新 DOM 触发浏览器图片拉取
+                                    if (isPageVisible.value && activeTab.value === 'builtin_recorder') {
+                                        existing.avatar = pTask.avatar;
+                                        // 维持预览图更新逻辑
+                                        if (globalPreview.visible && globalPreview.platform === pTask.platform && globalPreview.roomId === pTask.room_id) {
+                                            globalPreview.src = pTask.avatar;
+                                        }
+                                    } else {
+                                        // 【核心流量拦截】将未渲染的最新地址暂存在内存缓冲变量里
+                                        existing._pending_avatar = pTask.avatar;
                                     }
                                 } else {
                                     pTask.switching = false;
+                                    // 【核心流量拦截】初次载入时也要判断是否应该加载图片
+                                    if (!(isPageVisible.value && activeTab.value === 'builtin_recorder')) {
+                                        pTask._pending_avatar = pTask.avatar;
+                                        pTask.avatar = null;
+                                    }
                                     builtinTasks.value.push(pTask);
                                 }
                             });
@@ -3315,7 +3412,6 @@
                     if (pingTimer) clearInterval(pingTimer);
 
                     if (isLoggedIn.value) {
-                        // ✨ 核心算法：指数退避 (1.5的幂次方) + Jitter 随机抖动 (0~1000ms)
                         const delay = Math.min(
                             maxReconnectDelay,
                             baseReconnectDelay * Math.pow(1.5, reconnectAttempts)
@@ -3406,12 +3502,10 @@
             const downloadLogs = async () => {
                 try {
                     let url = `/api/v1/logs/download?limit=${logExportLimit.value}&level=${logQuery.level}&keyword=${logQuery.keyword}`;
-                    // 如果开启了加密，则必须在 URL 中携带当前会话的 Session_ID 供后端加密使用
                     if (window._encryptionEnabled) {
                         if (!_sessionId) await initSecurity();
                         url += `&session_id=${_sessionId}`;
                     }
-                    // 使用 window.open 触发浏览器原生下载机制
                     window.open(url, '_blank');
                 } catch (e) {
                     Message.error("日志导出失败: " + e.message);
@@ -3622,6 +3716,9 @@
                 handleResize();
 
                 document.addEventListener('visibilitychange', () => {
+                    // 【性能优化核心拦截点】利用原生 API 刷新全局挂起状态拦截网络操作
+                    isPageVisible.value = !document.hidden;
+
                     if (document.visibilityState === 'visible' && isLoggedIn.value) {
                         if (wsStatus.value === 'disconnected' || !ws || ws.readyState !== WebSocket.OPEN) {
                             connectWS();
@@ -3657,16 +3754,16 @@
                 }
             });
 
-            // 虚拟滚动日志定位逻辑
             watch(() => logData.items.length, () => {
                 nextTick(() => {
-                    if (logListRef.value) {
-                        logListRef.value.scrollIntoView({ index: logData.items.length - 1 });
+                    if (logListRef.value && logQuery.page === 1) {
+                        logListRef.value.scrollIntoView({ index: 0 });
                     }
                 });
             });
 
             return {
+                isPageVisible, // 暴露至全局模板以便后期维护追踪
                 isMobile, isDarkMode, toggleTheme, openGitHub, isLoggedIn, loginLoading, loginForm, activeTab,
                 handleLogin, handleLogout, wsStatus, wsStats, wsLatency, getLatencyColor, liveTaskFilter,
                 systemStatus, queueStatus, liveTasks, uploadingTasks, completedTasks, control, historyQuery,
