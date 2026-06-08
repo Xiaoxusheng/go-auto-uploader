@@ -1,0 +1,60 @@
+# 工作流的名称，会在 GitHub Actions 的运行列表中显示
+name: Go Code Coverage Check
+
+# 定义工作流的触发条件
+on:
+  # 当有代码推送到 main 分支时触发
+  push:
+    branches:
+      - main
+  # 当有针对 main 分支的 Pull Request 时触发
+  pull_request:
+    branches:
+      - main
+
+# 定义工作流中包含的具体任务（Jobs）
+jobs:
+  # 任务的唯一标识符为 'coverage'
+  coverage:
+    # 指定运行此任务的服务器环境为最新版的 Ubuntu
+    runs-on: ubuntu-latest
+
+    # 任务下属的具体执行步骤序列
+    steps:
+      # 步骤 1：拉取代码库。
+      # 必须先拉取代码，后续步骤才能访问到你的 Go 源码
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 步骤 2：配置 Go 语言开发环境。
+      # 设置工作流使用的 Go 版本，确保与你本地开发环境一致
+      - name: Setup Go Environment
+        uses: actions/setup-go@v5
+        with:
+          # 此处建议写死为你项目 go.mod 中使用的版本，例如 1.21 或 1.22
+          go-version: '1.21'
+
+      # 步骤 3：运行 Go 原生测试并生成覆盖率文件。
+      # 这是最关键的一步！paloaltonetworks/cov 插件本身不负责测试，它只负责“读取”这个结果。
+      # 参数 -coverprofile=coverage.out 会在根目录生成 coverage.out 文件。
+      - name: Run Go Tests and Generate Coverage File
+        run: go test -coverprofile=coverage.out ./...
+
+      # 步骤 4：调用右侧你截图中的 cov 插件，分析上一步生成的文件。
+      # 它会读取 coverage.out，并根据预设的阈值判断是否通过。
+      - name: Run paloaltonetworks/cov Check
+        uses: PaloAltoNetworks/cov@v3.2.1
+        with:
+          # 指定主分支名称，工具会以此作为基准参考（默认就是 main）
+          main_branch: main
+
+          # 指定运行模式。'coverage' 代表执行覆盖率检查并输出结果
+          cov_mode: coverage
+
+          # 指定要读取的覆盖率文件路径。
+          # 必须与上面步骤 3 中生成的文件名完全一致！
+          cov_file: coverage.out
+
+          # 指定最低及格线（覆盖率百分比阈值）。
+          # 默认为 90。如果你的项目刚开始写测试，建议先调低一点（比如 60），以后慢慢提高。
+          cov_threshold: 80
