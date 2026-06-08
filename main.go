@@ -1372,10 +1372,11 @@ func reportLoop() {
 	appConfigMu.RLock()
 	intervalMinutes := appConfig.EmailInterval
 	appConfigMu.RUnlock()
-
+	// 1. 预先算出下一次应该发邮件的绝对时间点 (比如：现在是 10:00，间隔 6 小时，那 next 应该是 16:00)
 	nextReportTime := time.Now().Add(time.Duration(intervalMinutes) * time.Minute)
 
 	for {
+		// 2. 核心：计算距离 16:00 还差多久？(比如还剩 5小时59分59秒)
 		sleepDuration := time.Until(nextReportTime)
 
 		if sleepDuration <= 0 {
@@ -1561,7 +1562,7 @@ func fileHash(p string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// loadHashCache 启动时一次性加载哈希库到内存
+// loadHashCache 启动时一次性加载哈希库到内存l
 func loadHashCache() {
 	data, err := os.ReadFile(hashFile)
 	if err != nil {

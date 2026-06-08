@@ -29,7 +29,7 @@ import (
 // 内置录制引擎模块 (Built-in Recorder)
 // ==========================================
 
-var builtinFfmpegPath string = "ffmpeg"
+var builtinFfmpegPath = "ffmpeg"
 
 var builtinHTTPClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -110,7 +110,6 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 	var sTime time.Time
 
 	isNewlyRecording := false
-
 	if existing, ok := builtinStatusMap.Load(key); ok {
 		oldTask := existing.(*BuiltinTaskStatus)
 		if anchorName == "" || anchorName == roomID {
