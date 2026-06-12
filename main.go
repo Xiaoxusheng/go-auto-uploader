@@ -420,8 +420,8 @@ func main() {
 		appConfig.LiveConfigPath = liveConfigPath
 		appConfig.RecorderContainer = recorderContainer
 		appConfig.RecorderConfigPath = recorderConfigPath
-		appConfig.EnableEncryption = true // 默认开启通信加密
-		appConfig.EnableUpload = false    // ✨ 默认关闭上传，仅录制
+		appConfig.EnableEncryption = false // 默认关闭通道加密
+		appConfig.EnableUpload = false     // ✨ 默认关闭上传，仅录制
 
 		// 写入默认的邮件配置参数（在此预设原有的硬编码值）
 		appConfig.MailFrom = "your_email@qq.com"
