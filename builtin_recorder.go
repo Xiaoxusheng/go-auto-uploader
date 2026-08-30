@@ -11,6 +11,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +41,46 @@ var builtinHTTPClient = &http.Client{
 		IdleConnTimeout:     90 * time.Second,
 		DisableKeepAlives:   false,
 	},
+}
+
+// builtinSafeProxyClient 专用于图片代理的 SSRF 防护客户端：
+// 在建连前对解析出的目标 IP 做内网/环名校验，并强制以校验后的 IP 直连，杜绝 DNS 重绑定绕过
+var builtinSafeProxyClient = &http.Client{
+	Timeout: 15 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns: 100,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+			if len(ips) == 0 {
+				return nil, fmt.Errorf("代理目标域名无法解析: %s", host)
+			}
+			// 任一解析结果命中高危网段都直接拒绝，防止多记录解析混入内网地址
+			for _, ip := range ips {
+				if isForbiddenProxyIP(ip.IP) {
+					return nil, fmt.Errorf("代理目标命中内网/保留网段，已拒绝: %s", ip.IP)
+				}
+			}
+			// 以校验通过的 IP 直连，后续连接不会再经历二次 DNS 解析
+			var d net.Dialer
+			return d.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+		},
+	},
+}
+
+// isForbiddenProxyIP 判定目标 IP 是否属于 SSRF 高危网段（环回/内网/链路本地/组播/未指定）
+func isForbiddenProxyIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()
 }
 
 type BuiltinTaskStatus struct {
@@ -69,6 +111,9 @@ var (
 
 	// ✨ 添加全局防抖缓冲池：彻底消除由于网络颠簸引起的 FFmpeg 开播/下播反复横跳现象
 	builtinNotifyDebounce sync.Map
+
+	// ✨ 新增：全局广播防抖信号通道
+	builtinBroadcastChan = make(chan struct{}, 1)
 )
 
 var builtinAnchorLinesMutex sync.Mutex
@@ -87,20 +132,49 @@ type BuiltinConfig struct {
 	WatermarkFontColor string `json:"watermark_font_color"` // ✨ 新增：动态控制字体颜色，支持 alpha 通道透视
 }
 
+// BuiltinCookieConfig 定义了多平台防爬虫所需挂载的鉴权会话
 type BuiltinCookieConfig struct {
 	Douyin   string `json:"douyin"`
 	Kuaishou string `json:"kuaishou"`
 	Soop     string `json:"soop"`
 }
 
+// BuiltinPlatform 定义平台扩展必须要实现的公共规范接口
 type BuiltinPlatform interface {
 	GetPlatformName() string
 	GetStreamURL(roomID string, quality string) (streamURL string, anchorName string, avatar string, err error)
 }
 
+// startBuiltinBroadcastDebouncer 启动全局广播防抖守护协程，限制最高刷新频率，聚合高并发状态更新
+// ✨ 核心优化：解决多主播状态并发更新导致的前端卡顿、WS 拥塞及状态回滚问题
+func startBuiltinBroadcastDebouncer() {
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond) // 500ms 聚合窗口，性能与实时性的最佳平衡
+		defer ticker.Stop()
+		needsBroadcast := false
+
+		for {
+			select {
+			case <-builtinBroadcastChan:
+				needsBroadcast = true
+			case <-ticker.C:
+				if needsBroadcast {
+					broadcastWS("builtinTasks", GetBuiltinRecorderTasks())
+					needsBroadcast = false
+				}
+			}
+		}
+	}()
+}
+
 // triggerBuiltinBroadcast 触发内置引擎任务状态列表向前端加密 WebSocket 信道的全量广播
+// ✨ 优化：已接入全局防抖节流机制，避免瞬间多路状态变化引起广播风暴卡死前端
 func triggerBuiltinBroadcast() {
-	broadcastWS("builtinTasks", GetBuiltinRecorderTasks())
+	select {
+	case builtinBroadcastChan <- struct{}{}:
+	default:
+		// 通道已满（当前节流周期内已有待处理信号），直接丢弃重复触发
+	}
 }
 
 // updateBuiltinStatus 更新指定内置引擎任务的内存运行状态，并识别录制状态变更以触发广播与微信通知
@@ -165,6 +239,7 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 		statusMsg = "已暂停"
 	}
 
+	// 整体覆盖指针，不存在内部并发修改的脏数据竞争问题
 	builtinStatusMap.Store(key, &BuiltinTaskStatus{
 		Platform:   platform,
 		RoomID:     roomID,
@@ -302,19 +377,21 @@ func builtinHotReloadLoop() {
 							cancel.(context.CancelFunc)()
 						}
 						if existingTask, ok := builtinStatusMap.Load(key); ok {
-							task := existingTask.(*BuiltinTaskStatus)
+							// ✨ 优化：采用值拷贝(Copy-On-Write)，避免指针原地修改引发的前端数据脏读和状态闪回
+							task := *(existingTask.(*BuiltinTaskStatus))
 							task.IsPaused = true
 							task.Status = "已暂停"
-							builtinStatusMap.Store(key, task)
+							builtinStatusMap.Store(key, &task)
 						}
 					} else if !isPaused && state == "paused" {
 						stateChanged = true
 						builtinTaskStates.Store(key, "running")
 						if existingTask, ok := builtinStatusMap.Load(key); ok {
-							task := existingTask.(*BuiltinTaskStatus)
+							// ✨ 优化：采用值拷贝更新状态
+							task := *(existingTask.(*BuiltinTaskStatus))
 							task.IsPaused = false
 							task.Status = "监控中"
-							builtinStatusMap.Store(key, task)
+							builtinStatusMap.Store(key, &task)
 						}
 						var p BuiltinPlatform
 						switch platformName {
@@ -467,6 +544,10 @@ func InitBuiltinRecorder(mux *http.ServeMux) {
 
 	log.Println("[BUILTIN] 🎥 内置轻量录制引擎已成功挂载！")
 
+	// ✨ 启动广播防抖控制流：必须放在配置加载完成之后，
+	// 防抖协程会调用 GetBuiltinRecorderTasks 读取 builtinConfig，提前启动会在初始化窗口期踩空指针
+	startBuiltinBroadcastDebouncer()
+
 	go builtinHotReloadLoop()
 }
 
@@ -474,7 +555,7 @@ func InitBuiltinRecorder(mux *http.ServeMux) {
 func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 	var list []BuiltinTaskStatus
 	builtinStatusMap.Range(func(key, value interface{}) bool {
-		task := *value.(*BuiltinTaskStatus)
+		task := *value.(*BuiltinTaskStatus) // 安全提取切片
 		if task.Status == "录制中" && !task.startTime.IsZero() {
 			task.Duration = formatBuiltinDuration(time.Since(task.startTime))
 		} else {
@@ -484,7 +565,7 @@ func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 		if safeName == "" {
 			safeName = task.RoomID
 		}
-		baseDir := builtinConfig.SavePath
+		baseDir := getBuiltinSavePath()
 		targetDir := filepath.Join(baseDir, safeName)
 		task.FileSize = getBuiltinDirSizeStr(targetDir)
 		list = append(list, task)
@@ -502,6 +583,15 @@ func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 // ==========================================
 // 辅助工具函数
 // ==========================================
+
+// getBuiltinSavePath 安全获取录制落盘根目录。
+// 引擎初始化完成前（或测试环境下）全局配置指针可能为空，直接解引用会触发空指针崩溃
+func getBuiltinSavePath() string {
+	if builtinConfig != nil && builtinConfig.SavePath != "" {
+		return builtinConfig.SavePath
+	}
+	return "./downloads"
+}
 
 // checkFFmpegBuiltin 探测系统环境内是否有可用的 ffmpeg，作为推流数据解包的核心依赖
 func checkFFmpegBuiltin() {
@@ -549,7 +639,7 @@ func sanitizeBuiltinFileName(name string) string {
 	name = strings.ReplaceAll(name, "\r", "")
 	name = strings.ReplaceAll(name, "\n", "")
 	name = strings.ReplaceAll(name, "\t", "")
-	name = strings.ReplaceAll(name, "　", " ")
+	name = strings.ReplaceAll(name, " ", " ")
 
 	invalidChars := []string{"\\", "/", ":", "*", "?", "\"", "<", ">", "|"}
 	for _, char := range invalidChars {
@@ -1499,231 +1589,319 @@ type SoopBuiltinPlatform struct{}
 // GetPlatformName 提供用于逻辑判断及配置索引的 Soop 平台名标识
 func (s *SoopBuiltinPlatform) GetPlatformName() string { return "Soop" }
 
-// GetStreamURL 请求外网 Soop (AfreecaTV) 接口获取跨国 CDN 的可用录像推流源及主播信息
+// GetStreamURL 请求外网 Soop (AfreecaTV) PC端核心播放接口完成高强度的 CDN 画质授权防爬突破
 func (s *SoopBuiltinPlatform) GetStreamURL(roomID string, quality string) (string, string, string, error) {
-	globalApi := fmt.Sprintf("https://api.sooplive.com/v2/stream/info/%s", roomID)
-	reqGlobal, err := http.NewRequest("GET", globalApi, nil)
-
-	globalUa := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-	if err == nil {
-		clientId := fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", rand.Uint32(), rand.Uint32()>>16, rand.Uint32()>>16, rand.Uint32()>>16, uint64(rand.Uint32())<<32|uint64(rand.Uint32()))
-		reqGlobal.Header.Set("client-id", clientId)
-		reqGlobal.Header.Set("User-Agent", globalUa)
-
-		builtinCookieMutex.RLock()
-		if builtinCookies.Soop != "" {
-			reqGlobal.Header.Set("Cookie", builtinCookies.Soop)
-		}
-		builtinCookieMutex.RUnlock()
-
-		respGlobal, err := builtinHTTPClient.Do(reqGlobal)
-		if err == nil {
-			bodyGlobal, _ := io.ReadAll(respGlobal.Body)
-			respGlobal.Body.Close()
-			var globalResult map[string]interface{}
-			if json.Unmarshal(bodyGlobal, &globalResult) == nil {
-				if dataMap, ok := globalResult["data"].(map[string]interface{}); ok && dataMap != nil {
-					isStream, _ := dataMap["isStream"].(bool)
-
-					anchorName := roomID
-					avatar := ""
-					infoApi := fmt.Sprintf("https://api.sooplive.com/v2/channel/info/%s", roomID)
-					reqInfo, _ := http.NewRequest("GET", infoApi, nil)
-					reqInfo.Header.Set("client-id", clientId)
-					reqInfo.Header.Set("User-Agent", globalUa)
-
-					builtinCookieMutex.RLock()
-					if builtinCookies.Soop != "" {
-						reqInfo.Header.Set("Cookie", builtinCookies.Soop)
-					}
-					builtinCookieMutex.RUnlock()
-
-					if respInfo, err := builtinHTTPClient.Do(reqInfo); err == nil {
-						infoBody, _ := io.ReadAll(respInfo.Body)
-						respInfo.Body.Close()
-						var infoRes map[string]interface{}
-						if json.Unmarshal(infoBody, &infoRes) == nil {
-							if infoData, ok := infoRes["data"].(map[string]interface{}); ok {
-								if channelInfo, ok := infoData["streamerChannelInfo"].(map[string]interface{}); ok {
-									if nick, ok := channelInfo["nickname"].(string); ok {
-										anchorName = fmt.Sprintf("%s-%s", nick, roomID)
-									}
-									if profileImg, ok := channelInfo["profileImage"].(string); ok {
-										avatar = profileImg
-									}
-								}
-							}
-						}
-					}
-
-					if avatar != "" {
-						avatar = "/api/v1/builtin_recorder/proxy_image?url=" + url.QueryEscape(avatar)
-					}
-
-					if isStream {
-						streamURL := fmt.Sprintf("https://global-media.sooplive.com/live/%s/master.m3u8", roomID)
-						return streamURL, anchorName, avatar, nil
-					} else {
-						return "", anchorName, avatar, nil
-					}
-				}
-			}
-		}
-	}
-
-	apiURL := "http://api.m.sooplive.co.kr/broad/a/watch"
-	formData := url.Values{}
-	formData.Set("bj_id", roomID)
-	formData.Set("broad_no", "")
-	formData.Set("agent", "web")
-	formData.Set("confirm_adult", "true")
-	formData.Set("player_type", "webm")
-	formData.Set("mode", "live")
-
-	req, err := http.NewRequest("POST", apiURL, strings.NewReader(formData.Encode()))
+	// 1. 获取页面元信息 (BroadNo, AnchorName等) 并触发第一次 Cookie 鉴权
+	pageUrl := fmt.Sprintf("https://play.sooplive.com/%s", roomID)
+	reqPage, err := http.NewRequest("GET", pageUrl, nil)
 	if err != nil {
 		return "", roomID, "", err
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", globalUa)
-	req.Header.Set("Origin", "https://m.sooplive.co.kr")
-	req.Header.Set("Referer", "https://m.sooplive.co.kr/")
-	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
-
+	globalUa := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+	reqPage.Header.Set("User-Agent", globalUa)
 	builtinCookieMutex.RLock()
-	if builtinCookies.Soop != "" {
-		req.Header.Set("Cookie", builtinCookies.Soop)
-	}
+	myCookie := builtinCookies.Soop
 	builtinCookieMutex.RUnlock()
+	if myCookie != "" {
+		reqPage.Header.Set("Cookie", myCookie)
+	}
 
-	resp, err := builtinHTTPClient.Do(req)
+	respPage, err := builtinHTTPClient.Do(reqPage)
 	if err != nil {
 		return "", roomID, "", err
 	}
-	defer resp.Body.Close()
+	defer respPage.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	bodyPage, err := io.ReadAll(respPage.Body)
 	if err != nil {
 		return "", roomID, "", err
 	}
+	htmlStr := string(bodyPage)
 
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		if len(body) > 0 && body[0] == '<' {
-			return "", roomID, "", fmt.Errorf("被平台风控拦截(需更新Cookie)")
-		}
-		return "", roomID, "", fmt.Errorf("JSON 解析失败: %v", err)
+	// 解析 window.nBroadNo 获取有效且动态更新的直播场次号
+	reBroadNo := regexp.MustCompile(`window\.nBroadNo\s*=\s*(\d+|null);`)
+	broadNoMatch := reBroadNo.FindStringSubmatch(htmlStr)
+	if len(broadNoMatch) < 2 || broadNoMatch[1] == "null" {
+		// 未开播（页面明确响应 null）
+		return "", roomID, "", nil
 	}
+	broadNo := broadNoMatch[1]
 
-	dataMap, _ := result["data"].(map[string]interface{})
-
+	// 提取名字：解密页面 JS 转义的主播名称
 	anchorName := roomID
-	if dataMap != nil {
-		if nick, ok := dataMap["user_nick"].(string); ok && nick != "" {
-			if bjID, ok := dataMap["bj_id"].(string); ok && bjID != "" {
-				anchorName = fmt.Sprintf("%s-%s", nick, bjID)
-			} else {
-				anchorName = nick
+	reBjNick := regexp.MustCompile(`window\.szBjNick\s*=\s*['"]((?:\\.|[^'"\\])*)['"]`)
+	if m := reBjNick.FindStringSubmatch(htmlStr); len(m) >= 2 {
+		anchorName = fmt.Sprintf("%s-%s", s.decodeEscapedString(m[1]), roomID)
+	}
+
+	// 2. 调用 player_live_api.php (type=live) 获取基础房间设定、CDN节点及最高支持画质
+	apiURL := "https://live.sooplive.com/afreeca/player_live_api.php"
+	formLive := url.Values{}
+	formLive.Set("bid", roomID)
+	formLive.Set("bno", broadNo)
+	formLive.Set("type", "live")
+	formLive.Set("mode", "landing")
+	formLive.Set("player_type", "html5")
+	formLive.Set("stream_type", "common")
+	formLive.Set("pwd", "")
+	formLive.Set("from_api", "0")
+
+	reqLive, err := http.NewRequest("POST", apiURL, strings.NewReader(formLive.Encode()))
+	if err != nil {
+		return "", anchorName, "", err
+	}
+	reqLive.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqLive.Header.Set("User-Agent", globalUa)
+	reqLive.Header.Set("Origin", "https://play.sooplive.com")
+	reqLive.Header.Set("Referer", pageUrl)
+	if myCookie != "" {
+		reqLive.Header.Set("Cookie", myCookie)
+	}
+
+	respLive, err := builtinHTTPClient.Do(reqLive)
+	if err != nil {
+		return "", anchorName, "", err
+	}
+	defer respLive.Body.Close()
+
+	bodyLive, _ := io.ReadAll(respLive.Body)
+
+	// ✨ 高容错架构：采用 json.RawMessage 逃避类型审查，针对 label_resolution 这个忽而是数字忽而是字符串的风控节点实施降维打击
+	type SoopChannelResp struct {
+		Channel struct {
+			Result     int    `json:"RESULT"`
+			Bno        string `json:"BNO"`
+			Rmd        string `json:"RMD"`
+			Cdn        string `json:"CDN"`
+			Bpwd       string `json:"BPWD"`
+			Aid        string `json:"AID"`
+			ViewPreset []struct {
+				Name            string          `json:"name"`
+				Label           string          `json:"label"`
+				LabelResolution json.RawMessage `json:"label_resolution"` // 动态接口接收
+				BPS             int             `json:"bps"`
+			} `json:"VIEWPRESET"`
+		} `json:"CHANNEL"`
+	}
+
+	var liveRes SoopChannelResp
+	if err := json.Unmarshal(bodyLive, &liveRes); err != nil {
+		return "", anchorName, "", fmt.Errorf("解析 live 接口 JSON 失败: %v", err)
+	}
+
+	// Result=-6 为经典登录失效错误，强制终端提示重试
+	if liveRes.Channel.Result != 1 {
+		if liveRes.Channel.Result == -6 {
+			return "", anchorName, "", fmt.Errorf("需要登录(Result=-6)，请更新 Cookie")
+		}
+		return "", anchorName, "", nil // 未开播或其他限制
+	}
+
+	if liveRes.Channel.Bpwd == "Y" {
+		return "", anchorName, "", fmt.Errorf("房间已开启密码保护，无法录制")
+	}
+
+	// ----------------------------------------------------
+	// 🌟 全新画质权重排序器 (对齐官方的高可用流分配策略)
+	// ----------------------------------------------------
+	type SoopParsedPreset struct {
+		Name string
+		Res  int
+		BPS  int
+	}
+	var parsedPresets []SoopParsedPreset
+
+	for _, p := range liveRes.Channel.ViewPreset {
+		if strings.EqualFold(p.Name, "auto") {
+			continue // 排除假画质
+		}
+		resVal := s.parseInterfaceToInt(p.LabelResolution)
+		parsedPresets = append(parsedPresets, SoopParsedPreset{
+			Name: p.Name,
+			Res:  resVal,
+			BPS:  p.BPS,
+		})
+	}
+
+	// 双重权重推举：分辨率优先，同等分辨率下 BPS 码率优先
+	sort.SliceStable(parsedPresets, func(i, j int) bool {
+		if parsedPresets[i].Res != parsedPresets[j].Res {
+			return parsedPresets[i].Res > parsedPresets[j].Res
+		}
+		return parsedPresets[i].BPS > parsedPresets[j].BPS
+	})
+
+	if len(parsedPresets) == 0 {
+		return "", anchorName, "", fmt.Errorf("没有捕获到任何可用画质流")
+	}
+
+	// 根据用户期待画质，智能匹配对应档位；找不到则默认采用头部最高画质作为无损回退
+	targetQuality := parsedPresets[0].Name
+	if quality == "original" {
+		targetQuality = parsedPresets[0].Name
+	} else {
+		// 模拟用户对 hd 或 sd 的降级诉求查找
+		for _, p := range parsedPresets {
+			if strings.Contains(strings.ToLower(p.Name), quality) {
+				targetQuality = p.Name
+				break
 			}
 		}
 	}
 
-	avatar := ""
-	if dataMap != nil {
-		if bjID, ok := dataMap["bj_id"].(string); ok && len(bjID) >= 2 {
-			avatar = fmt.Sprintf("https://stimg.afreecatv.com/LOGO/%s/%s/%s.jpg", bjID[:2], bjID, bjID)
-		}
+	// 3. 申请 AID (type=aid) 构建安全分发的访问鉴权
+	formAid := url.Values{}
+	formAid.Set("bid", roomID)
+	formAid.Set("bno", broadNo)
+	formAid.Set("type", "aid")
+	formAid.Set("mode", "landing")
+	formAid.Set("player_type", "html5")
+	formAid.Set("stream_type", "common")
+	formAid.Set("pwd", "")
+	formAid.Set("quality", targetQuality)
+	formAid.Set("from_api", "0")
+
+	reqAid, _ := http.NewRequest("POST", apiURL, strings.NewReader(formAid.Encode()))
+	reqAid.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqAid.Header.Set("User-Agent", globalUa)
+	reqAid.Header.Set("Origin", "https://play.sooplive.com")
+	reqAid.Header.Set("Referer", pageUrl)
+	if myCookie != "" {
+		reqAid.Header.Set("Cookie", myCookie)
 	}
 
-	if avatar != "" {
+	respAid, err := builtinHTTPClient.Do(reqAid)
+	if err != nil {
+		return "", anchorName, "", err
+	}
+	defer respAid.Body.Close()
+
+	bodyAid, _ := io.ReadAll(respAid.Body)
+	var aidRes SoopChannelResp
+	if err := json.Unmarshal(bodyAid, &aidRes); err != nil {
+		return "", anchorName, "", fmt.Errorf("解析 aid 接口 JSON 失败: %v", err)
+	}
+
+	if aidRes.Channel.Result != 1 || aidRes.Channel.Aid == "" {
+		return "", anchorName, "", fmt.Errorf("申请 AID 失败，Result=%d", aidRes.Channel.Result)
+	}
+	aid := aidRes.Channel.Aid
+
+	// 4. 获取分配出的最终播放节点 view_url (✨ 强化增加指数退避与防封锁 Headers)
+	cdnType := s.mapSoopCDNType(liveRes.Channel.Cdn)
+	broadKey := s.buildSoopBroadKey(broadNo, targetQuality)
+	rmdHost := strings.TrimRight(liveRes.Channel.Rmd, "/")
+
+	// 追加防缓存时间戳
+	viewURLReq := fmt.Sprintf("%s/broad_stream_assign.html?return_type=%s&use_cors=false&cors_origin_url=play.sooplive.com&broad_key=%s&time=%d",
+		rmdHost, cdnType, broadKey, time.Now().UnixMilli())
+
+	var bodyView []byte
+	var viewFetchErr error
+
+	// ✨ 核心强化：增加 3 次底层网络退避重试，专门抵挡 EOF TCP 重置断开
+	for attempt := 1; attempt <= 3; attempt++ {
+		reqView, _ := http.NewRequest("GET", viewURLReq, nil)
+		// 补全所有特征，让其伪装成真正的合法 Chrome 环境请求
+		reqView.Header.Set("User-Agent", globalUa)
+		reqView.Header.Set("Accept", "application/json, text/plain, */*")
+		reqView.Header.Set("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
+		reqView.Header.Set("Connection", "keep-alive")
+		reqView.Header.Set("Origin", "https://play.sooplive.com")
+		reqView.Header.Set("Referer", pageUrl)
+		if myCookie != "" {
+			reqView.Header.Set("Cookie", myCookie)
+		}
+
+		respView, err := builtinHTTPClient.Do(reqView)
+		if err == nil {
+			bodyView, _ = io.ReadAll(respView.Body)
+			respView.Body.Close()
+			viewFetchErr = nil
+			break // 成功则直接跳出重试环
+		}
+
+		viewFetchErr = err
+		if strings.Contains(err.Error(), "EOF") || strings.Contains(err.Error(), "reset") {
+			// 发生 EOF 断连时，休眠 500ms * 尝试次数 进行退避重试
+			time.Sleep(time.Duration(500*attempt) * time.Millisecond)
+			continue
+		}
+		break // 非网络强行掐断错误直接抛出不重试
+	}
+
+	if viewFetchErr != nil {
+		return "", anchorName, "", fmt.Errorf("最终请求分配节点失败: %v", viewFetchErr)
+	}
+
+	var viewRes struct {
+		ViewUrl string `json:"view_url"`
+	}
+	if err := json.Unmarshal(bodyView, &viewRes); err != nil {
+		return "", anchorName, "", fmt.Errorf("解析 view_url 失败: %v", err)
+	}
+
+	if viewRes.ViewUrl == "" {
+		return "", anchorName, "", fmt.Errorf("获取到的 view_url 为空")
+	}
+
+	finalStreamURL := viewRes.ViewUrl
+	if strings.Contains(finalStreamURL, "?") {
+		finalStreamURL += "&aid=" + aid
+	} else {
+		finalStreamURL += "?aid=" + aid
+	}
+
+	// 提取头像，由于是原生日历算法，截断前缀直接拼凑出 AF 的图床规则
+	avatar := ""
+	if len(roomID) >= 2 {
+		avatar = fmt.Sprintf("https://stimg.afreecatv.com/LOGO/%s/%s/%s.jpg", roomID[:2], roomID, roomID)
 		avatar = "/api/v1/builtin_recorder/proxy_image?url=" + url.QueryEscape(avatar)
 	}
 
-	resCode, ok := result["result"].(float64)
-	if !ok || resCode != 1 {
-		if dataMap != nil {
-			if code, ok := dataMap["code"].(float64); ok {
-				if code == -6001 || code == -3001 {
-					return "", anchorName, avatar, nil
-				} else if code == -3002 || code == -3004 {
-					return "", anchorName, avatar, fmt.Errorf("该直播需要19+登录或验证，请更新 Cookie (code: %v)", code)
-				}
-			}
-		}
-		return "", anchorName, avatar, nil
-	}
-
-	broadNoStr := ""
-	if bn, ok := dataMap["broad_no"].(string); ok {
-		broadNoStr = bn
-	} else if bnFloat, ok := dataMap["broad_no"].(float64); ok {
-		broadNoStr = fmt.Sprintf("%.0f", bnFloat)
-	}
-
-	aid := ""
-	if a, ok := dataMap["hls_authentication_key"].(string); ok {
-		aid = a
-	}
-
-	if broadNoStr == "" || aid == "" {
-		return "", anchorName, avatar, fmt.Errorf("提取 broad_no 或 aid 失败")
-	}
-
-	cdns := []string{"gcp_cdn", "kt_cdn", "cf_cdn", "ak_cdn", "rmc_cdn"}
-	var suffixes []string
-	if quality == "hd" {
-		suffixes = []string{"-common-hd-hls", "-common-master-hls", "-common-original-hls", "-default-hls"}
-	} else if quality == "sd" {
-		suffixes = []string{"-common-sd-hls", "-common-hd-hls", "-common-master-hls", "-default-hls"}
-	} else {
-		suffixes = []string{"-common-original-hls", "-common-master-hls", "-default-hls", "-common-hd-hls"}
-	}
-
-	var finalStreamURL string
-
-OuterLoop:
-	for _, cdn := range cdns {
-		for _, suffix := range suffixes {
-			cdnURL := fmt.Sprintf("http://livestream-manager.sooplive.co.kr/broad_stream_assign.html?return_type=%s&use_cors=false&cors_origin_url=play.sooplive.co.kr&broad_key=%s%s&time=%d", cdn, broadNoStr, suffix, time.Now().UnixMilli())
-
-			reqCdn, err := http.NewRequest("GET", cdnURL, nil)
-			if err != nil {
-				continue
-			}
-
-			reqCdn.Header.Set("User-Agent", globalUa)
-			reqCdn.Header.Set("Origin", "https://play.sooplive.co.kr")
-			reqCdn.Header.Set("Referer", "https://play.sooplive.co.kr/")
-			reqCdn.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-			respCdn, err := builtinHTTPClient.Do(reqCdn)
-			if err != nil {
-				continue
-			}
-
-			bodyCdn, err := io.ReadAll(respCdn.Body)
-			respCdn.Body.Close()
-			if err != nil {
-				continue
-			}
-
-			var cdnResult map[string]interface{}
-			if err := json.Unmarshal(bodyCdn, &cdnResult); err == nil {
-				if viewURL, ok := cdnResult["view_url"].(string); ok && viewURL != "" {
-					finalStreamURL = viewURL + "?aid=" + aid
-					break OuterLoop
-				}
-			}
-		}
-	}
-
-	if finalStreamURL == "" {
-		return "", anchorName, avatar, fmt.Errorf("遍历 CDN 节点提取 view_url 失败")
-	}
-
 	return finalStreamURL, anchorName, avatar, nil
+}
+
+// decodeEscapedString 处理 HTML 中 JS 变量带来的深层引号与转义字符污染，洗白文本
+func (s *SoopBuiltinPlatform) decodeEscapedString(raw string) string {
+	raw = strings.ReplaceAll(raw, `\'`, `'`)
+	quoted := `"` + strings.ReplaceAll(raw, `"`, `\"`) + `"`
+	if decoded, err := strconv.Unquote(quoted); err == nil {
+		return decoded
+	}
+	return raw
+}
+
+// parseInterfaceToInt 作为底层防雷网，将 JSON 接口中可能发生变异的 Number 实体转化为安全整形
+func (s *SoopBuiltinPlatform) parseInterfaceToInt(raw json.RawMessage) int {
+	var valInt int
+	if err := json.Unmarshal(raw, &valInt); err == nil {
+		return valInt
+	}
+	var valStr string
+	if err := json.Unmarshal(raw, &valStr); err == nil {
+		if i, err2 := strconv.Atoi(valStr); err2 == nil {
+			return i
+		}
+	}
+	return 0
+}
+
+// mapSoopCDNType 高度仿真浏览器在底层协议中声明的 CDN 连接请求类型
+func (s *SoopBuiltinPlatform) mapSoopCDNType(cdn string) string {
+	if strings.Contains(cdn, "gs_cdn") {
+		return "gs_cdn_pc_web"
+	}
+	if strings.Contains(cdn, "lg_cdn") {
+		return "lg_cdn_pc_web"
+	}
+	return cdn
+}
+
+// buildSoopBroadKey 完全对齐目标架构签名组装器，组装给调度系统的校验凭证
+func (s *SoopBuiltinPlatform) buildSoopBroadKey(broadNo, quality string) string {
+	return fmt.Sprintf("%s-common-%s-hls", broadNo, quality)
 }
 
 // apiProxyImage 设置本地反代接口转发获取直播封面图并伪造请求头，穿透部分平台的防盗链拦截限制
@@ -1733,6 +1911,14 @@ func apiProxyImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing url", http.StatusBadRequest)
 		return
 	}
+
+	// 安全审计修复：仅允许 http/https 协议，阻断 file/gopher 等危险协议
+	u, err := url.Parse(targetURL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		http.Error(w, "仅允许 http/https 的公开图片地址", http.StatusBadRequest)
+		return
+	}
+	targetURL = u.String()
 
 	doProxy := func(withReferer bool) (*http.Response, error) {
 		req, err := http.NewRequest("GET", targetURL, nil)
@@ -1753,7 +1939,8 @@ func apiProxyImage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		return builtinHTTPClient.Do(req)
+		// 安全审计修复：改用带内网 IP 校验的专用客户端，阻断对 127.0.0.1/内网段/云元数据的探测
+		return builtinSafeProxyClient.Do(req)
 	}
 
 	resp, err := doProxy(true)
@@ -1780,9 +1967,9 @@ func apiProxyImage(w http.ResponseWriter, r *http.Request) {
 	for k, v := range resp.Header {
 		w.Header()[k] = v
 	}
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	// 安全审计修复：限制代理回源体积，防止超大响应拖垮进程内存
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	io.Copy(w, io.LimitReader(resp.Body, 10<<20))
 }
 
 // ==========================================
@@ -1869,7 +2056,16 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string)
 
 	// ✨ 水印渲染核心逻辑 (最高性能优化：临时文件挂载降维打击法)
 	if builtinConfig != nil && builtinConfig.WatermarkEnable {
-		fontPath := "/home/upload/font.ttf"
+		// 1. 获取当前可执行文件的路径
+		exePath, err := os.Executable()
+		if err != nil {
+			log.Fatal(err)
+		}
+		// 2. 获取可执行文件所在目录
+		exeDir := filepath.Dir(exePath)
+		// 3. 拼接出字体文件的完整路径（跨平台分隔符）
+		fontPath := filepath.Join(exeDir, "font.ttf")
+		//fontPath := "/home/upload/font.ttf"
 
 		// 校验字体文件状态
 		if _, err := os.Stat(fontPath); os.IsNotExist(err) {
@@ -1998,13 +2194,13 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 		safeName = roomID
 	}
 
-	baseDir := builtinConfig.SavePath
-	if baseDir == "" {
-		baseDir = "./downloads"
-	}
+	baseDir := getBuiltinSavePath()
 
-	outDir := filepath.Join(baseDir, safeName)
+	// ✨ 修改内容：提取当前日期并构建日期命名的子文件夹作为落盘根目录
+	dateStr := time.Now().Format("2006-01-02")
+	outDir := filepath.Join(baseDir, safeName, dateStr)
 	os.MkdirAll(outDir, os.ModePerm)
+
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
 
 	var args []string
@@ -2102,9 +2298,10 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 
 							key := platformName + "_" + roomID
 							if existing, ok := builtinStatusMap.Load(key); ok {
-								task := existing.(*BuiltinTaskStatus)
+								// ✨ 优化：使用值拷贝更新封面时间戳，避免并发指针冲突
+								task := *(existing.(*BuiltinTaskStatus))
 								task.Avatar = fmt.Sprintf("/covers/%s?t=%d", fileName, time.Now().UnixMilli())
-								builtinStatusMap.Store(key, task)
+								builtinStatusMap.Store(key, &task)
 								triggerBuiltinBroadcast()
 							}
 						}
@@ -2478,19 +2675,21 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 		}
 		syncBuiltinAnchorToTxt("pause", req.Platform, req.RoomID, "")
 		if existing, ok := builtinStatusMap.Load(key); ok {
-			task := existing.(*BuiltinTaskStatus)
+			// ✨ 优化：值拷贝避免读写竞争引发脏数据导致前台乱跳
+			task := *(existing.(*BuiltinTaskStatus))
 			task.IsPaused = true
 			task.Status = "已暂停"
-			builtinStatusMap.Store(key, task)
+			builtinStatusMap.Store(key, &task)
 		}
 	case "resume":
 		builtinTaskStates.Store(key, "running")
 		syncBuiltinAnchorToTxt("resume", req.Platform, req.RoomID, "")
 		if existing, ok := builtinStatusMap.Load(key); ok {
-			task := existing.(*BuiltinTaskStatus)
+			// ✨ 优化：值拷贝避免并发竞争
+			task := *(existing.(*BuiltinTaskStatus))
 			task.IsPaused = false
 			task.Status = "监控中"
-			builtinStatusMap.Store(key, task)
+			builtinStatusMap.Store(key, &task)
 		}
 		var p BuiltinPlatform
 		switch req.Platform {
@@ -2569,14 +2768,18 @@ func apiRecorderControlAll(w http.ResponseWriter, r *http.Request) {
 			if cancel, ok := builtinCancels.Load(key); ok {
 				cancel.(context.CancelFunc)()
 			}
-			task.IsPaused = true
-			task.Status = "已暂停"
-			builtinStatusMap.Store(key, task)
+			// ✨ 优化：进行安全拷贝，防止遍历过程中的指针脏写
+			taskVal := *(task)
+			taskVal.IsPaused = true
+			taskVal.Status = "已暂停"
+			builtinStatusMap.Store(key, &taskVal)
 		} else if req.Action == "resume_all" {
 			builtinTaskStates.Store(key, "running")
-			task.IsPaused = false
-			task.Status = "监控中"
-			builtinStatusMap.Store(key, task)
+			// ✨ 优化：安全值拷贝
+			taskVal := *(task)
+			taskVal.IsPaused = false
+			taskVal.Status = "监控中"
+			builtinStatusMap.Store(key, &taskVal)
 			var p BuiltinPlatform
 			switch platform {
 			case "Douyin":

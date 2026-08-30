@@ -7,7 +7,7 @@
 
     <meta name="referrer" content="no-referrer"/>
 
-    <title>分布式文件上传与录制系统</title>
+    <title>视频上传与录制系统</title>
     <link rel="icon" href="data:,"/>
     <link rel="icon"
           href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
@@ -3213,6 +3213,8 @@
                 if (window._encryptionEnabled && _sessionId) {
                     wsUrl += `?session_id=${_sessionId}`;
                 }
+                // 安全审计修复：WS 握手无法携带自定义请求头，改用查询参数传递登录令牌
+                wsUrl += (wsUrl.includes('?') ? '&' : '?') + `token=${encodeURIComponent(localStorage.getItem('upload_system_token') || '')}`;
 
                 ws = new WebSocket(wsUrl);
 

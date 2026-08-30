@@ -6,9 +6,11 @@ import (
 	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	_ "embed"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -124,6 +126,8 @@ type Config struct {
 	QQBotWSURL         string   `json:"qqBotWsUrl"`       // ✨ 新增：QQ 机器人 OneBot WebSocket 地址 (例: ws://127.0.0.1:3001)
 	QQBotToken         string   `json:"qqBotToken"`       // ✨ 新增：QQ 机器人鉴权 Token (可选)
 	QQAdminID          int64    `json:"qqAdminId"`        // ✨ 新增：QQ 管理员号码
+	DashboardUser      string   `json:"dashboardUser"`    // 安全审计：控制台登录用户名（不通过 API 回显，只能写配置文件）
+	DashboardPass      string   `json:"dashboardPass"`    // 安全审计：控制台登录密码（留空则回落到内置默认值，强烈建议配置强密码）
 }
 
 // Streamer 录制主播配置
@@ -372,18 +376,129 @@ func handleExchangeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 安全审计修复：密钥池容量熔断，防止匿名高频协商耗尽内存
+	if keyPoolCnt.Load() >= maxKeyPoolSize {
+		http.Error(w, "too many sessions", http.StatusTooManyRequests)
+		return
+	}
+
 	sessionID := fmt.Sprintf("sess-%d-%d", time.Now().UnixNano(), rand.Intn(1000000))
 	sessionKeys.Store(sessionID, aesKey)
+	keyPoolCnt.Add(1)
 
 	// 优化：使用 time.AfterFunc 替代独立 goroutine sleep，避免大量并发登录时产生孤儿 goroutine 堆积
 	time.AfterFunc(24*time.Hour, func() {
-		sessionKeys.Delete(sessionID)
+		if _, ok := sessionKeys.Load(sessionID); ok {
+			sessionKeys.Delete(sessionID)
+			keyPoolCnt.Add(-1)
+		}
 	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"code": 200,
 		"data": map[string]string{"session_id": sessionID},
+	})
+}
+
+// ==========================================
+// 安全审计修复：Dashboard 登录令牌与全局访问控制
+// ==========================================
+
+var (
+	// 登录会话令牌池：token -> 过期时间(Unix 秒)。旧版仅签发可预测的静态 Token 且从未校验，等于整个控制台裸奔
+	authSessions   sync.Map
+	authSessionCnt atomic.Int64
+
+	// 密钥协商池容量计数：防止未认证接口被恶意刷爆内存
+	keyPoolCnt atomic.Int64
+
+	// 登录防爆破：连续失败计数与锁定截止时间
+	loginFailCnt   atomic.Int64
+	loginLockUntil atomic.Int64
+)
+
+const (
+	authSessionTTL   = 24 * time.Hour
+	maxKeyPoolSize   = 4096
+	maxLoginAttempts = 10
+	loginLockWindow  = 5 * time.Minute
+)
+
+// issueAuthToken 签发 256bit 加密随机会话令牌，并在 TTL 后自动吊销
+func issueAuthToken() string {
+	buf := make([]byte, 32)
+	if _, err := cryptorand.Read(buf); err != nil {
+		log.Printf("[AUTH] ⚠️ 随机数生成异常，拒绝签发令牌: %v", err)
+		return ""
+	}
+	token := hex.EncodeToString(buf)
+	authSessions.Store(token, time.Now().Add(authSessionTTL).Unix())
+	authSessionCnt.Add(1)
+	time.AfterFunc(authSessionTTL, func() {
+		if _, ok := authSessions.Load(token); ok {
+			authSessions.Delete(token)
+			authSessionCnt.Add(-1)
+		}
+	})
+	return token
+}
+
+// verifyAuthToken 校验请求携带的登录令牌：优先取 Authorization: Bearer 头，兼容 WebSocket 的 token 查询参数
+func verifyAuthToken(r *http.Request) bool {
+	token := ""
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		token = strings.TrimPrefix(h, "Bearer ")
+	}
+	if token == "" {
+		token = r.URL.Query().Get("token")
+	}
+	if token == "" {
+		return false
+	}
+	val, ok := authSessions.Load(token)
+	if !ok {
+		return false
+	}
+	if time.Now().Unix() > val.(int64) {
+		authSessions.Delete(token)
+		authSessionCnt.Add(-1)
+		return false
+	}
+	return true
+}
+
+// revokeAuthToken 注销指定令牌
+func revokeAuthToken(r *http.Request) {
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		token := strings.TrimPrefix(h, "Bearer ")
+		if _, ok := authSessions.LoadAndDelete(token); ok {
+			authSessionCnt.Add(-1)
+		}
+	}
+}
+
+// authMiddleware 强制所有敏感 API 与 WebSocket 通道必须持有合法登录令牌。
+// 公开面仅保留：登录接口、密钥协商接口、静态页面与封面资源
+func authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if p == "/api/v1/auth/login" || p == "/api/v1/sec/pubkey" || p == "/api/v1/sec/exchange" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !strings.HasPrefix(p, "/api/") && !strings.HasPrefix(p, "/ws/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !verifyAuthToken(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"code":401,"message":"未认证：请先登录"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -489,7 +604,8 @@ func StartWebServer(port int) {
 
 	addr := fmt.Sprintf(":%d", port)
 	log.Printf("[WEB] 控制台已就绪: http://127.0.0.1%s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	// 安全审计修复：整站 API/WS 挂载强制认证中间件（旧版所有接口无鉴权裸奔）
+	if err := http.ListenAndServe(addr, authMiddleware(mux)); err != nil {
 		log.Fatalf("[WEB] Server error: %v", err)
 	}
 }
@@ -896,25 +1012,41 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Username != dashboardUsername || req.Password != dashboardPassword {
+	// 安全审计修复：防爆破锁死，连续失败超阈值后强制冷却，抑制在线口令爆破
+	if lock := loginLockUntil.Load(); lock > time.Now().Unix() {
+		sendJSONError(w, r, http.StatusTooManyRequests, "失败次数过多，账户已临时锁定，请稍后再试")
+		return
+	}
+
+	// 安全审计修复：常数时间比较，防止时序侧信道逐字节猜解凭据
+	userOK := subtle.ConstantTimeCompare([]byte(req.Username), []byte(dashboardUsername)) == 1
+	passOK := subtle.ConstantTimeCompare([]byte(req.Password), []byte(dashboardPassword)) == 1
+	if !userOK || !passOK {
+		if fails := loginFailCnt.Add(1); fails >= maxLoginAttempts {
+			loginLockUntil.Store(time.Now().Add(loginLockWindow).Unix())
+			loginFailCnt.Store(0)
+			log.Printf("[AUTH] 🚨 检测到疑似口令爆破（来自 %s），登录已锁定 %v", r.RemoteAddr, loginLockWindow)
+		}
 		sendJSONError(w, r, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
-	expiry := time.Now().Add(24 * time.Hour).UnixMilli()
-	dashboardTokenMu.Lock()
-	if dashboardToken == "" {
-		dashboardToken = "dash-token-" + strconv.FormatInt(time.Now().Unix(), 10)
+	loginFailCnt.Store(0)
+
+	// 安全审计修复：签发加密随机高熵令牌（旧版为可预测的 dash-token-时间戳 且后端从不校验）
+	currentToken := issueAuthToken()
+	if currentToken == "" {
+		sendJSONError(w, r, http.StatusInternalServerError, "令牌签发失败")
+		return
 	}
-	currentToken := dashboardToken
-	dashboardTokenMu.Unlock()
+	expiry := time.Now().Add(authSessionTTL).UnixMilli()
 	sendJSONSuccess(w, r, map[string]interface{}{"token": currentToken, "expiry": expiry})
 }
 
-// handleLogout 处理注销请求，清除登录状态
+// handleLogout 处理注销请求，吊销当前会话令牌
 func handleLogout(w http.ResponseWriter, r *http.Request) {
+	revokeAuthToken(r)
 	sendJSONSuccess(w, r, nil)
 }
-
 // getDiskFreeSpaceStd 获取指定目录所在磁盘的剩余逻辑空间 (纯标准库跨平台实现)
 func getDiskFreeSpaceStd(pathStr string) int64 {
 	if pathStr == "" {
@@ -1326,6 +1458,9 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		appConfigMu.RLock()
 		currentConfig := appConfig
 		appConfigMu.RUnlock()
+		// 安全审计修复：登录凭据不通过 API 回显，避免浏览器缓存/中间人旁路泄露
+		currentConfig.DashboardUser = ""
+		currentConfig.DashboardPass = ""
 		sendJSONSuccess(w, r, currentConfig)
 	case http.MethodPut:
 		var newConfig Config
@@ -1334,6 +1469,9 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		appConfigMu.Lock()
+		// 安全审计修复：凭据字段只认配置文件，拒绝被常规配置接口覆写清空
+		newConfig.DashboardUser = appConfig.DashboardUser
+		newConfig.DashboardPass = appConfig.DashboardPass
 		appConfig = newConfig
 		appConfigMu.Unlock()
 

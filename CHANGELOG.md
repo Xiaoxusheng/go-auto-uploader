@@ -1,5 +1,19 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
 
+### [v2.5.1] - 2026-08-30 (Security Audit & Stability Hotfix)
+#### 🔐 安全审计修复 (Security Audit)
+* **全站 API/WS 强制登录鉴权 (Mandatory Authentication)**：修复了登录令牌签发后从未被任何接口校验、整个控制台处于无鉴权裸奔状态的严重漏洞。现全站挂载 `authMiddleware` 强制认证中间件，所有 `/api/` 与 `/ws/` 通道必须持有合法令牌，公开面仅保留登录接口、密钥协商接口与静态资源。令牌升级为 `crypto/rand` 256 位高熵随机值，24 小时 TTL 自动吊销，注销即时失效；WebSocket 握手改为 `?token=` 传参，前端 401 自动登出回登录页。
+* **登录链路全面加固 (Login Hardening)**：口令比对改用常数时间算法，杜绝时序侧信道逐字节猜解；新增防爆破熔断，连续失败 10 次锁定 5 分钟。支持通过 `config.json` 的 `dashboardUser`/`dashboardPass` 自定义控制台凭据（该字段不通过 API 回显、不被配置接口覆写），启动时检测到默认弱口令 admin/admin 将打印高危告警。废弃旧版可预测的 `dash-token-时间戳` 静态令牌。
+* **图片代理 SSRF 防火墙 (SSRF Guard)**：修复 `/api/v1/builtin_recorder/proxy_image` 可被用于探测内网与云元数据的漏洞。现仅允许 http/https 协议；专用 HTTP 客户端在建连前校验全部解析 IP，命中环回/内网/链路本地/组播网段立即拒绝，并以校验后 IP 直连杜绝 DNS 重绑定绕过；响应体限流 10MB，移除通配 CORS 头。
+* **密钥协商容量熔断 (Key-Pool Circuit Breaker)**：未鉴权的密钥协商接口新增 4096 会话池上限，阻断匿名高频协商耗尽内存的 DoS 攻击面。
+* **源码敏感信息清理 (Secret Cleanup)**：移除默认配置中硬编码的远端 SSH 口令，新初始化环境不再内置真实凭据。
+
+#### 🔧 核心修复与稳定性 (Bug Fixes & Stability)
+* **内置引擎初始化空指针崩溃修复 (Nil-Pointer Crash Fix)**：修复 `GetBuiltinRecorderTasks` 与 `BuiltinRecordStream` 在配置未加载完成时直接解引用 `builtinConfig` 导致的进程崩溃，统一收敛到带兜底的 `getBuiltinSavePath()`；广播防抖协程调整为配置加载完成后启动，消除启动期竞态窗口。
+* **WS 广播防抖聚合 (Broadcast Debouncer)**：新增全局 500ms 聚合窗口的广播防抖通道，多主播状态高并发变更时合并推送，消除广播风暴引发的前端卡顿与状态闪回；任务状态更新改用值拷贝 (Copy-On-Write)，根除指针原地修改导致的脏读。
+* **混沌并发压测链路修复 (Chaos & Stress Test Fix)**：WS 万级并发压测改为有界并发握手 + 拒连退避重试，解决瞬间 SYN 洪泛打爆 Windows 回环监听队列造成的误报；新增认证中间件边界、爆破锁定、SSRF 协议拒绝三组安全回归测试与五套单元测试。
+
+---
 ### [v2.5.0] - 2026-06-05 (QQ Bot & Lock-Free Architecture & Built-in Ultra)
 #### 🌟 核心特性 (New Features)
 * **全面接管 QQ 机器人体系 (QQ Bot / NapCatQQ)**：原生接入 OneBot v11 标准，完美适配 NapCatQQ。底层引入 Base64 流封包技术，彻底解决了跨 Docker 容器部署时的文件物理隔离难题；构建 JSON-RPC Echo 机制，支持通过 `file_id` 穿透提取并下发更新文件。

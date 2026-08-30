@@ -36,14 +36,12 @@ var (
 	recorderConfigPath string // 主配置路径
 
 	dashboardUsername = "admin"
-	dashboardPassword = "admin"
+	dashboardPassword = "admin" // 安全审计：默认弱口令，可通过 config.json 的 dashboardUser/dashboardPass 覆盖，启动时若仍为默认值会打印高危告警
 
 	// 修复 Bug 7：将远端服务器 Token 与 Dashboard 登录 Token 分开
 	// token 原先被 login() 和 handleLogin() 同时写入，两者语义不同会互相覆盖
-	token            string // 远端 Alist 服务器的 Bearer Token（用于文件上传鉴权）
-	tokenMu          sync.Mutex
-	dashboardToken   string // Dashboard 本地会话 Token（用于前端登录验证）
-	dashboardTokenMu sync.Mutex
+	token   string // 远端 Alist 服务器的 Bearer Token（用于文件上传鉴权）
+	tokenMu sync.Mutex
 
 	// 优化点：为 httpCli 配置连接池，复用空闲连接，极大减少频繁新建 TCP 请求带来的内存和 CPU 消耗
 	httpCli = &http.Client{
@@ -416,12 +414,14 @@ func main() {
 		appConfig.EnableLogs = true
 		appConfig.RemoteServer = server
 		appConfig.RemoteUser = "admin"
-		appConfig.RemotePass = "LilKmxNF"
 		appConfig.LiveConfigPath = liveConfigPath
 		appConfig.RecorderContainer = recorderContainer
 		appConfig.RecorderConfigPath = recorderConfigPath
 		appConfig.EnableEncryption = false // 默认关闭通道加密
 		appConfig.EnableUpload = false     // ✨ 默认关闭上传，仅录制
+
+		// 安全审计：不再在源码中预设真实远端凭据
+		appConfig.RemotePass = ""
 
 		// 写入默认的邮件配置参数（在此预设原有的硬编码值）
 		appConfig.MailFrom = "your_email@qq.com"
@@ -429,6 +429,20 @@ func main() {
 		appConfig.MailTo = "receive_email@qq.com"
 	}
 	appConfigMu.Unlock()
+
+	// 安全审计修复：允许通过 config.json 的 dashboardUser/dashboardPass 覆盖内置默认账号
+	appConfigMu.RLock()
+	if appConfig.DashboardUser != "" {
+		dashboardUsername = appConfig.DashboardUser
+	}
+	if appConfig.DashboardPass != "" {
+		dashboardPassword = appConfig.DashboardPass
+	}
+	weakCreds := dashboardUsername == "admin" && dashboardPassword == "admin"
+	appConfigMu.RUnlock()
+	if weakCreds {
+		log.Println("[AUTH] 🚨 高危告警：控制台仍在使用默认弱口令 admin/admin，请立即在 config.json 中配置 dashboardUser 与 dashboardPass！")
+	}
 
 	// 在启动时尝试生成一次文件，确保 config.json 始终存在
 	saveConfigToFile()
