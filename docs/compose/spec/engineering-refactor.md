@@ -50,4 +50,4 @@ commits: 6691b0c..HEAD
 - [x] T10a: auth SessionStore/Middleware — acceptance: test PASS (covers: S2)
 - [x] T10b: recorder 名单行/开关纯函数 — acceptance: test PASS (covers: S2)
 - [x] T10d: cryptox RSA/AES 会话 + logx 日志环 — acceptance: test PASS (covers: S2)
-- [ ] T10c: builtin_recorder 运行时 / api-http / main&lt;150 行 — acceptance: 待后续 (covers: S2)
+- [x] T10c: builtin_recorder 运行时迁 internal/recorder + api/http 路由 + Pipeline — acceptance: test PASS；main 仍含扫描/上传编排与 bots（~1100 行，未到 150） (covers: S2)
