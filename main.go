@@ -615,6 +615,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	if !enableUpload {
 		isQueuedFn = func(string) bool { return true }
 	}
+	var scanErrCount int32
 	scanRes := scanner.Scan(context.Background(), scanner.Options{
 		Dirs:     currentDirs,
 		IsQueued: isQueuedFn,
@@ -632,8 +633,13 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 			log.Printf("[SCAN][CLEAN] 检测到遗留的 0 字节无效切片，已自动物理删除: %s", path)
 		},
 		OnError: func(path string, err error) {
-			if err != nil && err != context.Canceled {
-				log.Printf("[SCAN][ERR] 访问路径出错 %s: %v", path, err)
+			if err == nil || err == context.Canceled {
+				return
+			}
+			n := atomic.AddInt32(&scanErrCount, 1)
+			log.Printf("[SCAN][ERR] 访问路径出错 %s: %v", path, err)
+			// 仅首次错误触发告警，避免整树权限拒绝时刷屏
+			if n == 1 {
 				SendAlert("warning", "目录扫描异常", "无法访问部分路径: "+err.Error())
 				addLog("error", "文件遍历失败", err.Error())
 			}

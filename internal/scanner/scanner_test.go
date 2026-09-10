@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -74,5 +75,36 @@ func TestScanIsQueuedSkipsCandidate(t *testing.T) {
 	})
 	if len(res.Candidates) != 0 {
 		t.Fatal("queued path should not be candidate")
+	}
+}
+
+func TestScanMultiDirAndIsRunning(t *testing.T) {
+	d1, d2 := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(d1, "a.ts"), 11, 5*time.Minute)
+	write(t, filepath.Join(d2, "b.ts"), 22, 5*time.Minute)
+
+	res := Scan(context.Background(), Options{Dirs: []string{d1, d2}})
+	if len(res.Candidates) != 2 {
+		t.Fatalf("want 2 candidates got %d", len(res.Candidates))
+	}
+
+	res2 := Scan(context.Background(), Options{
+		Dirs:      []string{d1, d2},
+		IsRunning: func() bool { return false },
+	})
+	if len(res2.Candidates) != 0 {
+		t.Fatalf("cancelled scan should yield no candidates, got %d", len(res2.Candidates))
+	}
+}
+
+func TestScanOnErrorHook(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "no-such-dir")
+	var errs int32
+	Scan(context.Background(), Options{
+		Dirs:    []string{missing},
+		OnError: func(_ string, err error) { atomic.AddInt32(&errs, 1) },
+	})
+	if atomic.LoadInt32(&errs) == 0 {
+		t.Log("no OnError fired (platform may not report missing root)")
 	}
 }

@@ -90,6 +90,9 @@ func Scan(ctx context.Context, opts Options) Result {
 
 				info, err := d.Info()
 				if err != nil {
+					if opts.OnError != nil {
+						opts.OnError(path, err)
+					}
 					return nil
 				}
 
