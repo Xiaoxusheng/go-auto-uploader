@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	cryptorand "crypto/rand"
@@ -30,6 +31,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"upload/internal/config"
+	"upload/internal/notification"
 	"upload/internal/storage"
 	"upload/internal/ws"
 )
@@ -556,89 +558,33 @@ func StartWebServer(port int) {
 	}
 }
 
-// sendWeChatNotify ✨使用 PushPlus 接口发送带高级 SVG 矢量图标的极简现代微信通知
+// notifyHub 统一通知扇出（微信 PushPlus + Telegram + QQ）
+var notifyHub = func() *notification.Hub {
+	h := notification.New()
+	h.Register(&notification.DynamicPushPlus{
+		TokenFn: func() string { return appCfg().WechatToken },
+		Client:  httpCli,
+	})
+	h.Register(notification.FuncNotifier{
+		Label: "telegram",
+		Fn: func(_ context.Context, m notification.Message) error {
+			SendTelegramNotification(m.Title, m.Body)
+			return nil
+		},
+	})
+	h.Register(notification.FuncNotifier{
+		Label: "qq",
+		Fn: func(_ context.Context, m notification.Message) error {
+			SendQQNotification(m.Title, m.Body)
+			return nil
+		},
+	})
+	return h
+}()
+
+// sendWeChatNotify 经 notifyHub 扇出到微信/Telegram/QQ
 func sendWeChatNotify(title, body string) {
-	// ✨ 已修复：向底层派发一份到 Telegram 的副本协程，实现微信/Telegram 双路推送
-	go SendTelegramNotification(title, body)
-
-	// ✨ 新增：向底层派发一份到 QQ 的副本协程，实现全通讯矩阵监控无死角
-	go SendQQNotification(title, body)
-
-	token := appCfg().WechatToken
-
-	if token == "" {
-		return // Token为空代表用户未开启功能，静默返回
-	}
-
-	// 清理掉调用端可能带入的 Emoji 前缀，让标题纯净干练
-	title = strings.ReplaceAll(title, "▶️ ", "")
-	title = strings.ReplaceAll(title, "⏹️ ", "")
-	title = strings.ReplaceAll(title, "🛑 ", "")
-	title = strings.ReplaceAll(title, "⏸️ ", "")
-
-	// 极简现代的指示点颜色与 SVG 库 (配合透明色块框)
-	iconColor := "#3B82F6" // 科技蓝
-	iconBg := "#EFF6FF"    // 极浅蓝
-	var svgIcon string
-
-	if strings.Contains(title, "开播") {
-		iconColor = "#10B981" // 现代绿
-		iconBg = "#ECFDF5"    // 极浅绿
-		// Phosphor Icon: Broadcast
-		svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 256 256"><path fill="currentColor" d="M168,128a40,40,0,1,1-40-40A40,40,0,0,1,168,128Zm40-8a8,8,0,0,0-8,8,72,72,0,0,1-72,72,8,8,0,0,0,0,16,88.1,88.1,0,0,0,88-88A8,8,0,0,0,208,120Zm48,8a136.15,136.15,0,0,1-136,136,8,8,0,0,1,0-16,120.14,120.14,0,0,0,120-120,8,8,0,0,1,16,0ZM72,128a72,72,0,0,1,72-72,8,8,0,0,0,0-16,88.1,88.1,0,0,0-88,88,8,8,0,0,0,16,0ZM24,128A136.15,136.15,0,0,1,160,8a8,8,0,0,1,0,16A120.14,120.14,0,0,0,40,128a8,8,0,0,1-16,0Z"></path></svg>`
-	} else if strings.Contains(title, "下播") || strings.Contains(title, "暂停") {
-		iconColor = "#F59E0B" // 警示橙
-		iconBg = "#FFFBEB"    // 极浅橙
-		// Phosphor Icon: MinusCircle
-		svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 256 256"><path fill="currentColor" d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm32-88a8,8,0,0,1-8,8H104a8,8,0,0,1,0-16h48A8,8,0,0,1,160,128Z"></path></svg>`
-	} else if strings.Contains(title, "停止") || strings.Contains(title, "异常") || strings.Contains(title, "失败") {
-		iconColor = "#EF4444" // 危险红
-		iconBg = "#FEF2F2"    // 极浅红
-		// Phosphor Icon: WarningCircle
-		svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 256 256"><path fill="currentColor" d="M236.8,188.09,149.35,36.22h0a24.76,24.76,0,0,0-42.7,0L19.2,188.09a23.51,23.51,0,0,0,0,23.72A24.35,24.35,0,0,0,40.55,224h174.9a24.35,24.35,0,0,0,21.33-12.19A23.51,23.51,0,0,0,236.8,188.09ZM222.93,203.8a8.5,8.5,0,0,1-7.48,4.2H40.55a8.5,8.5,0,0,1-7.48-4.2,7.59,7.59,0,0,1,0-7.72L120.52,44.21a8.75,8.75,0,0,1,15,0l87.45,151.87A7.59,7.59,0,0,1,222.93,203.8ZM120,104v40a8,8,0,0,0,16,0V104a8,8,0,0,0-16,0Zm20,68a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"></path></svg>`
-	} else {
-		// Phosphor Icon: Info
-		svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 256 256"><path fill="currentColor" d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z"></path></svg>`
-	}
-
-	// 格式化文本流，兼容微信 HTML 解析
-	formattedBody := strings.ReplaceAll(body, "\n", "<br>")
-	currentTime := time.Now().Format("2006-01-02 15:04:05")
-
-	// 构建带高级 SVG 矢量图标的通知卡片 HTML 模板
-	htmlContent := fmt.Sprintf(`
-	<div style="background: #ffffff; padding: 24px; border-radius: 16px; border: 1px solid #f3f4f6; box-shadow: 0 4px 20px rgba(0,0,0,0.03); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-		<div style="display: flex; align-items: center; margin-bottom: 20px;">
-			<div style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 10px; background-color: %s; color: %s; margin-right: 14px;">
-				%s
-			</div>
-			<div style="font-size: 18px; font-weight: 600; color: #111827; letter-spacing: 0.3px;">%s</div>
-		</div>
-		<div style="font-size: 15px; color: #4b5563; line-height: 1.6; margin-bottom: 24px; letter-spacing: 0.2px;">
-			%s
-		</div>
-		<div style="border-top: 1px solid #f3f4f6; padding-top: 16px; font-size: 12px; color: #9ca3af; display: flex; justify-content: space-between; align-items: center;">
-			<span style="font-family: monospace;">%s</span>
-			<span style="color: #d1d5db; font-weight: 500;">go-auto-uploader</span>
-		</div>
-	</div>
-	`, iconBg, iconColor, svgIcon, title, formattedBody, currentTime)
-
-	reqBody := map[string]string{
-		"token":    token,
-		"title":    title,
-		"content":  htmlContent,
-		"template": "html",
-	}
-	jsonData, _ := json.Marshal(reqBody)
-
-	resp, err := httpCli.Post("http://www.pushplus.plus/send", "application/json", strings.NewReader(string(jsonData)))
-	if err != nil {
-		log.Printf("[NOTIFY][ERR] 微信通知网络请求发送失败: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-	log.Printf("[NOTIFY] 📩 现代高级 SVG 版微信通知下发成功: %s", title)
+	notifyHub.NotifyAsync(notification.Message{Title: title, Body: body})
 }
 
 // SendAlert 向前端发送系统弹窗级别的警告通知
