@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	httpapi "upload/api/http"
 
 	"github.com/gorilla/websocket"
 
@@ -378,44 +379,21 @@ func StartWebServer(port int) {
 	runningMu.Unlock()
 
 	mux := http.NewServeMux()
-
-	// 安全握手前置路由
-	mux.HandleFunc("/api/v1/sec/pubkey", handleGetPubKey)
-	mux.HandleFunc("/api/v1/sec/exchange", handleExchangeKey)
-
-	// 核心业务路由
-	mux.HandleFunc("/", handleIndex)
-	mux.HandleFunc("/api/v1/auth/login", handleLogin)
-	mux.HandleFunc("/api/v1/auth/logout", handleLogout)
-	mux.HandleFunc("/api/v1/status", handleStatus)
-	mux.HandleFunc("/api/v1/tasks/live", handleLiveTasks)
-	mux.HandleFunc("/api/v1/tasks/history", handleHistory)
-	mux.HandleFunc("/api/v1/tasks/queue", handleQueue)
-
-	mux.HandleFunc("/api/v1/control/start", handleControlStart)
-	mux.HandleFunc("/api/v1/control/pause", handleControlPause)
-	mux.HandleFunc("/api/v1/control/stop", handleControlStop)
-	mux.HandleFunc("/api/v1/control/relogin", handleControlRelogin)
-	mux.HandleFunc("/api/v1/control/rescan", handleControlRescan)
-	mux.HandleFunc("/api/v1/control/clear-fail-queue", handleControlClearFailQueue)
-	mux.HandleFunc("/api/v1/control/retry-fail-queue", handleControlRetryFailQueue)
-	mux.HandleFunc("/api/v1/control/clear-success-queue", handleControlClearSuccessQueue)
-
-	mux.HandleFunc("/api/v1/dirs/status", handleDirsStatus)
-	mux.HandleFunc("/api/v1/config", handleConfig)
-	mux.HandleFunc("/api/v1/logs", handleLogs)
-	mux.HandleFunc("/api/v1/logs/download", handleLogsDownload)
-
-	mux.HandleFunc("/api/v1/streamers", handleStreamers)
-	mux.HandleFunc("/api/v1/streamers/active", handleActiveStreamers)
-	mux.HandleFunc("/api/v1/recorder/status", handleRecorderStatus)
-	mux.HandleFunc("/api/v1/recorder/control", handleRecorderControl)
-	mux.HandleFunc("/api/v1/recorder/logs", handleRecorderLogs)
-	mux.HandleFunc("/api/v1/cookies", handleCookies)
-
-	InitBuiltinRecorder(mux)
-
-	mux.HandleFunc("/ws/live", handleWebSocket)
+	httpapi.Register(mux, httpapi.Routes{
+		Index: handleIndex, Login: handleLogin, Logout: handleLogout,
+		PubKey: handleGetPubKey, Exchange: handleExchangeKey,
+		Status: handleStatus, LiveTasks: handleLiveTasks, History: handleHistory, Queue: handleQueue,
+		CtlStart: handleControlStart, CtlPause: handleControlPause, CtlStop: handleControlStop,
+		CtlRelogin: handleControlRelogin, CtlRescan: handleControlRescan,
+		CtlClearFail: handleControlClearFailQueue, CtlRetryFail: handleControlRetryFailQueue,
+		CtlClearSuccess: handleControlClearSuccessQueue,
+		DirsStatus:      handleDirsStatus, Config: handleConfig,
+		Logs: handleLogs, LogsDownload: handleLogsDownload,
+		Streamers: handleStreamers, ActiveStreamers: handleActiveStreamers, Cookies: handleCookies,
+		RecorderStatus: handleRecorderStatus, RecorderControl: handleRecorderControl, RecorderLogs: handleRecorderLogs,
+		WebSocket: handleWebSocket,
+		Extra:     func(m *http.ServeMux) { InitBuiltinRecorder(m) },
+	})
 
 	go sysStatsCollector() // 开启系统级指标缓存采集器
 	go wsBroadcastLoop()

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"upload/internal/recorder"
 )
 
 // TestExtremeIOExceptions 执行极端环境下的文件系统 I/O 异常注入测试。
@@ -27,7 +28,7 @@ func TestExtremeIOExceptions(t *testing.T) {
 		tempDir := t.TempDir() // 利用 go test 框架生成安全的临时测试目录
 		coverPath := filepath.Join(tempDir, "output_cover.png")
 
-		success := extractBuiltinCoverFromLocalFile(tempDir, "test_prefix", coverPath, "TestAnchor")
+		success := recorder.ExtractCoverFromLocalFile(tempDir, "test_prefix", coverPath, "TestAnchor")
 		if success {
 			t.Error("空目录下提取截帧预期应该失败，却返回了成功")
 		}
@@ -51,7 +52,7 @@ func TestExtremeIOExceptions(t *testing.T) {
 		defer os.Chmod(restrictedDir, 0755) // 测试结束恢复权限以便清理垃圾
 
 		coverPath := filepath.Join(tempDir, "output_cover.png")
-		success := extractBuiltinCoverFromLocalFile(restrictedDir, "test_prefix", coverPath, "TestAnchor")
+		success := recorder.ExtractCoverFromLocalFile(restrictedDir, "test_prefix", coverPath, "TestAnchor")
 		if success {
 			t.Error("面对无权限目录预期提取失败，却返回了成功")
 		}

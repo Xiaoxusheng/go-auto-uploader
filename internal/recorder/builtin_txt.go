@@ -1,18 +1,17 @@
-package main
+package recorder
 
 import (
 	"os"
 	"strings"
-	"upload/internal/recorder"
 )
 
 func parseBuiltinLine(line string) (isPaused bool, platform string, roomID string, customName string, rawURL string, flags BuiltinTaskFlags) {
-	return recorder.ParseLine(line)
+	return ParseLine(line)
 }
 
 // rebuildBuiltinLineWithFlags 在名单行上写回/更新录屏截屏后缀
 func rebuildBuiltinLineWithFlags(trimmedLine string, flags BuiltinTaskFlags) string {
-	return recorder.RebuildLineWithFlags(trimmedLine, flags)
+	return RebuildLineWithFlags(trimmedLine, flags)
 }
 
 // syncBuiltinAnchorToTxt 依据前端指令对本地配置文件里的内容作增、删、改并落地

@@ -1,4 +1,4 @@
-package main
+package recorder
 
 import (
 	"context"
@@ -13,8 +13,8 @@ import (
 func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var c BuiltinConfig
-		if err := parseEncryptedRequest(r, &c); err != nil {
-			sendJSONError(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法配置实体或解密异常")
+		if err := hookParseEncrypted(r, &c); err != nil {
+			hookJSONErr(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法配置实体或解密异常")
 			return
 		}
 
@@ -41,18 +41,18 @@ func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 
 		data, _ := json.MarshalIndent(builtinConfig, "", "    ")
 		os.WriteFile("builtin_config.json", data, 0644)
-		sendJSONSuccess(w, r, nil)
+		hookJSONOK(w, r, nil)
 		return
 	}
-	sendJSONSuccess(w, r, builtinConfig)
+	hookJSONOK(w, r, builtinConfig)
 }
 
 // apiRecorderCookies 处理内置引擎应对各大平台反制而提供的 Cookie 更新，已强制兼容加密格式接收
 func apiRecorderCookies(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var c BuiltinCookieConfig
-		if err := parseEncryptedRequest(r, &c); err != nil {
-			sendJSONError(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法 Cookie 实体或解密异常")
+		if err := hookParseEncrypted(r, &c); err != nil {
+			hookJSONErr(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法 Cookie 实体或解密异常")
 			return
 		}
 
@@ -63,11 +63,11 @@ func apiRecorderCookies(w http.ResponseWriter, r *http.Request) {
 		builtinCookieMutex.Unlock()
 		data, _ := json.MarshalIndent(builtinCookies, "", "    ")
 		os.WriteFile("builtin_cookies.json", data, 0644)
-		sendJSONSuccess(w, r, nil)
+		hookJSONOK(w, r, nil)
 		return
 	}
 	builtinCookieMutex.RLock()
-	sendJSONSuccess(w, r, builtinCookies)
+	hookJSONOK(w, r, builtinCookies)
 	builtinCookieMutex.RUnlock()
 }
 
@@ -78,8 +78,8 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 		URL      string `json:"url"`
 	}
 
-	if err := parseEncryptedRequest(r, &d); err != nil {
-		sendJSONError(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法添加实体或解密异常")
+	if err := hookParseEncrypted(r, &d); err != nil {
+		hookJSONErr(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法添加实体或解密异常")
 		return
 	}
 
@@ -188,11 +188,11 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 	triggerBuiltinBroadcast()
 
 	if addedCount == 0 && duplicateCount > 0 {
-		sendJSONError(w, r, http.StatusBadRequest, "该主播/直播间已存在于列表中，请勿重复添加！")
+		hookJSONErr(w, r, http.StatusBadRequest, "该主播/直播间已存在于列表中，请勿重复添加！")
 		return
 	}
 
-	sendJSONSuccess(w, r, nil)
+	hookJSONOK(w, r, nil)
 }
 
 // apiRecorderControl 为列表里的单条项目指派状态机动作（恢复监控、挂起监控、完全剔除、设置录屏/截屏开关等）
@@ -205,8 +205,8 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 		Screenshot *bool  `json:"screenshot"`
 	}
 
-	if err := parseEncryptedRequest(r, &req); err != nil {
-		sendJSONError(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法操作实体或解密异常")
+	if err := hookParseEncrypted(r, &req); err != nil {
+		hookJSONErr(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法操作实体或解密异常")
 		return
 	}
 
@@ -283,7 +283,7 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 		builtinActiveTasks.Delete(key)
 	}
 	triggerBuiltinBroadcast()
-	sendJSONSuccess(w, r, nil)
+	hookJSONOK(w, r, nil)
 }
 
 // apiRecorderControlAll 执行对当前用户记录中的全部任务群发起全局同步的批量管控状态更新
@@ -292,8 +292,8 @@ func apiRecorderControlAll(w http.ResponseWriter, r *http.Request) {
 		Action string `json:"action"`
 	}
 
-	if err := parseEncryptedRequest(r, &req); err != nil {
-		sendJSONError(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法全局操作实体或解密异常")
+	if err := hookParseEncrypted(r, &req); err != nil {
+		hookJSONErr(w, r, http.StatusBadRequest, "商业安全网关拦截: 非法全局操作实体或解密异常")
 		return
 	}
 
@@ -367,5 +367,5 @@ func apiRecorderControlAll(w http.ResponseWriter, r *http.Request) {
 	})
 
 	triggerBuiltinBroadcast()
-	sendJSONSuccess(w, r, nil)
+	hookJSONOK(w, r, nil)
 }

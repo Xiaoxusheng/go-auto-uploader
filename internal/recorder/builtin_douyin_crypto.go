@@ -1,4 +1,4 @@
-package main
+package recorder
 
 import (
 	"context"
@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
-
-	"upload/internal/recorder"
 )
 
 func ExtractBuiltinDouyinLiveURL(text string) (string, error) {
@@ -131,12 +129,12 @@ func extractBuiltinWebRid(html string) string {
 
 // builtinRC4Encrypt 实现标准的 RC4 对称加密方法
 func builtinRC4Encrypt(plaintext, key string) string {
-	return recorder.RC4Encrypt(plaintext, key)
+	return RC4Encrypt(plaintext, key)
 }
 
 // builtinGenerateABogus 生成抖音 a_bogus 签名
 func builtinGenerateABogus(params, userAgent string) string {
-	return recorder.GenerateABogus(params, userAgent)
+	return GenerateABogus(params, userAgent)
 }
 
 // ==========================================

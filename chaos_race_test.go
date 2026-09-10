@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"upload/internal/recorder"
 
 	"upload/internal/config"
 )
@@ -30,7 +31,7 @@ func TestConcurrentStateMutations(t *testing.T) {
 					return
 				default:
 					// 1. 疯狂写入或更新内置引擎状态 Map
-					updateBuiltinStatus(
+					recorder.UpdateStatus(
 						"TestPlatform",
 						"Room_"+strconv.Itoa(workerID),
 						"Anchor_"+strconv.Itoa(counter),

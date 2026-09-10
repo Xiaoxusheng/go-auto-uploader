@@ -1,4 +1,4 @@
-package main
+package recorder
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	"upload/internal/recorder"
 )
 
 var builtinFfmpegPath = "ffmpeg"
@@ -80,15 +79,15 @@ type BuiltinTaskStatus struct {
 }
 
 // BuiltinTaskFlags 单主播「录屏 / 截屏」独立开关（实现见 internal/recorder）
-type BuiltinTaskFlags = recorder.TaskFlags
+type BuiltinTaskFlags = TaskFlags
 
 func defaultBuiltinTaskFlags() BuiltinTaskFlags {
-	return recorder.DefaultFlags()
+	return DefaultFlags()
 }
 
 // isBuiltinLiveStatus 判定任务是否处于“已接管推流”的活跃状态（录屏或截屏中）
 func isBuiltinLiveStatus(s string) bool {
-	return recorder.IsLiveStatus(s)
+	return IsLiveStatus(s)
 }
 
 func builtinFlagsKey(platform, roomID string) string {

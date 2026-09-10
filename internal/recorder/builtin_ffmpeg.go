@@ -1,4 +1,4 @@
-package main
+package recorder
 
 import (
 	"bytes"
@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"upload/internal/recorder"
 )
 
 type builtinTailBuffer struct {
@@ -93,7 +92,7 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string)
 	// 基础视频滤镜：精准抓取第一个关键帧 (I-frame)，避免花屏和解码黑屏
 	vfFilter := "select='eq(pict_type,I)'"
 
-	// 截图水印：复用 recorder.PrepareDrawtextFilter（textfile 内不转义冒号，保证 %{localtime} 正确展开）
+	// 截图水印：复用 PrepareDrawtextFilter（textfile 内不转义冒号，保证 %{localtime} 正确展开）
 	if builtinConfig != nil && builtinConfig.WatermarkEnable {
 		drawtext, textFile, werr := prepareBuiltinDrawtextFilter(anchorName, "shot")
 		if werr != nil {
@@ -171,7 +170,7 @@ func normalizeFFmpegFontColor(c string) string {
 
 // findBuiltinFontPath 按可执行文件目录 → 工作目录的顺序寻找中文字体
 func findBuiltinFontPath() string {
-	return recorder.FindFontPath()
+	return FindFontPath()
 }
 
 // buildBuiltinWatermarkText 组装「前缀（默认主播名）+ 动态时间」水印文本
@@ -179,14 +178,14 @@ func buildBuiltinWatermarkText(anchorName string) string {
 	if builtinConfig == nil {
 		return strings.TrimSpace(anchorName)
 	}
-	return recorder.BuildWatermarkText(watermarkStyleFromConfig(), anchorName)
+	return BuildWatermarkText(watermarkStyleFromConfig(), anchorName)
 }
 
-func watermarkStyleFromConfig() recorder.WatermarkStyle {
+func watermarkStyleFromConfig() WatermarkStyle {
 	if builtinConfig == nil {
-		return recorder.WatermarkStyle{Format: "%Y-%m-%d %H:%M:%S", Position: "bottom-right", FontSize: 38, FontColor: "white@0.95"}
+		return WatermarkStyle{Format: "%Y-%m-%d %H:%M:%S", Position: "bottom-right", FontSize: 38, FontColor: "white@0.95"}
 	}
-	return recorder.StyleFrom(
+	return StyleFrom(
 		builtinConfig.WatermarkText,
 		builtinConfig.WatermarkFormat,
 		builtinConfig.WatermarkPosition,
@@ -200,7 +199,7 @@ func builtinDrawtextPosStr() string {
 	if builtinConfig == nil {
 		return "x=w-tw-20:y=h-th-20"
 	}
-	return recorder.DrawtextPos(builtinConfig.WatermarkPosition)
+	return DrawtextPos(builtinConfig.WatermarkPosition)
 }
 
 // prepareBuiltinDrawtextFilter 生成 drawtext 滤镜串，并落盘临时 textfile。
@@ -209,12 +208,12 @@ func prepareBuiltinDrawtextFilter(anchorName, tag string) (filter string, textFi
 	if builtinConfig == nil {
 		return "", "", fmt.Errorf("builtinConfig 未初始化")
 	}
-	return recorder.PrepareDrawtextFilter(watermarkStyleFromConfig(), anchorName, tag)
+	return PrepareDrawtextFilter(watermarkStyleFromConfig(), anchorName, tag)
 }
 
 // BuiltinRecordStream 调动底层 FFmpeg 进程并将推流直通本地文件，增加了高度强化的上下文状态管控防止僵尸进程
 // flags 控制本任务是否落盘录像 / 是否旁路截屏。
-func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, anchorName, avatar, quality string, segmentTime int, flags BuiltinTaskFlags) {
+func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorName, avatar, quality string, segmentTime int, flags BuiltinTaskFlags) {
 	if !flags.Record && !flags.Screenshot {
 		log.Printf("⚪ [空转模式] %s | %s 录屏与截屏均已关闭，仅保持开播探测", platformName, anchorName)
 		updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "监控中")
@@ -280,7 +279,7 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 		} else {
 			defer os.Remove(textFile)
 			videoCodecArgs = []string{"-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23"}
-			log.Printf("   🎬 视频画面烧录水印已启用（主播/时间，需实时转码，CPU 占用会升高）")
+			log.Printf("   🎬 视频画面烧录水印已启用（%s）", WatermarkWallClockNote)
 		}
 	} else {
 		videoCodecArgs = []string{"-c:v", "copy"}

@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"upload/internal/recorder"
 
 	"upload/internal/config"
 	"upload/internal/convert"
@@ -672,7 +673,7 @@ func handleFile(path string) {
 	doConvert := appCfg().ConvertMP4
 	if doConvert && convert.IsTS(path) {
 		log.Printf("[CONVERT] 🎬 开始 TS→MP4 封装: %s (%.2f MB)", filepath.Base(path), float64(info.Size())/1024/1024)
-		if mp4Path, cerr := convert.TSToMP4(path, builtinFfmpegPath); cerr == nil {
+		if mp4Path, cerr := convert.TSToMP4(path, recorder.FFmpegBin()); cerr == nil {
 			originalTS = path
 			path = mp4Path
 			if ni, nerr := os.Stat(path); nerr == nil {

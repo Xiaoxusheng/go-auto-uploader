@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"upload/internal/recorder"
 )
 
 // TestAuthMiddlewareEnforcement 安全审计回归测试：验证全局认证中间件的放行与拦截边界。
@@ -120,7 +121,7 @@ func TestProxyImageSSRFGuard(t *testing.T) {
 	for _, tc := range cases {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/builtin_recorder/proxy_image?url="+tc.url, nil)
 		w := httptest.NewRecorder()
-		apiProxyImage(w, req)
+		recorder.ProxyImage(w, req)
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("[%s] 预期 400 拒绝, 获得 %d", tc.name, w.Code)
 		}

@@ -10,12 +10,12 @@ import (
 type TaskStatus string
 
 const (
-	StatusPending      TaskStatus = "pending"
-	StatusUploading    TaskStatus = "uploading"
-	StatusSuccess      TaskStatus = "success"
-	StatusSuccessFast  TaskStatus = "success(秒传)"
-	StatusFailed       TaskStatus = "failed"
-	StatusRetrying     TaskStatus = "retrying"
+	StatusPending     TaskStatus = "pending"
+	StatusUploading   TaskStatus = "uploading"
+	StatusSuccess     TaskStatus = "success"
+	StatusSuccessFast TaskStatus = "success(秒传)"
+	StatusFailed      TaskStatus = "failed"
+	StatusRetrying    TaskStatus = "retrying"
 )
 
 // Task 单次上传运行时状态。Mu 保护字段并发读写（进度协程 vs 查询 API）。

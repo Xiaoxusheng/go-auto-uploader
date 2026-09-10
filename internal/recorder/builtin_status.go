@@ -1,4 +1,4 @@
-package main
+package recorder
 
 import (
 	"fmt"
@@ -19,7 +19,7 @@ func startBuiltinBroadcastDebouncer() {
 				needsBroadcast = true
 			case <-ticker.C:
 				if needsBroadcast {
-					broadcastWS("builtinTasks", GetBuiltinRecorderTasks())
+					hookBroadcast("builtinTasks", GetBuiltinRecorderTasks())
 					needsBroadcast = false
 				}
 			}
@@ -63,7 +63,7 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 					builtinNotifyDebounce.Store(cacheKey, now)
 					sTime = now
 					isNewlyRecording = true
-					sendWeChatNotify("开播通知", fmt.Sprintf("检测到平台 [%s] 的主播 [%s] 开始直播并已成功接管录制！", platform, anchorName))
+					hookNotify("开播通知", fmt.Sprintf("检测到平台 [%s] 的主播 [%s] 开始直播并已成功接管录制！", platform, anchorName))
 				} else {
 					sTime = oldTask.startTime // 静默无感知恢复推流，避免惊扰管理员
 				}
@@ -76,7 +76,7 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 				cacheKey := "offline_" + key
 				if last, has := builtinNotifyDebounce.Load(cacheKey); !has || time.Since(last.(time.Time)) > 3*time.Minute {
 					builtinNotifyDebounce.Store(cacheKey, now)
-					sendWeChatNotify("下播通知", fmt.Sprintf("检测到平台 [%s] 的主播 [%s] 已经下播或断流停止录制！", platform, anchorName))
+					hookNotify("下播通知", fmt.Sprintf("检测到平台 [%s] 的主播 [%s] 已经下播或断流停止录制！", platform, anchorName))
 				}
 			}
 		}
@@ -85,7 +85,7 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 			sTime = now
 			isNewlyRecording = true
 			builtinNotifyDebounce.Store("live_"+key, now)
-			sendWeChatNotify("开播通知", fmt.Sprintf("检测到平台 [%s] 的主播 [%s] 开始直播并已成功接管录制！", platform, anchorName))
+			hookNotify("开播通知", fmt.Sprintf("检测到平台 [%s] 的主播 [%s] 开始直播并已成功接管录制！", platform, anchorName))
 		}
 	}
 
@@ -120,7 +120,7 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 	if isNewlyRecording && !isPaused {
 		go func() {
 			time.Sleep(2500 * time.Millisecond)
-			triggerScan(fmt.Sprintf("内置引擎捕获[%s]开播", anchorName))
+			hookTriggerScan(fmt.Sprintf("内置引擎捕获[%s]开播", anchorName))
 		}()
 	}
 }

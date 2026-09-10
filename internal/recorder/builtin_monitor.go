@@ -1,4 +1,4 @@
-package main
+package recorder
 
 import (
 	"context"
@@ -75,7 +75,7 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 				}
 			} else if url != "" {
 				taskFlags := getBuiltinTaskFlags(platformName, roomID)
-				BuiltinRecordStream(ctx, url, platformName, roomID, name, avatar, q, st, taskFlags)
+				RecordStream(ctx, url, platformName, roomID, name, avatar, q, st, taskFlags)
 
 				state, _ = builtinTaskStates.Load(key)
 				if state != "deleted" && state != "paused" {

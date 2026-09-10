@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"upload/internal/recorder"
 
 	"github.com/gorilla/websocket"
 )
@@ -469,7 +470,7 @@ func handleQQMessage(msg QQMessage) {
 		} else {
 			hash := parts[1]
 			var fullKey string
-			builtinStatusMap.Range(func(k, v interface{}) bool {
+			recorder.StatusMap().Range(func(k, v interface{}) bool {
 				if getTaskHash(k.(string)) == hash {
 					fullKey = k.(string)
 					return false
@@ -548,10 +549,10 @@ func qqHandleInteractiveSearch(userID int64, index int) bool {
 }
 
 func saveBuiltinConfigQQ() {
-	if builtinConfig == nil {
+	if recorder.Config() == nil {
 		return
 	}
-	data, err := json.MarshalIndent(builtinConfig, "", "    ")
+	data, err := json.MarshalIndent(recorder.Config(), "", "    ")
 	if err == nil {
 		os.WriteFile("builtin_config.json", data, 0644)
 	}
@@ -569,22 +570,22 @@ func qqHandleWatermark(userID int64, parts []string) {
 	}
 
 	subCmd := strings.ToLower(parts[1])
-	if builtinConfig == nil {
+	if recorder.Config() == nil {
 		return
 	}
 
 	switch subCmd {
 	case "toggle":
-		builtinConfig.WatermarkEnable = !builtinConfig.WatermarkEnable
+		recorder.Config().WatermarkEnable = !recorder.Config().WatermarkEnable
 		saveBuiltinConfigQQ()
 		state := "关闭"
-		if builtinConfig.WatermarkEnable {
+		if recorder.Config().WatermarkEnable {
 			state = "开启"
 		}
 		sendQQAPIMessage(userID, "✅ 水印已: "+state)
 	case "text":
 		if len(parts) >= 3 {
-			builtinConfig.WatermarkText = strings.Join(parts[2:], " ")
+			recorder.Config().WatermarkText = strings.Join(parts[2:], " ")
 			saveBuiltinConfigQQ()
 			sendQQAPIMessage(userID, "✅ 文字已更新")
 		}
@@ -592,14 +593,14 @@ func qqHandleWatermark(userID int64, parts []string) {
 		if len(parts) >= 3 {
 			size, err := strconv.Atoi(parts[2])
 			if err == nil && size > 0 {
-				builtinConfig.WatermarkFontSize = size
+				recorder.Config().WatermarkFontSize = size
 				saveBuiltinConfigQQ()
 				sendQQAPIMessage(userID, "✅ 字号已更新")
 			}
 		}
 	case "color":
 		if len(parts) >= 3 {
-			builtinConfig.WatermarkFontColor = parts[2]
+			recorder.Config().WatermarkFontColor = parts[2]
 			saveBuiltinConfigQQ()
 			sendQQAPIMessage(userID, "✅ 颜色已更新")
 		}
@@ -937,7 +938,7 @@ func qqHandleSearch(userID int64, keyword string) {
 	keyword = strings.ToLower(strings.TrimSpace(keyword))
 	var results []MenuTask
 
-	builtinStatusMap.Range(func(k, v interface{}) bool {
+	recorder.StatusMap().Range(func(k, v interface{}) bool {
 		task := v.(*BuiltinTaskStatus)
 		key := k.(string)
 		name := task.AnchorName
@@ -1038,7 +1039,7 @@ func qqHandleList(userID int64, filter string) {
 }
 
 func qqHandlePreciseCover(userID int64, key string) {
-	value, exists := builtinStatusMap.Load(key)
+	value, exists := recorder.StatusMap().Load(key)
 	if !exists {
 		sendQQAPIMessage(userID, "⚠️ 任务不存在或已删除")
 		return

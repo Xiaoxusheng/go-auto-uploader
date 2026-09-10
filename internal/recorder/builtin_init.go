@@ -1,4 +1,4 @@
-package main
+package recorder
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"upload/internal/recorder"
 )
 
 func builtinHotReloadLoop() {
@@ -333,17 +332,17 @@ func checkFFmpegBuiltin() {
 
 // extractBuiltinRoomID 从各类直播间 URL 中提取出统一格式的纯净房间 ID
 func extractBuiltinRoomID(input string) string {
-	return recorder.ExtractRoomID(input)
+	return ExtractRoomID(input)
 }
 
 // sanitizeBuiltinFileName 清洗并规范化主播名称（见 internal/recorder）
 func sanitizeBuiltinFileName(name string) string {
-	return recorder.SanitizeName(name)
+	return SanitizeName(name)
 }
 
 // formatBuiltinDuration 将 Go 时间差对象格式化为 X小时X分X秒 格式
 func formatBuiltinDuration(d time.Duration) string {
-	return recorder.FormatDuration(d)
+	return FormatDuration(d)
 }
 
 // getBuiltinDirSizeStr 遍历并计算指定保存目录的总物理文件大小
@@ -369,7 +368,7 @@ func getBuiltinDirSizeStr(path string) string {
 
 // formatBuiltinBytes 将庞大的字节数据格式化为易读的 KB/MB/GB 规格字符串
 func formatBuiltinBytes(b int64) string {
-	return recorder.FormatBytes(b)
+	return FormatBytes(b)
 }
 
 // formatBuiltinQualityName 映射配置内的画质代码为前端直接展示的中文名称

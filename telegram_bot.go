@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"upload/internal/recorder"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -295,8 +296,8 @@ func handleTelegramCallback(query *tgbotapi.CallbackQuery) {
 		tgEditToWatermarkMenu(chatID, msgID)
 
 	case action == "toggle_watermark":
-		if builtinConfig != nil {
-			builtinConfig.WatermarkEnable = !builtinConfig.WatermarkEnable
+		if recorder.Config() != nil {
+			recorder.Config().WatermarkEnable = !recorder.Config().WatermarkEnable
 			saveBuiltinConfigTG()
 		}
 		tgBot.Request(tgbotapi.NewCallback(query.ID, "引擎水印状态已切换！"))
@@ -332,7 +333,7 @@ func handleTelegramCallback(query *tgbotapi.CallbackQuery) {
 		hash := strings.TrimPrefix(action, "refresh_cover_")
 		var key string
 		// 通过 MD5 短指纹反向寻址内存全称键值
-		builtinStatusMap.Range(func(k, v interface{}) bool {
+		recorder.StatusMap().Range(func(k, v interface{}) bool {
 			if getTaskHash(k.(string)) == hash {
 				key = k.(string)
 				return false
@@ -370,7 +371,7 @@ func handleTelegramCallback(query *tgbotapi.CallbackQuery) {
 				page = p
 				hash := parts[3]
 				// 内存反向暴搜匹配指纹
-				builtinStatusMap.Range(func(k, v interface{}) bool {
+				recorder.StatusMap().Range(func(k, v interface{}) bool {
 					if getTaskHash(k.(string)) == hash {
 						key = k.(string)
 						return false
@@ -408,12 +409,12 @@ func handleTelegramCallback(query *tgbotapi.CallbackQuery) {
 }
 
 // saveBuiltinConfigTG 将内置引擎配置落盘保存。
-// 职责：序列化内存中的 builtinConfig 并覆盖本地文件，确保在 Telegram 做的设置更改在系统重启后不会丢失。
+// 职责：序列化内存中的 recorder.Config() 并覆盖本地文件，确保在 Telegram 做的设置更改在系统重启后不会丢失。
 func saveBuiltinConfigTG() {
-	if builtinConfig == nil {
+	if recorder.Config() == nil {
 		return
 	}
-	data, err := json.MarshalIndent(builtinConfig, "", "    ")
+	data, err := json.MarshalIndent(recorder.Config(), "", "    ")
 	if err == nil {
 		os.WriteFile("builtin_config.json", data, 0644)
 	} else {
@@ -425,33 +426,33 @@ func saveBuiltinConfigTG() {
 // 职责：提供一个独立的可视化界面，用于开关截图和录制画面的水印，并可直接进入各项参数修改流。
 func tgEditToWatermarkMenu(chatID int64, messageID int) {
 	status := "🔴 已关闭"
-	if builtinConfig != nil && builtinConfig.WatermarkEnable {
+	if recorder.Config() != nil && recorder.Config().WatermarkEnable {
 		status = "🟢 已开启"
 	}
 
 	textStr := "默认"
-	if builtinConfig != nil && builtinConfig.WatermarkText != "" {
-		textStr = builtinConfig.WatermarkText
+	if recorder.Config() != nil && recorder.Config().WatermarkText != "" {
+		textStr = recorder.Config().WatermarkText
 	}
 
 	formatStr := "%Y-%m-%d %H:%M:%S"
-	if builtinConfig != nil && builtinConfig.WatermarkFormat != "" {
-		formatStr = builtinConfig.WatermarkFormat
+	if recorder.Config() != nil && recorder.Config().WatermarkFormat != "" {
+		formatStr = recorder.Config().WatermarkFormat
 	}
 
 	posStr := "bottom-right"
-	if builtinConfig != nil && builtinConfig.WatermarkPosition != "" {
-		posStr = builtinConfig.WatermarkPosition
+	if recorder.Config() != nil && recorder.Config().WatermarkPosition != "" {
+		posStr = recorder.Config().WatermarkPosition
 	}
 
 	fontSize := 38
-	if builtinConfig != nil && builtinConfig.WatermarkFontSize > 0 {
-		fontSize = builtinConfig.WatermarkFontSize
+	if recorder.Config() != nil && recorder.Config().WatermarkFontSize > 0 {
+		fontSize = recorder.Config().WatermarkFontSize
 	}
 
 	fontColor := "white@0.95"
-	if builtinConfig != nil && builtinConfig.WatermarkFontColor != "" {
-		fontColor = builtinConfig.WatermarkFontColor
+	if recorder.Config() != nil && recorder.Config().WatermarkFontColor != "" {
+		fontColor = recorder.Config().WatermarkFontColor
 	}
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
@@ -484,8 +485,8 @@ func tgEditToWatermarkMenu(chatID int64, messageID int) {
 // 职责：将用户发送的文本清洗、转义后存入内存架构中，随后唤起数据持久化存储。
 func tgHandleSetWatermarkText(chatID int64, text string) {
 	text = strings.TrimSpace(text)
-	if builtinConfig != nil {
-		builtinConfig.WatermarkText = text
+	if recorder.Config() != nil {
+		recorder.Config().WatermarkText = text
 		saveBuiltinConfigTG()
 
 		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("✅ <b>自定义水印更新成功！</b>\n\n最新文案已生效: <code>%s</code>\n未来的所有快照都将带上此印记。\n\n*(可发送 /menu 返回主面板继续控制)*", html.EscapeString(text)))
@@ -507,8 +508,8 @@ func tgHandleSetWatermarkSize(chatID int64, text string) {
 		return
 	}
 
-	if builtinConfig != nil {
-		builtinConfig.WatermarkFontSize = size
+	if recorder.Config() != nil {
+		recorder.Config().WatermarkFontSize = size
 		saveBuiltinConfigTG()
 
 		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("✅ <b>水印字体大小更新成功！</b>\n\n最新字号已生效: <code>%d</code>\n\n*(可发送 /menu 返回主面板继续控制)*", size))
@@ -526,8 +527,8 @@ func tgHandleSetWatermarkColor(chatID int64, text string) {
 		return
 	}
 
-	if builtinConfig != nil {
-		builtinConfig.WatermarkFontColor = text
+	if recorder.Config() != nil {
+		recorder.Config().WatermarkFontColor = text
 		saveBuiltinConfigTG()
 
 		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("✅ <b>水印字体颜色更新成功！</b>\n\n最新颜色已生效: <code>%s</code>\n\n*(可发送 /menu 返回主面板继续控制)*", html.EscapeString(text)))
@@ -600,7 +601,7 @@ func tgEditToTargetMenu(chatID int64, messageID int, action string, page int) {
 	var allItems []MenuTask
 
 	// 1. 提取全量数据
-	builtinStatusMap.Range(func(k, v interface{}) bool {
+	recorder.StatusMap().Range(func(k, v interface{}) bool {
 		task := v.(*BuiltinTaskStatus)
 		key := k.(string)
 
@@ -717,7 +718,7 @@ func tgEditToTargetMenu(chatID int64, messageID int, action string, page int) {
 // 职责：极速修改底层状态机，挂起/恢复引擎核心，并广播通知。
 func tgExecutePreciseControl(action, key string) string {
 	log.Printf("[TG-BOT] 🛠️ 正在执行系统控制: 行动=%s, Key=%s\n", action, key)
-	value, exists := builtinStatusMap.Load(key)
+	value, exists := recorder.StatusMap().Load(key)
 	if !exists {
 		return "⚠️ 该任务已不存在"
 	}
@@ -728,50 +729,50 @@ func tgExecutePreciseControl(action, key string) string {
 
 	switch action {
 	case "pause":
-		builtinTaskStates.Store(key, "paused")
-		if cancel, ok := builtinCancels.Load(key); ok {
+		recorder.TaskStates().Store(key, "paused")
+		if cancel, ok := recorder.Cancels().Load(key); ok {
 			cancel.(context.CancelFunc)()
 		}
-		syncBuiltinAnchorToTxt("pause", targetPlatform, targetRoom, "")
+		recorder.SyncAnchorToTxt("pause", targetPlatform, targetRoom, "")
 		task.IsPaused = true
 		task.Status = "已暂停"
-		builtinStatusMap.Store(key, task)
-		triggerBuiltinBroadcast()
+		recorder.StatusMap().Store(key, task)
+		recorder.TriggerBroadcast()
 		log.Println("[TG-BOT] ✅ 成功下发挂起指令")
 		return "✅ 挂起指令下发成功"
 
 	case "resume":
-		builtinTaskStates.Store(key, "running")
-		syncBuiltinAnchorToTxt("resume", targetPlatform, targetRoom, "")
+		recorder.TaskStates().Store(key, "running")
+		recorder.SyncAnchorToTxt("resume", targetPlatform, targetRoom, "")
 		task.IsPaused = false
 		task.Status = "监控中"
-		builtinStatusMap.Store(key, task)
+		recorder.StatusMap().Store(key, task)
 
 		var p BuiltinPlatform
 		switch targetPlatform {
 		case "Douyin":
-			p = &DouyinBuiltinPlatform{}
+			p = recorder.DouyinPlatform()
 		case "Kuaishou":
-			p = &KuaishouBuiltinPlatform{}
+			p = recorder.KuaishouPlatform()
 		case "Soop":
-			p = &SoopBuiltinPlatform{}
+			p = recorder.SoopPlatform()
 		}
 		if p != nil {
-			wrapperStartMonitorIfNotRunning(p, targetRoom)
+			recorder.StartMonitor(p, targetRoom)
 		}
-		triggerBuiltinBroadcast()
+		recorder.TriggerBroadcast()
 		log.Println("[TG-BOT] ✅ 成功下发唤醒指令")
 		return "✅ 唤醒指令下发成功"
 
 	case "delete":
-		builtinTaskStates.Store(key, "deleted")
-		if cancel, ok := builtinCancels.Load(key); ok {
+		recorder.TaskStates().Store(key, "deleted")
+		if cancel, ok := recorder.Cancels().Load(key); ok {
 			cancel.(context.CancelFunc)()
 		}
-		syncBuiltinAnchorToTxt("delete", targetPlatform, targetRoom, "")
-		builtinStatusMap.Delete(key)
-		builtinActiveTasks.Delete(key)
-		triggerBuiltinBroadcast()
+		recorder.SyncAnchorToTxt("delete", targetPlatform, targetRoom, "")
+		recorder.StatusMap().Delete(key)
+		recorder.ActiveTasks().Delete(key)
+		recorder.TriggerBroadcast()
 		log.Println("[TG-BOT] 🗑️ 成功彻底删除指令")
 		return "🗑️ 彻底销毁成功"
 	}
@@ -783,7 +784,7 @@ func tgExecutePreciseControl(action, key string) string {
 // 职责：在内存中找到主播数据，从文件系统读取无损截图并作为 Photo 发送，并挂载「原地动态刷新」控制键盘。
 func tgHandlePreciseCover(chatID int64, key string) {
 	log.Printf("[TG-BOT] 📸 正在寻址获取封面: %s\n", key)
-	value, exists := builtinStatusMap.Load(key)
+	value, exists := recorder.StatusMap().Load(key)
 	if !exists {
 		return
 	}
@@ -831,7 +832,7 @@ func tgHandlePreciseCover(chatID int64, key string) {
 // 职责：读取底层最新截帧，通过 EditMessageMedia 接口原地热更替当前消息的图片与文本，实现幻灯片无痕监控。
 func tgHandleRefreshCover(chatID int64, messageID int, key string, queryID string) {
 	log.Printf("[TG-BOT] 🔄 正在动态刷新获取封面: %s\n", key)
-	value, exists := builtinStatusMap.Load(key)
+	value, exists := recorder.StatusMap().Load(key)
 	if !exists {
 		tgBot.Request(tgbotapi.NewCallback(queryID, "⚠️ 该任务已不存在或已结束"))
 		return
@@ -987,7 +988,7 @@ func tgHandleSearch(chatID int64, keyword string) {
 	var results []MenuTask
 
 	// 1. 无锁内存极速遍历
-	builtinStatusMap.Range(func(k, v interface{}) bool {
+	recorder.StatusMap().Range(func(k, v interface{}) bool {
 		task := v.(*BuiltinTaskStatus)
 		key := k.(string)
 		name := task.AnchorName
@@ -1331,11 +1332,11 @@ func tgHandleAdd(rawArgs string) string {
 			}
 		}
 
-		isP, platformName, roomID, customName, rawURL, _ := parseBuiltinLine(line)
+		isP, platformName, roomID, customName, rawURL, _ := recorder.ParseLine(line)
 		if roomID == "" || platformName == "" {
 			urlRe := regexp.MustCompile(`https?://[^\s,]+`)
 			if found := urlRe.FindString(line); found != "" {
-				isP, platformName, roomID, customName, rawURL, _ = parseBuiltinLine(found)
+				isP, platformName, roomID, customName, rawURL, _ = recorder.ParseLine(found)
 			}
 		}
 
@@ -1345,20 +1346,20 @@ func tgHandleAdd(rawArgs string) string {
 
 		key := platformName + "_" + roomID
 		if customName != "" {
-			builtinCustomNames.Store(key, customName)
+			recorder.CustomNames().Store(key, customName)
 		}
-		if _, exists := builtinActiveTasks.Load(key); exists {
+		if _, exists := recorder.ActiveTasks().Load(key); exists {
 			continue
 		}
 
 		var p BuiltinPlatform
 		switch platformName {
 		case "Douyin":
-			p = &DouyinBuiltinPlatform{}
+			p = recorder.DouyinPlatform()
 		case "Kuaishou":
-			p = &KuaishouBuiltinPlatform{}
+			p = recorder.KuaishouPlatform()
 		case "Soop":
-			p = &SoopBuiltinPlatform{}
+			p = recorder.SoopPlatform()
 		default:
 			continue
 		}
@@ -1367,7 +1368,7 @@ func tgHandleAdd(rawArgs string) string {
 		if customName != "" {
 			fullLineToSave = rawURL + ",主播:" + customName
 		}
-		syncBuiltinAnchorToTxt("add", platformName, roomID, fullLineToSave)
+		recorder.SyncAnchorToTxt("add", platformName, roomID, fullLineToSave)
 
 		displayName := customName
 		if displayName == "" {
@@ -1375,16 +1376,16 @@ func tgHandleAdd(rawArgs string) string {
 		}
 
 		if isP {
-			builtinTaskStates.Store(key, "paused")
-			updateBuiltinStatus(platformName, roomID, displayName, "", builtinConfig.Quality, "已暂停")
+			recorder.TaskStates().Store(key, "paused")
+			recorder.UpdateStatus(platformName, roomID, displayName, "", recorder.Config().Quality, "已暂停")
 		} else {
-			updateBuiltinStatus(platformName, roomID, displayName, "", builtinConfig.Quality, "初始化中")
-			wrapperStartMonitorIfNotRunning(p, roomID)
+			recorder.UpdateStatus(platformName, roomID, displayName, "", recorder.Config().Quality, "初始化中")
+			recorder.StartMonitor(p, roomID)
 		}
 		added++
 	}
 
-	triggerBuiltinBroadcast()
+	recorder.TriggerBroadcast()
 	if added > 0 {
 		log.Printf("[TG-BOT] ✅ 成功解析并添加了 %d 个录制任务！\n", added)
 		return fmt.Sprintf("✅ 成功解析并添加了 %d 个录制任务！", added)
