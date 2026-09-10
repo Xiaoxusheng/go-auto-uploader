@@ -661,37 +661,14 @@ func extractBuiltinRoomID(input string) string {
 	return recorder.ExtractRoomID(input)
 }
 
-// sanitizeBuiltinFileName 清洗并规范化主播名称，剔除非法及容易导致操作异常的特殊字符
+// sanitizeBuiltinFileName 清洗并规范化主播名称（见 internal/recorder）
 func sanitizeBuiltinFileName(name string) string {
-	name = strings.ReplaceAll(name, "\r", "")
-	name = strings.ReplaceAll(name, "\n", "")
-	name = strings.ReplaceAll(name, "\t", "")
-	name = strings.ReplaceAll(name, " ", " ")
-
-	invalidChars := []string{"\\", "/", ":", "*", "?", "\"", "<", ">", "|"}
-	for _, char := range invalidChars {
-		name = strings.ReplaceAll(name, char, "")
-	}
-
-	name = strings.TrimSpace(name)
-	name = strings.Trim(name, " ._-")
-
-	if name == "" {
-		return "未命名主播"
-	}
-
-	return name
+	return recorder.SanitizeName(name)
 }
 
 // formatBuiltinDuration 将 Go 时间差对象格式化为 X小时X分X秒 格式
 func formatBuiltinDuration(d time.Duration) string {
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	s := int(d.Seconds()) % 60
-	if h > 0 {
-		return fmt.Sprintf("%02d小时%02d分%02d秒", h, m, s)
-	}
-	return fmt.Sprintf("%02d分%02d秒", m, s)
+	return recorder.FormatDuration(d)
 }
 
 // getBuiltinDirSizeStr 遍历并计算指定保存目录的总物理文件大小
@@ -717,16 +694,7 @@ func getBuiltinDirSizeStr(path string) string {
 
 // formatBuiltinBytes 将庞大的字节数据格式化为易读的 KB/MB/GB 规格字符串
 func formatBuiltinBytes(b int64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.2f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+	return recorder.FormatBytes(b)
 }
 
 // formatBuiltinQualityName 映射配置内的画质代码为前端直接展示的中文名称
@@ -2234,24 +2202,7 @@ func normalizeFFmpegFontColor(c string) string {
 
 // findBuiltinFontPath 按可执行文件目录 → 工作目录的顺序寻找中文字体
 func findBuiltinFontPath() string {
-	names := []string{"font.ttf", "FZSTK.TTF", "msyh.ttf", "simhei.ttf"}
-	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		for _, n := range names {
-			p := filepath.Join(dir, n)
-			if _, err := os.Stat(p); err == nil {
-				return p
-			}
-		}
-	}
-	for _, n := range names {
-		if abs, err := filepath.Abs(n); err == nil {
-			if _, err := os.Stat(abs); err == nil {
-				return abs
-			}
-		}
-	}
-	return ""
+	return recorder.FindFontPath()
 }
 
 // buildBuiltinWatermarkText 组装「前缀（默认主播名）+ 动态时间」水印文本
@@ -2259,21 +2210,20 @@ func buildBuiltinWatermarkText(anchorName string) string {
 	if builtinConfig == nil {
 		return strings.TrimSpace(anchorName)
 	}
-	formatStr := strings.ReplaceAll(builtinConfig.WatermarkFormat, "'", "")
-	textStr := strings.ReplaceAll(builtinConfig.WatermarkText, "'", "")
-	if strings.TrimSpace(textStr) == "" {
-		textStr = strings.ReplaceAll(anchorName, "'", "")
+	return recorder.BuildWatermarkText(watermarkStyleFromConfig(), anchorName)
+}
+
+func watermarkStyleFromConfig() recorder.WatermarkStyle {
+	if builtinConfig == nil {
+		return recorder.WatermarkStyle{Format: "%Y-%m-%d %H:%M:%S", Position: "bottom-right", FontSize: 38, FontColor: "white@0.95"}
 	}
-	if formatStr == "" {
-		formatStr = "%Y-%m-%d %H:%M:%S"
-	}
-	// 转义冒号，防止 drawtext 参数解析器误切
-	formatStr = strings.ReplaceAll(formatStr, ":", "\\:")
-	fullText := strings.TrimSpace(textStr)
-	if fullText != "" {
-		fullText += " "
-	}
-	return fullText + "%{localtime:" + formatStr + "}"
+	return recorder.StyleFrom(
+		builtinConfig.WatermarkText,
+		builtinConfig.WatermarkFormat,
+		builtinConfig.WatermarkPosition,
+		builtinConfig.WatermarkFontColor,
+		builtinConfig.WatermarkFontSize,
+	)
 }
 
 // builtinDrawtextPosStr 根据配置返回九宫格坐标
@@ -2281,18 +2231,7 @@ func builtinDrawtextPosStr() string {
 	if builtinConfig == nil {
 		return "x=w-tw-20:y=h-th-20"
 	}
-	switch builtinConfig.WatermarkPosition {
-	case "top-left":
-		return "x=20:y=20"
-	case "top-right":
-		return "x=w-tw-20:y=20"
-	case "bottom-left":
-		return "x=20:y=h-th-20"
-	case "bottom-right", "":
-		return "x=w-tw-20:y=h-th-20"
-	default:
-		return "x=w-tw-20:y=h-th-20"
-	}
+	return recorder.DrawtextPos(builtinConfig.WatermarkPosition)
 }
 
 // prepareBuiltinDrawtextFilter 生成 drawtext 滤镜串，并落盘临时 textfile。
@@ -2301,26 +2240,7 @@ func prepareBuiltinDrawtextFilter(anchorName, tag string) (filter string, textFi
 	if builtinConfig == nil {
 		return "", "", fmt.Errorf("builtinConfig 未初始化")
 	}
-	fontPath := findBuiltinFontPath()
-	if fontPath == "" {
-		return "", "", fmt.Errorf("未找到可用中文字体 (font.ttf)")
-	}
-	fullText := buildBuiltinWatermarkText(anchorName)
-	textFileName := fmt.Sprintf("wm_%s_%d.txt", tag, time.Now().UnixNano())
-	absTextFile, _ := filepath.Abs(textFileName)
-	if werr := os.WriteFile(absTextFile, []byte(fullText), 0644); werr != nil {
-		return "", "", werr
-	}
-	fontSize := builtinConfig.WatermarkFontSize
-	if fontSize <= 0 {
-		fontSize = 38
-	}
-	fontColor := normalizeFFmpegFontColor(builtinConfig.WatermarkFontColor)
-	filter = fmt.Sprintf(
-		"drawtext=fontfile='%s':textfile='%s':fontcolor=%s:fontsize=%d:borderw=2:bordercolor=black@0.75:shadowcolor=black@0.5:shadowx=3:shadowy=3:%s",
-		fontPath, absTextFile, fontColor, fontSize, builtinDrawtextPosStr(),
-	)
-	return filter, absTextFile, nil
+	return recorder.PrepareDrawtextFilter(watermarkStyleFromConfig(), anchorName, tag)
 }
 
 // BuiltinRecordStream 调动底层 FFmpeg 进程并将推流直通本地文件，增加了高度强化的上下文状态管控防止僵尸进程

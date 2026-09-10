@@ -700,21 +700,8 @@ func handleFile(path string) {
 		return
 	}
 
-	dir := filepath.Dir(rel)
-
-	// 过滤文件夹路径中的非法前缀，防止生成类似 `_safe_uploads/-可奈` 这种导致 500 的非法云端目录
-	dirParts := strings.Split(filepath.ToSlash(dir), "/")
-	for i, part := range dirParts {
-		cleanPart := strings.TrimLeft(part, "-_.")
-		if cleanPart == "" {
-			cleanPart = "streamer_dir"
-		}
-		dirParts[i] = cleanPart
-	}
-	cleanDir := strings.Join(dirParts, "/")
-
 	name := naming.CleanFileName(filepath.Base(rel))
-	remote := filepath.ToSlash(filepath.Join(safeBaseDir, cleanDir, name))
+	remote := naming.BuildRemotePath(safeBaseDir, filepath.Dir(rel), filepath.Base(rel))
 
 	// 检测秒传机制 (Hash)
 	hash := hashstore.FileHash(path)
@@ -1257,19 +1244,7 @@ func login() error {
 
 // detectRoot 提供针对底层物理目录映射的反推机制从而确定文件属主节点
 func detectRoot(path string) string {
-	path = filepath.Clean(path)
-
-	currentDirs := make([]string, len(appCfg().Dirs))
-	copy(currentDirs, appCfg().Dirs)
-
-	for _, d := range currentDirs {
-		root := filepath.Clean(strings.TrimSpace(d))
-		rel, err := filepath.Rel(root, path)
-		if err == nil && !strings.HasPrefix(rel, "..") {
-			return root
-		}
-	}
-	return ""
+	return naming.DetectRoot(path, appCfg().Dirs)
 }
 
 // addLog 作为业务和展示系统隔离的桥梁，负责筛选后将指定等级事件装箱并经加密投递到浏览器
