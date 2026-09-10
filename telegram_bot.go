@@ -38,9 +38,7 @@ var (
 // 职责：注入防假死网络客户端，读取全局配置，建立长连接。增加独立守护协程与指数退避重连机制，彻底解决系统启动时断网导致的失效问题。
 func InitTelegramBot() {
 	log.Println("[TG-BOT] 🚀 开始初始化 Telegram 引擎...")
-	appConfigMu.RLock()
-	token := appConfig.TelegramToken
-	appConfigMu.RUnlock()
+	token := appCfg().TelegramToken
 
 	if token == "" {
 		log.Println("[TG-BOT] ⚠️ 未配置 Telegram Token，已跳过机器人初始化")
@@ -162,9 +160,7 @@ func startTelegramListener() {
 				// 网络通信健康，重置退避时间
 				backoff = 2 * time.Second
 
-				appConfigMu.RLock()
-				allowedChatID := appConfig.TelegramChatID
-				appConfigMu.RUnlock()
+				allowedChatID := appCfg().TelegramChatID
 
 				if update.CallbackQuery != nil {
 					if allowedChatID != 0 && update.CallbackQuery.Message.Chat.ID != allowedChatID {
@@ -1109,9 +1105,7 @@ func SendTelegramNotification(title, body string) {
 		return
 	}
 
-	appConfigMu.RLock()
-	chatID := appConfig.TelegramChatID
-	appConfigMu.RUnlock()
+	chatID := appCfg().TelegramChatID
 
 	if chatID == 0 {
 		return
@@ -1235,7 +1229,7 @@ func tgHandleList(chatID int64) string {
 	var onlineTasks []BuiltinTaskStatus
 
 	for _, t := range tasks {
-		if t.Status == "录制中" {
+		if isBuiltinLiveStatus(t.Status) {
 			onlineTasks = append(onlineTasks, t)
 		}
 	}
@@ -1337,11 +1331,11 @@ func tgHandleAdd(rawArgs string) string {
 			}
 		}
 
-		isP, platformName, roomID, customName, rawURL := parseBuiltinLine(line)
+		isP, platformName, roomID, customName, rawURL, _ := parseBuiltinLine(line)
 		if roomID == "" || platformName == "" {
 			urlRe := regexp.MustCompile(`https?://[^\s,]+`)
 			if found := urlRe.FindString(line); found != "" {
-				isP, platformName, roomID, customName, rawURL = parseBuiltinLine(found)
+				isP, platformName, roomID, customName, rawURL, _ = parseBuiltinLine(found)
 			}
 		}
 
@@ -1406,14 +1400,12 @@ func tgHandleLog(chatID int64) string {
 		var buf bytes.Buffer
 		buf.Grow(1024 * 1024)
 
-		logsMu.RLock()
-		for _, entry := range logs {
+		for _, entry := range appLogs.SnapshotAsc("", "") {
 			buf.WriteString(fmt.Sprintf("[%s] [%s] %s\n", entry.Time, entry.Level, entry.Message))
 			if entry.Error != "" {
 				buf.WriteString(fmt.Sprintf("  Error: %s\n", entry.Error))
 			}
 		}
-		logsMu.RUnlock()
 
 		if buf.Len() == 0 {
 			splitAndSendTelegramMsg(chatID, "📭 当前内存中没有任何系统日志数据。")
@@ -1482,12 +1474,8 @@ func tgHandleStatus() string {
 	// ✨ 动态计算今日上传流量 (读取内存中的 O(1) 增量统计池)
 	todayStr := time.Now().Format("01-02")
 	var todayTrafficBytes int64 = 0
-	if val, exists := trendStats.Load(todayStr); exists {
-		tp := val.(*TrendPoint)
-		tp.Mu.Lock()
-		// 由于主系统在追加写入时已转换为了 GB (除以了三次 1024)，此处逆向还原为 Byte 方便复用现成的高级格式化函数
-		todayTrafficBytes = int64(tp.Size * 1024 * 1024 * 1024)
-		tp.Mu.Unlock()
+	if sizeGB, _, ok := successStore.TrendByDate(todayStr); ok {
+		todayTrafficBytes = int64(sizeGB * 1024 * 1024 * 1024)
 	}
 
 	var sb strings.Builder

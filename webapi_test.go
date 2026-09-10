@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"upload/internal/uploader"
 )
 
 // TestEncryptDecryptPayload 测试核心的 AES-GCM 动态加密与解密流程。
@@ -57,11 +59,10 @@ func TestEncryptDecryptPayload(t *testing.T) {
 	}
 }
 
-// TestRestoreQueueCounts 测试基于无锁化 sync.Map 和 atomic 的队列计数器恢复逻辑。
-// 验证在系统发生热重载或崩溃恢复时，能否精确、无遗漏地统计算出当前所有队列的任务积压量。
+// TestRestoreQueueCounts 测试基于 internal/uploader 队列与 atomic 的计数器恢复逻辑。
 func TestRestoreQueueCounts(t *testing.T) {
 	// 清理全局状态，防止其他测试的脏数据干扰
-	enqueuedFiles = sync.Map{}
+	taskQueue = uploader.NewQueue(100)
 	queueUploading = sync.Map{}
 	queueSuccess = sync.Map{}
 	queueFail = sync.Map{}
@@ -74,7 +75,7 @@ func TestRestoreQueueCounts(t *testing.T) {
 
 	// 模拟造数据：5个等待，2个上传中，10个成功，3个失败
 	for i := 0; i < 5; i++ {
-		enqueuedFiles.Store(i, true)
+		taskQueue.Enqueue("/wait/" + string(rune('a'+i)))
 	}
 	for i := 0; i < 2; i++ {
 		queueUploading.Store(i, true)
@@ -111,15 +112,13 @@ func TestRestoreQueueCounts(t *testing.T) {
 // 使用 httptest.NewRecorder 直接在内存中模拟 HTTP 请求，免去绑定端口带来的网络开销。
 func TestHandleStatus(t *testing.T) {
 	// 初始化必要的配置项，避免空指针
-	appConfigMu.Lock()
-	appConfig = Config{
+	cfgStore.Replace(Config{
 		ScanInterval: 60,
 		Workers:      4,
 		DayRate:      1024,
 		NightRate:    2048,
 		Dirs:         []string{"./test_dir"},
-	}
-	appConfigMu.Unlock()
+	})
 
 	sysStatsMu.Lock()
 	cachedDiskFree = 1024 * 1024 * 1024 * 50 // 50GB

@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"upload/internal/config"
 )
 
 // TestConcurrentStateMutations 启动混沌测试引擎。
@@ -38,15 +40,10 @@ func TestConcurrentStateMutations(t *testing.T) {
 					)
 
 					// 2. 疯狂推送并发日志
-					select {
-					case logChan <- &LogEntry{Time: time.Now().Format(time.RFC3339), Level: "INFO", Message: "Chaos Test"}:
-					default:
-					}
+					appLogs.Add("INFO", "Chaos Test", "")
 
 					// 3. 疯狂更替热重载配置
-					appConfigMu.Lock()
-					appConfig.Workers = counter % 10
-					appConfigMu.Unlock()
+					cfgStore.Update(func(c *config.Config) { c.Workers = counter%10 + 1 })
 
 					counter++
 				}
@@ -69,9 +66,7 @@ func TestConcurrentStateMutations(t *testing.T) {
 					_ = GetBuiltinRecorderTasks()
 
 					// 2. 疯狂读取全局配置
-					appConfigMu.RLock()
-					_ = appConfig.Workers
-					appConfigMu.RUnlock()
+					_ = appCfg().Workers
 
 					// 3. 疯狂调用构建数据宽表 (内部包含大量锁获取操作)
 					_ = buildStatusData()

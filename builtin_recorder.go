@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp" // ✨ 引入无头浏览器库
+
+	"upload/internal/recorder"
 )
 
 // ==========================================
@@ -94,8 +96,39 @@ type BuiltinTaskStatus struct {
 	IsPaused   bool   `json:"is_paused"`
 	FileSize   string `json:"file_size"`
 	Duration   string `json:"duration"`
+	Record     bool   `json:"record"`
+	Screenshot bool   `json:"screenshot"`
 
 	startTime time.Time `json:"-"`
+}
+
+// BuiltinTaskFlags 单主播「录屏 / 截屏」独立开关（实现见 internal/recorder）
+type BuiltinTaskFlags = recorder.TaskFlags
+
+func defaultBuiltinTaskFlags() BuiltinTaskFlags {
+	return recorder.DefaultFlags()
+}
+
+// isBuiltinLiveStatus 判定任务是否处于“已接管推流”的活跃状态（录屏或截屏中）
+func isBuiltinLiveStatus(s string) bool {
+	return recorder.IsLiveStatus(s)
+}
+
+func builtinFlagsKey(platform, roomID string) string {
+	return platform + "_" + roomID
+}
+
+func getBuiltinTaskFlags(platform, roomID string) BuiltinTaskFlags {
+	if v, ok := builtinTaskFlags.Load(builtinFlagsKey(platform, roomID)); ok {
+		if f, ok := v.(BuiltinTaskFlags); ok {
+			return f
+		}
+	}
+	return defaultBuiltinTaskFlags()
+}
+
+func setBuiltinTaskFlags(platform, roomID string, f BuiltinTaskFlags) {
+	builtinTaskFlags.Store(builtinFlagsKey(platform, roomID), f)
 }
 
 var (
@@ -108,6 +141,7 @@ var (
 	builtinTaskStates  sync.Map // key: platform_roomID, value: "running", "paused", "deleted"
 	builtinCancels     sync.Map // key: platform_roomID, value: context.CancelFunc
 	builtinCustomNames sync.Map // 内存中保存的自定义名称 (由 txt 提供)
+	builtinTaskFlags   sync.Map // key: platform_roomID, value: BuiltinTaskFlags
 
 	// ✨ 添加全局防抖缓冲池：彻底消除由于网络颠簸引起的 FFmpeg 开播/下播反复横跳现象
 	builtinNotifyDebounce sync.Map
@@ -120,16 +154,17 @@ var builtinAnchorLinesMutex sync.Mutex
 
 // BuiltinConfig 存储内置录制引擎的所有核心配置参数，新增了字体大小和颜色的动态控制
 type BuiltinConfig struct {
-	Quality            string `json:"quality"`
-	SegmentTime        int    `json:"segment_time"`
-	CheckInterval      int    `json:"check_interval"`
-	SavePath           string `json:"save_path"`
-	WatermarkEnable    bool   `json:"watermark_enable"`
-	WatermarkText      string `json:"watermark_text"`
-	WatermarkFormat    string `json:"watermark_format"`
-	WatermarkPosition  string `json:"watermark_position"`
-	WatermarkFontSize  int    `json:"watermark_font_size"`  // ✨ 新增：动态控制字体大小
-	WatermarkFontColor string `json:"watermark_font_color"` // ✨ 新增：动态控制字体颜色，支持 alpha 通道透视
+	Quality              string `json:"quality"`
+	SegmentTime          int    `json:"segment_time"`
+	CheckInterval        int    `json:"check_interval"`
+	SavePath             string `json:"save_path"`
+	WatermarkEnable      bool   `json:"watermark_enable"`       // 截图水印
+	VideoWatermarkEnable bool   `json:"video_watermark_enable"` // 视频烧录水印（需重编码）
+	WatermarkText        string `json:"watermark_text"`
+	WatermarkFormat      string `json:"watermark_format"`
+	WatermarkPosition    string `json:"watermark_position"`
+	WatermarkFontSize    int    `json:"watermark_font_size"`
+	WatermarkFontColor   string `json:"watermark_font_color"`
 }
 
 // BuiltinCookieConfig 定义了多平台防爬虫所需挂载的鉴权会话
@@ -195,8 +230,8 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 		// ✨ 修复核心：默认继承上一次的 startTime，防止其他非录制状态将其重置为零值
 		sTime = oldTask.startTime
 
-		if statusMsg == "录制中" {
-			if oldTask.Status != "录制中" {
+		if isBuiltinLiveStatus(statusMsg) {
+			if !isBuiltinLiveStatus(oldTask.Status) {
 				// ✨ 防抖判定：确保两次相同的【开播通知】之间至少缓冲 3 分钟，否则静默恢复时间戳
 				cacheKey := "live_" + key
 				if last, has := builtinNotifyDebounce.Load(cacheKey); !has || time.Since(last.(time.Time)) > 3*time.Minute {
@@ -211,7 +246,7 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 				sTime = oldTask.startTime
 			}
 		} else if statusMsg == "未开播等待中" || statusMsg == "断流缓冲中" || statusMsg == "已暂停" {
-			if oldTask.Status == "录制中" {
+			if isBuiltinLiveStatus(oldTask.Status) {
 				// ✨ 防抖判定：防下播通知连发
 				cacheKey := "offline_" + key
 				if last, has := builtinNotifyDebounce.Load(cacheKey); !has || time.Since(last.(time.Time)) > 3*time.Minute {
@@ -221,7 +256,7 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 			}
 		}
 	} else {
-		if statusMsg == "录制中" {
+		if isBuiltinLiveStatus(statusMsg) {
 			sTime = now
 			isNewlyRecording = true
 			builtinNotifyDebounce.Store("live_"+key, now)
@@ -240,6 +275,7 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 	}
 
 	// 整体覆盖指针，不存在内部并发修改的脏数据竞争问题
+	taskFlags := getBuiltinTaskFlags(platform, roomID)
 	builtinStatusMap.Store(key, &BuiltinTaskStatus{
 		Platform:   platform,
 		RoomID:     roomID,
@@ -249,6 +285,8 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 		Status:     statusMsg,
 		UpdateTime: time.Now().Format("2006-01-02 15:04:05"),
 		IsPaused:   isPaused,
+		Record:     taskFlags.Record,
+		Screenshot: taskFlags.Screenshot,
 		startTime:  sTime,
 	})
 
@@ -279,16 +317,17 @@ func updateBuiltinNameInTxt(platform, roomID, anchorName string) {
 		if trimmed == "" {
 			continue
 		}
-		isP, p, rid, customName, rawURL := parseBuiltinLine(trimmed)
+		isP, p, rid, customName, rawURL, _ := parseBuiltinLine(trimmed)
 		if p == platform && rid == roomID {
 			if customName != anchorName && anchorName != "" && anchorName != roomID {
+				curFlags := getBuiltinTaskFlags(p, rid)
 				prefix := ""
 				if isP {
 					prefix = "#"
 				}
 				safeName := strings.ReplaceAll(anchorName, "\n", "")
 				safeName = strings.ReplaceAll(safeName, "\r", "")
-				lines[i] = fmt.Sprintf("%s%s,主播:%s", prefix, rawURL, safeName)
+				lines[i] = rebuildBuiltinLineWithFlags(fmt.Sprintf("%s%s,主播:%s", prefix, rawURL, safeName), curFlags)
 				changed = true
 			}
 		}
@@ -330,12 +369,13 @@ func builtinHotReloadLoop() {
 			stateChanged := false
 
 			for _, line := range lines {
-				isPaused, platformName, roomID, customName, _ := parseBuiltinLine(line)
+				isPaused, platformName, roomID, customName, _, flags := parseBuiltinLine(line)
 				if roomID == "" || platformName == "" {
 					continue
 				}
 				key := platformName + "_" + roomID
 				currentKeys[key] = true
+				setBuiltinTaskFlags(platformName, roomID, flags)
 
 				if customName != "" {
 					builtinCustomNames.Store(key, customName)
@@ -494,11 +534,12 @@ func InitBuiltinRecorder(mux *http.ServeMux) {
 		content, _ := os.ReadFile("builtin_urls.txt")
 		lines := strings.Split(string(content), "\n")
 		for _, line := range lines {
-			isPaused, platform, roomID, customName, _ := parseBuiltinLine(line)
+			isPaused, platform, roomID, customName, _, flags := parseBuiltinLine(line)
 			if roomID == "" || platform == "" {
 				continue
 			}
 			key := platform + "_" + roomID
+			setBuiltinTaskFlags(platform, roomID, flags)
 			if customName != "" {
 				builtinCustomNames.Store(key, customName)
 			}
@@ -556,11 +597,15 @@ func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 	var list []BuiltinTaskStatus
 	builtinStatusMap.Range(func(key, value interface{}) bool {
 		task := *value.(*BuiltinTaskStatus) // 安全提取切片
-		if task.Status == "录制中" && !task.startTime.IsZero() {
+		if isBuiltinLiveStatus(task.Status) && !task.startTime.IsZero() {
 			task.Duration = formatBuiltinDuration(time.Since(task.startTime))
 		} else {
 			task.Duration = "-"
 		}
+		// 同步最新开关，避免 status 快照过期
+		f := getBuiltinTaskFlags(task.Platform, task.RoomID)
+		task.Record = f.Record
+		task.Screenshot = f.Screenshot
 		safeName := sanitizeBuiltinFileName(task.AnchorName)
 		if safeName == "" {
 			safeName = task.RoomID
@@ -613,25 +658,7 @@ func checkFFmpegBuiltin() {
 
 // extractBuiltinRoomID 从各类直播间 URL 中提取出统一格式的纯净房间 ID
 func extractBuiltinRoomID(input string) string {
-	input = strings.TrimSpace(input)
-	if strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://") {
-		u, err := url.Parse(input)
-		if err == nil {
-			path := strings.Trim(u.Path, "/")
-			segments := strings.Split(path, "/")
-
-			if strings.Contains(u.Host, "sooplive.co.kr") || strings.Contains(u.Host, "afreecatv.com") || strings.Contains(u.Host, "sooplive.com") {
-				if len(segments) > 0 {
-					return segments[0]
-				}
-			}
-
-			if len(segments) > 0 {
-				return segments[len(segments)-1]
-			}
-		}
-	}
-	return input
+	return recorder.ExtractRoomID(input)
 }
 
 // sanitizeBuiltinFileName 清洗并规范化主播名称，剔除非法及容易导致操作异常的特殊字符
@@ -716,41 +743,14 @@ func formatBuiltinQualityName(quality string) string {
 	}
 }
 
-// parseBuiltinLine 分析本地监控的行数据，提炼平台归属、房间ID及自定义备注名
-func parseBuiltinLine(line string) (isPaused bool, platform string, roomID string, customName string, rawURL string) {
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return
-	}
+// parseBuiltinLine 分析本地监控的行数据（委托 internal/recorder）
+func parseBuiltinLine(line string) (isPaused bool, platform string, roomID string, customName string, rawURL string, flags BuiltinTaskFlags) {
+	return recorder.ParseLine(line)
+}
 
-	if strings.HasPrefix(line, "#") {
-		isPaused = true
-		line = strings.TrimSpace(strings.TrimPrefix(line, "#"))
-	}
-
-	if idx := strings.Index(line, ",主播:"); idx != -1 {
-		customName = strings.TrimSpace(line[idx+len(",主播:"):])
-		rawURL = strings.TrimSpace(line[:idx])
-	} else if idx := strings.Index(line, ", 主播:"); idx != -1 {
-		customName = strings.TrimSpace(line[idx+len(", 主播:"):])
-		rawURL = strings.TrimSpace(line[:idx])
-	} else if idx := strings.Index(line, ","); idx != -1 {
-		customName = strings.TrimSpace(line[idx+1:])
-		rawURL = strings.TrimSpace(line[:idx])
-	} else {
-		rawURL = line
-	}
-
-	if strings.Contains(rawURL, "douyin.com") || strings.Contains(rawURL, "amemv.com") || strings.Contains(rawURL, "iesdouyin.com") || strings.Contains(rawURL, "douyin") {
-		platform = "Douyin"
-	} else if strings.Contains(rawURL, "kuaishou.com") || strings.Contains(rawURL, "chenzhongtech.com") {
-		platform = "Kuaishou"
-	} else if strings.Contains(rawURL, "sooplive.co.kr") || strings.Contains(rawURL, "afreecatv.com") || strings.Contains(rawURL, "sooplive.com") {
-		platform = "Soop"
-	}
-
-	roomID = extractBuiltinRoomID(rawURL)
-	return
+// rebuildBuiltinLineWithFlags 在名单行上写回/更新录屏截屏后缀
+func rebuildBuiltinLineWithFlags(trimmedLine string, flags BuiltinTaskFlags) string {
+	return recorder.RebuildLineWithFlags(trimmedLine, flags)
 }
 
 // syncBuiltinAnchorToTxt 依据前端指令对本地配置文件里的内容作增、删、改并落地
@@ -773,14 +773,18 @@ func syncBuiltinAnchorToTxt(action string, platform, roomID string, rawLine stri
 			continue
 		}
 
-		isP, p, rid, _, _ := parseBuiltinLine(trimmed)
+		isP, p, rid, _, _, curFlags := parseBuiltinLine(trimmed)
 		if p == platform && rid == roomID {
 			found = true
 			if action == "delete" {
 				continue
 			} else if action == "pause" {
 				if !isP {
-					newLines = append(newLines, "#"+trimmed)
+					newLines = append(newLines, rebuildBuiltinLineWithFlags(trimmed, curFlags))
+					// rebuild 已保留 #；若原本未暂停需补上
+					if !strings.HasPrefix(newLines[len(newLines)-1], "#") {
+						newLines[len(newLines)-1] = "#" + newLines[len(newLines)-1]
+					}
 				} else {
 					newLines = append(newLines, trimmed)
 				}
@@ -801,6 +805,36 @@ func syncBuiltinAnchorToTxt(action string, platform, roomID string, rawLine stri
 	}
 
 	os.WriteFile("builtin_urls.txt", []byte(strings.Join(newLines, "\n")+"\n"), 0644)
+}
+
+// persistBuiltinFlagsToTxt 将单主播录屏/截屏开关写回 builtin_urls.txt
+func persistBuiltinFlagsToTxt(platform, roomID string, flags BuiltinTaskFlags) {
+	builtinAnchorLinesMutex.Lock()
+	defer builtinAnchorLinesMutex.Unlock()
+
+	content, err := os.ReadFile("builtin_urls.txt")
+	if err != nil {
+		return
+	}
+	lines := strings.Split(string(content), "\n")
+	changed := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		_, p, rid, _, _, _ := parseBuiltinLine(trimmed)
+		if p == platform && rid == roomID {
+			updated := rebuildBuiltinLineWithFlags(trimmed, flags)
+			if updated != trimmed {
+				lines[i] = updated
+				changed = true
+			}
+		}
+	}
+	if changed {
+		_ = os.WriteFile("builtin_urls.txt", []byte(strings.Join(lines, "\n")+"\n"), 0644)
+	}
 }
 
 // ==========================================
@@ -2059,76 +2093,76 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string)
 		// 1. 获取当前可执行文件的路径
 		exePath, err := os.Executable()
 		if err != nil {
-			log.Fatal(err)
-		}
-		// 2. 获取可执行文件所在目录
-		exeDir := filepath.Dir(exePath)
-		// 3. 拼接出字体文件的完整路径（跨平台分隔符）
-		fontPath := filepath.Join(exeDir, "font.ttf")
-		//fontPath := "/home/upload/font.ttf"
-
-		// 校验字体文件状态
-		if _, err := os.Stat(fontPath); os.IsNotExist(err) {
-			log.Printf("[BUILTIN] ⚠️ 警告：开启了截图水印，但未找到物理字体文件 %s！", fontPath)
+			// 修复：不再 log.Fatal 杀掉整个进程，仅跳过水印继续抽帧
+			log.Printf("[BUILTIN] ⚠️ 无法定位可执行文件路径，跳过水印: %v", err)
 		} else {
-			// 剥离所有的单引号，保持纯净文本
-			formatStr := strings.ReplaceAll(builtinConfig.WatermarkFormat, "'", "")
-			textStr := strings.ReplaceAll(builtinConfig.WatermarkText, "'", "")
+			// 2. 获取可执行文件所在目录
+			exeDir := filepath.Dir(exePath)
+			// 3. 拼接出字体文件的完整路径（跨平台分隔符）
+			fontPath := filepath.Join(exeDir, "font.ttf")
+			//fontPath := "/home/upload/font.ttf"
 
-			// ✨ 核心功能追加：如果未设置水印文本，则智能降级将主播名字作为水印
-			if strings.TrimSpace(textStr) == "" {
-				textStr = strings.ReplaceAll(anchorName, "'", "")
-			}
-
-			// 【终极修复】：将时间格式中的冒号强制转义为 \:，防止 FFmpeg 的动态宏解析器误判参数数量
-			formatStr = strings.ReplaceAll(formatStr, ":", "\\:")
-
-			fullText := textStr
-			if fullText != "" {
-				fullText += " "
-			}
-			// 拼接动态时间宏，现在时间格式里的冒号已经被转义了
-			fullText += "%{localtime:" + formatStr + "}"
-
-			// 核心终极修复 1：将相对路径转为绝对路径，防止底层 FFmpeg 进程工作目录不一致导致找不到文件
-			textFileName := fmt.Sprintf("wm_%d.txt", time.Now().UnixNano())
-			absTextFileName, _ := filepath.Abs(textFileName)
-
-			// 核心终极修复 2：写入临时文件并确保其在 FFmpeg 执行完毕后销毁
-			if err := os.WriteFile(absTextFileName, []byte(fullText), 0644); err == nil {
-				defer os.Remove(absTextFileName)
-
-				// 解析水印的九宫格坐标方位
-				var posStr string
-				switch builtinConfig.WatermarkPosition {
-				case "top-left":
-					posStr = "x=20:y=20"
-				case "top-right":
-					posStr = "x=w-tw-20:y=20"
-				case "bottom-left":
-					posStr = "x=20:y=h-th-20"
-				case "bottom-right":
-					posStr = "x=w-tw-20:y=h-th-20"
-				default:
-					posStr = "x=w-tw-20:y=h-th-20" // 默认右下角
-				}
-
-				// ✨ 动态提取用户配置的字体大小和颜色（并设置默认安全回退值）
-				fontSize := builtinConfig.WatermarkFontSize
-				if fontSize <= 0 {
-					fontSize = 38
-				}
-				fontColor := builtinConfig.WatermarkFontColor
-				if fontColor == "" {
-					fontColor = "white@0.95"
-				}
-
-				// 核心终极修复 3：动态注入用户配置的字号与颜色，并融合电影级字幕特效投影
-				drawtext := fmt.Sprintf("drawtext=fontfile='%s':textfile='%s':fontcolor=%s:fontsize=%d:borderw=2:bordercolor=black@0.75:shadowcolor=black@0.5:shadowx=3:shadowy=3:%s", fontPath, absTextFileName, fontColor, fontSize, posStr)
-				vfFilter += "," + drawtext
-
+			// 校验字体文件状态
+			if _, err := os.Stat(fontPath); os.IsNotExist(err) {
+				log.Printf("[BUILTIN] ⚠️ 警告：开启了截图水印，但未找到物理字体文件 %s！", fontPath)
 			} else {
-				log.Printf("[BUILTIN] ⚠️ 水印临时文件写入失败，将跳过水印生成: %v", err)
+				// 剥离所有的单引号，保持纯净文本
+				formatStr := strings.ReplaceAll(builtinConfig.WatermarkFormat, "'", "")
+				textStr := strings.ReplaceAll(builtinConfig.WatermarkText, "'", "")
+
+				// ✨ 核心功能追加：如果未设置水印文本，则智能降级将主播名字作为水印
+				if strings.TrimSpace(textStr) == "" {
+					textStr = strings.ReplaceAll(anchorName, "'", "")
+				}
+
+				// 【终极修复】：将时间格式中的冒号强制转义为 \:，防止 FFmpeg 的动态宏解析器误判参数数量
+				formatStr = strings.ReplaceAll(formatStr, ":", "\\:")
+
+				fullText := textStr
+				if fullText != "" {
+					fullText += " "
+				}
+				// 拼接动态时间宏，现在时间格式里的冒号已经被转义了
+				fullText += "%{localtime:" + formatStr + "}"
+
+				// 核心终极修复 1：将相对路径转为绝对路径，防止底层 FFmpeg 进程工作目录不一致导致找不到文件
+				textFileName := fmt.Sprintf("wm_%d.txt", time.Now().UnixNano())
+				absTextFileName, _ := filepath.Abs(textFileName)
+
+				// 核心终极修复 2：写入临时文件并确保其在 FFmpeg 执行完毕后销毁
+				if err := os.WriteFile(absTextFileName, []byte(fullText), 0644); err == nil {
+					defer os.Remove(absTextFileName)
+
+					// 解析水印的九宫格坐标方位
+					var posStr string
+					switch builtinConfig.WatermarkPosition {
+					case "top-left":
+						posStr = "x=20:y=20"
+					case "top-right":
+						posStr = "x=w-tw-20:y=20"
+					case "bottom-left":
+						posStr = "x=20:y=h-th-20"
+					case "bottom-right":
+						posStr = "x=w-tw-20:y=h-th-20"
+					default:
+						posStr = "x=w-tw-20:y=h-th-20" // 默认右下角
+					}
+
+					// ✨ 动态提取用户配置的字体大小和颜色（并设置默认安全回退值）
+					fontSize := builtinConfig.WatermarkFontSize
+					if fontSize <= 0 {
+						fontSize = 38
+					}
+					// 修复：前端 #RRGGBBAA 需归一为 FFmpeg 的 0xRRGGBBAA
+					fontColor := normalizeFFmpegFontColor(builtinConfig.WatermarkFontColor)
+
+					// 核心终极修复 3：动态注入用户配置的字号与颜色，并融合电影级字幕特效投影
+					drawtext := fmt.Sprintf("drawtext=fontfile='%s':textfile='%s':fontcolor=%s:fontsize=%d:borderw=2:bordercolor=black@0.75:shadowcolor=black@0.5:shadowx=3:shadowy=3:%s", fontPath, absTextFileName, fontColor, fontSize, posStr)
+					vfFilter += "," + drawtext
+
+				} else {
+					log.Printf("[BUILTIN] ⚠️ 水印临时文件写入失败，将跳过水印生成: %v", err)
+				}
 			}
 		}
 	}
@@ -2186,9 +2220,129 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string)
 	return true
 }
 
+// normalizeFFmpegFontColor 将前端十六进制色（含 #RRGGBB / #RRGGBBAA）归一为 drawtext 可识别的 0x 形式
+func normalizeFFmpegFontColor(c string) string {
+	c = strings.TrimSpace(c)
+	if c == "" {
+		return "white@0.95"
+	}
+	if strings.HasPrefix(c, "#") {
+		return "0x" + strings.TrimPrefix(c, "#")
+	}
+	return c
+}
+
+// findBuiltinFontPath 按可执行文件目录 → 工作目录的顺序寻找中文字体
+func findBuiltinFontPath() string {
+	names := []string{"font.ttf", "FZSTK.TTF", "msyh.ttf", "simhei.ttf"}
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		for _, n := range names {
+			p := filepath.Join(dir, n)
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	}
+	for _, n := range names {
+		if abs, err := filepath.Abs(n); err == nil {
+			if _, err := os.Stat(abs); err == nil {
+				return abs
+			}
+		}
+	}
+	return ""
+}
+
+// buildBuiltinWatermarkText 组装「前缀（默认主播名）+ 动态时间」水印文本
+func buildBuiltinWatermarkText(anchorName string) string {
+	if builtinConfig == nil {
+		return strings.TrimSpace(anchorName)
+	}
+	formatStr := strings.ReplaceAll(builtinConfig.WatermarkFormat, "'", "")
+	textStr := strings.ReplaceAll(builtinConfig.WatermarkText, "'", "")
+	if strings.TrimSpace(textStr) == "" {
+		textStr = strings.ReplaceAll(anchorName, "'", "")
+	}
+	if formatStr == "" {
+		formatStr = "%Y-%m-%d %H:%M:%S"
+	}
+	// 转义冒号，防止 drawtext 参数解析器误切
+	formatStr = strings.ReplaceAll(formatStr, ":", "\\:")
+	fullText := strings.TrimSpace(textStr)
+	if fullText != "" {
+		fullText += " "
+	}
+	return fullText + "%{localtime:" + formatStr + "}"
+}
+
+// builtinDrawtextPosStr 根据配置返回九宫格坐标
+func builtinDrawtextPosStr() string {
+	if builtinConfig == nil {
+		return "x=w-tw-20:y=h-th-20"
+	}
+	switch builtinConfig.WatermarkPosition {
+	case "top-left":
+		return "x=20:y=20"
+	case "top-right":
+		return "x=w-tw-20:y=20"
+	case "bottom-left":
+		return "x=20:y=h-th-20"
+	case "bottom-right", "":
+		return "x=w-tw-20:y=h-th-20"
+	default:
+		return "x=w-tw-20:y=h-th-20"
+	}
+}
+
+// prepareBuiltinDrawtextFilter 生成 drawtext 滤镜串，并落盘临时 textfile。
+// 返回 filter、临时文件绝对路径（调用方负责 Remove）。
+func prepareBuiltinDrawtextFilter(anchorName, tag string) (filter string, textFile string, err error) {
+	if builtinConfig == nil {
+		return "", "", fmt.Errorf("builtinConfig 未初始化")
+	}
+	fontPath := findBuiltinFontPath()
+	if fontPath == "" {
+		return "", "", fmt.Errorf("未找到可用中文字体 (font.ttf)")
+	}
+	fullText := buildBuiltinWatermarkText(anchorName)
+	textFileName := fmt.Sprintf("wm_%s_%d.txt", tag, time.Now().UnixNano())
+	absTextFile, _ := filepath.Abs(textFileName)
+	if werr := os.WriteFile(absTextFile, []byte(fullText), 0644); werr != nil {
+		return "", "", werr
+	}
+	fontSize := builtinConfig.WatermarkFontSize
+	if fontSize <= 0 {
+		fontSize = 38
+	}
+	fontColor := normalizeFFmpegFontColor(builtinConfig.WatermarkFontColor)
+	filter = fmt.Sprintf(
+		"drawtext=fontfile='%s':textfile='%s':fontcolor=%s:fontsize=%d:borderw=2:bordercolor=black@0.75:shadowcolor=black@0.5:shadowx=3:shadowy=3:%s",
+		fontPath, absTextFile, fontColor, fontSize, builtinDrawtextPosStr(),
+	)
+	return filter, absTextFile, nil
+}
+
 // BuiltinRecordStream 调动底层 FFmpeg 进程并将推流直通本地文件，增加了高度强化的上下文状态管控防止僵尸进程
-func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, anchorName, avatar, quality string, segmentTime int) {
-	updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "录制中")
+// flags 控制本任务是否落盘录像 / 是否旁路截屏。
+func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, anchorName, avatar, quality string, segmentTime int, flags BuiltinTaskFlags) {
+	if !flags.Record && !flags.Screenshot {
+		log.Printf("⚪ [空转模式] %s | %s 录屏与截屏均已关闭，仅保持开播探测", platformName, anchorName)
+		updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "监控中")
+		// 等待 ctx 取消或短暂休眠，避免外层循环疯狂打流
+		select {
+		case <-ctx.Done():
+		case <-time.After(30 * time.Second):
+		}
+		return
+	}
+
+	statusLabel := "录制中"
+	if !flags.Record && flags.Screenshot {
+		statusLabel = "截屏中"
+	}
+	updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, statusLabel)
+
 	safeName := sanitizeBuiltinFileName(anchorName)
 	if safeName == "" {
 		safeName = roomID
@@ -2218,12 +2372,39 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 	args = append(args, "-rw_timeout", "15000000", "-analyzeduration", "5000000", "-probesize", "5000000", "-i", streamURL)
 	args = append(args, "-map", "0:v?", "-map", "0:a?", "-ignore_unknown")
 
-	if segmentTime > 0 {
+	// 仅截屏：强制短分片，抽帧后删片，磁盘不长期保留视频
+	effectiveSegment := segmentTime
+	if !flags.Record && flags.Screenshot {
+		if effectiveSegment <= 0 || effectiveSegment > 2 {
+			effectiveSegment = 2
+		}
+	}
+
+	// 视频烧录水印：开启时必须重编码（libx264），关闭则零拷贝 copy
+	useVideoWM := flags.Record && builtinConfig != nil && builtinConfig.VideoWatermarkEnable
+	var videoCodecArgs []string
+	if useVideoWM {
+		vf, textFile, werr := prepareBuiltinDrawtextFilter(anchorName, "vid")
+		if werr != nil {
+			log.Printf("[BUILTIN] ⚠️ 视频水印准备失败，回退为无水印 copy 录制: %v", werr)
+			videoCodecArgs = []string{"-c:v", "copy"}
+		} else {
+			defer os.Remove(textFile)
+			videoCodecArgs = []string{"-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23"}
+			log.Printf("   🎬 视频画面烧录水印已启用（主播/时间，需实时转码，CPU 占用会升高）")
+		}
+	} else {
+		videoCodecArgs = []string{"-c:v", "copy"}
+	}
+
+	if effectiveSegment > 0 {
 		outPath = filepath.Join(outDir, fmt.Sprintf("%s_%s_%%03d.ts", safeName, timestamp))
-		args = append(args, "-c:v", "copy", "-c:a", "copy", "-f", "segment", "-segment_time", fmt.Sprintf("%d", segmentTime*60), "-reset_timestamps", "1", outPath)
+		args = append(args, videoCodecArgs...)
+		args = append(args, "-c:a", "copy", "-f", "segment", "-segment_time", fmt.Sprintf("%d", effectiveSegment*60), "-reset_timestamps", "1", outPath)
 	} else {
 		outPath = filepath.Join(outDir, fmt.Sprintf("%s_%s.ts", safeName, timestamp))
-		args = append(args, "-c:v", "copy", "-c:a", "copy", "-f", "mpegts", outPath)
+		args = append(args, videoCodecArgs...)
+		args = append(args, "-c:a", "copy", "-f", "mpegts", outPath)
 	}
 
 	fileName := fmt.Sprintf("%s_%s.png", platformName, roomID)
@@ -2231,7 +2412,11 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 	os.MkdirAll(coverDir, os.ModePerm)
 	coverPath := filepath.Join(coverDir, fileName)
 
-	log.Printf("\n🟢 [开始录制] 平台: %s | 主播: %s | 画质: %s\n   📂 TS视频存至: %s\n   📸 旁路截图机制已启动", platformName, anchorName, formatBuiltinQualityName(quality), outPath)
+	modeDesc := fmt.Sprintf("录屏=%v 截屏=%v", flags.Record, flags.Screenshot)
+	log.Printf("\n🟢 [开始录制] 平台: %s | 主播: %s | 画质: %s | %s\n   📂 TS视频存至: %s", platformName, anchorName, formatBuiltinQualityName(quality), modeDesc, outPath)
+	if flags.Screenshot {
+		log.Printf("   📸 旁路截图机制已启动")
+	}
 
 	startTime := time.Now()
 
@@ -2258,58 +2443,65 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 
 	// 使用 WaitGroup 精确实阻塞与释放旁路抽帧子协程
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		var lastModTime time.Time
-		ticker := time.NewTicker(20 * time.Second)
-		defer ticker.Stop()
+	if flags.Screenshot {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var lastModTime time.Time
+			ticker := time.NewTicker(20 * time.Second)
+			defer ticker.Stop()
 
-		coverCount := 1
-		filePrefix := fmt.Sprintf("%s_%s", safeName, timestamp)
+			coverCount := 1
+			filePrefix := fmt.Sprintf("%s_%s", safeName, timestamp)
 
-		time.Sleep(5 * time.Second)
-		// ✨ 修改点：传入 anchorName 用于智能水印
-		extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath, anchorName)
+			time.Sleep(5 * time.Second)
+			extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath, anchorName)
 
-		for {
-			select {
-			case <-recordCtx.Done(): // 收到严格终止指令，立刻结束旁路监测
-				return
-			case <-ticker.C:
-				// ✨ 修改点：传入 anchorName 用于智能水印
-				extracted := extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath, anchorName)
+			for {
+				select {
+				case <-recordCtx.Done(): // 收到严格终止指令，立刻结束旁路监测
+					return
+				case <-ticker.C:
+					extracted := extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath, anchorName)
 
-				if extracted {
-					if info, err := os.Stat(coverPath); err == nil && info.Size() > 0 {
-						modTime := info.ModTime()
-						if modTime.After(lastModTime) {
-							lastModTime = modTime
+					if extracted {
+						if info, err := os.Stat(coverPath); err == nil && info.Size() > 0 {
+							modTime := info.ModTime()
+							if modTime.After(lastModTime) {
+								lastModTime = modTime
 
-							data, readErr := os.ReadFile(coverPath)
-							if readErr == nil && len(data) > 0 {
-								imgArchiveDir := filepath.Join(outDir, "Screenshots")
-								os.MkdirAll(imgArchiveDir, os.ModePerm)
+								data, readErr := os.ReadFile(coverPath)
+								if readErr == nil && len(data) > 0 {
+									imgArchiveDir := filepath.Join(outDir, "Screenshots")
+									os.MkdirAll(imgArchiveDir, os.ModePerm)
 
-								archiveCoverPath := filepath.Join(imgArchiveDir, fmt.Sprintf("%s_%s_cover_%04d.png", safeName, timestamp, coverCount))
-								_ = os.WriteFile(archiveCoverPath, data, 0644)
-								coverCount++
-							}
+									archiveCoverPath := filepath.Join(imgArchiveDir, fmt.Sprintf("%s_%s_cover_%04d.png", safeName, timestamp, coverCount))
+									_ = os.WriteFile(archiveCoverPath, data, 0644)
+									coverCount++
+								}
 
-							key := platformName + "_" + roomID
-							if existing, ok := builtinStatusMap.Load(key); ok {
-								// ✨ 优化：使用值拷贝更新封面时间戳，避免并发指针冲突
-								task := *(existing.(*BuiltinTaskStatus))
-								task.Avatar = fmt.Sprintf("/covers/%s?t=%d", fileName, time.Now().UnixMilli())
-								builtinStatusMap.Store(key, &task)
-								triggerBuiltinBroadcast()
+								key := platformName + "_" + roomID
+								if existing, ok := builtinStatusMap.Load(key); ok {
+									task := *(existing.(*BuiltinTaskStatus))
+									task.Avatar = fmt.Sprintf("/covers/%s?t=%d", fileName, time.Now().UnixMilli())
+									builtinStatusMap.Store(key, &task)
+									triggerBuiltinBroadcast()
+								}
+
+								// 仅截屏模式：抽帧成功后清理已冷却的临时 TS
+								if !flags.Record {
+									cleanupScreenshotTempSegments(outDir, filePrefix, false)
+								}
 							}
 						}
+					} else if !flags.Record {
+						// 抽帧失败也要清冷却片，避免整场直播堆积临时 TS
+						cleanupScreenshotTempSegments(outDir, filePrefix, false)
 					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 
 	done := make(chan error, 1)
 	go func() {
@@ -2347,12 +2539,39 @@ func BuiltinRecordStream(ctx context.Context, streamURL, platformName, roomID, a
 
 	wg.Wait() // 彻底等待旁路协程销毁
 
+	// 仅截屏：结束后强制清空本场全部残留临时 TS（含 2 分钟内的在写文件）
+	if !flags.Record {
+		cleanupScreenshotTempSegments(outDir, fmt.Sprintf("%s_%s", safeName, timestamp), true)
+	}
+
 	// 自动清理小于 1KB 的失效封面图残余
 	if info, err := os.Stat(coverPath); err == nil && info.Size() < 1024 {
 		os.Remove(coverPath)
 	}
 
 	updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "未开播等待中")
+}
+
+// cleanupScreenshotTempSegments 删除仅截屏模式下的临时 TS。
+// force=false：仅删除已冷却（>2 分钟）的分片，避免误删仍在写入的文件；
+// force=true：会话结束时强制清空该前缀下全部残留，防止泄漏。
+func cleanupScreenshotTempSegments(dir, filePrefix string, force bool) {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, f := range files {
+		if f.IsDir() || !strings.HasPrefix(f.Name(), filePrefix) || !strings.HasSuffix(f.Name(), ".ts") {
+			continue
+		}
+		if !force {
+			info, err := f.Info()
+			if err != nil || time.Since(info.ModTime()) < 2*time.Minute {
+				continue
+			}
+		}
+		_ = os.Remove(filepath.Join(dir, f.Name()))
+	}
 }
 
 // wrapperStartMonitorIfNotRunning 将单个监控目标封入守护协程，并实现任务防重载冲突及心跳检测重连功能
@@ -2422,20 +2641,34 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 				case <-t.C:
 				}
 			} else if url != "" {
-				updateBuiltinStatus(platformName, roomID, name, avatar, q, "录制中")
-
-				BuiltinRecordStream(ctx, url, platformName, roomID, name, avatar, q, st)
+				taskFlags := getBuiltinTaskFlags(platformName, roomID)
+				BuiltinRecordStream(ctx, url, platformName, roomID, name, avatar, q, st, taskFlags)
 
 				state, _ = builtinTaskStates.Load(key)
 				if state != "deleted" && state != "paused" {
-					log.Printf("⏳ [断流等待] %s %s 进入15秒冷却...", platformName, name)
-					updateBuiltinStatus(platformName, roomID, name, avatar, q, "断流缓冲中")
+					// 录屏/截屏全关时仅探测，不进入断流冷却，避免状态横跳
+					if !taskFlags.Record && !taskFlags.Screenshot {
+						sleepDur := builtinConfig.CheckInterval
+						if sleepDur < 10 {
+							sleepDur = 10
+						}
+						updateBuiltinStatus(platformName, roomID, name, avatar, q, "监控中")
+						t := time.NewTimer(time.Duration(sleepDur) * time.Second)
+						select {
+						case <-ctx.Done():
+							t.Stop()
+						case <-t.C:
+						}
+					} else {
+						log.Printf("⏳ [断流等待] %s %s 进入15秒冷却...", platformName, name)
+						updateBuiltinStatus(platformName, roomID, name, avatar, q, "断流缓冲中")
 
-					t := time.NewTimer(15 * time.Second)
-					select {
-					case <-ctx.Done():
-						t.Stop()
-					case <-t.C:
+						t := time.NewTimer(15 * time.Second)
+						select {
+						case <-ctx.Done():
+							t.Stop()
+						case <-t.C:
+						}
 					}
 				}
 			} else {
@@ -2488,6 +2721,7 @@ func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 
 		// ✨ 更新前端传来的水印参数
 		builtinConfig.WatermarkEnable = c.WatermarkEnable
+		builtinConfig.VideoWatermarkEnable = c.VideoWatermarkEnable
 		builtinConfig.WatermarkText = c.WatermarkText
 		builtinConfig.WatermarkFormat = c.WatermarkFormat
 		builtinConfig.WatermarkPosition = c.WatermarkPosition
@@ -2597,13 +2831,14 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 			fullLineToSave = line + ",主播:" + customNameFromSuffix
 		}
 
-		isP, platformName, roomID, customName, _ := parseBuiltinLine(fullLineToSave)
+		isP, platformName, roomID, customName, _, addFlags := parseBuiltinLine(fullLineToSave)
 		if roomID == "" {
 			continue
 		}
 		if platformName == "" {
 			platformName = d.Platform
 		}
+		setBuiltinTaskFlags(platformName, roomID, addFlags)
 		key := platformName + "_" + roomID
 
 		if customName != "" {
@@ -2653,12 +2888,14 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 	sendJSONSuccess(w, r, nil)
 }
 
-// apiRecorderControl 为列表里的单条项目指派状态机动作（恢复监控、挂起监控、完全剔除等）
+// apiRecorderControl 为列表里的单条项目指派状态机动作（恢复监控、挂起监控、完全剔除、设置录屏/截屏开关等）
 func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Action   string `json:"action"`
-		Platform string `json:"platform"`
-		RoomID   string `json:"room_id"`
+		Action     string `json:"action"`
+		Platform   string `json:"platform"`
+		RoomID     string `json:"room_id"`
+		Record     *bool  `json:"record"`
+		Screenshot *bool  `json:"screenshot"`
 	}
 
 	if err := parseEncryptedRequest(r, &req); err != nil {
@@ -2668,6 +2905,32 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 
 	key := req.Platform + "_" + req.RoomID
 	switch req.Action {
+	case "set_flags":
+		prev := getBuiltinTaskFlags(req.Platform, req.RoomID)
+		cur := prev
+		if req.Record != nil {
+			cur.Record = *req.Record
+		}
+		if req.Screenshot != nil {
+			cur.Screenshot = *req.Screenshot
+		}
+		changed := cur.Record != prev.Record || cur.Screenshot != prev.Screenshot
+		setBuiltinTaskFlags(req.Platform, req.RoomID, cur)
+		persistBuiltinFlagsToTxt(req.Platform, req.RoomID, cur)
+		if existing, ok := builtinStatusMap.Load(key); ok {
+			task := *(existing.(*BuiltinTaskStatus))
+			task.Record = cur.Record
+			task.Screenshot = cur.Screenshot
+			builtinStatusMap.Store(key, &task)
+		}
+		// 仅当开关实际变化且任务在跑时才取消，避免无意义重启造成断流
+		if changed {
+			if cancel, ok := builtinCancels.Load(key); ok {
+				if state, _ := builtinTaskStates.Load(key); state == "running" {
+					cancel.(context.CancelFunc)()
+				}
+			}
+		}
 	case "pause":
 		builtinTaskStates.Store(key, "paused")
 		if cancel, ok := builtinCancels.Load(key); ok {

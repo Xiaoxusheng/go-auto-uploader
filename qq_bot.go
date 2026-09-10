@@ -180,11 +180,10 @@ type QQAction struct {
 
 func InitQQBot() {
 	log.Println("[QQ-BOT] 🚀 开始初始化 QQ 机器人引擎 (兼容 NapCat)...")
-	appConfigMu.RLock()
-	wsURL := appConfig.QQBotWSURL
-	token := appConfig.QQBotToken
-	adminID := appConfig.QQAdminID
-	appConfigMu.RUnlock()
+	_cfgSnap := appCfg()
+	wsURL := _cfgSnap.QQBotWSURL
+	token := _cfgSnap.QQBotToken
+	adminID := _cfgSnap.QQAdminID
 
 	if wsURL == "" || adminID == 0 {
 		log.Println("[QQ-BOT] ⚠️ 未配置参数，已跳过 QQ 引擎初始化")
@@ -611,14 +610,12 @@ func qqHandleWatermark(userID int64, parts []string) {
 // 机制：弃用磁盘路径挂载，在内存将数据转换为 Base64 流封包穿透 Docker，解决跨环境发送文件失败的问题。
 func qqHandleLog(userID int64) {
 	var buf strings.Builder
-	logsMu.RLock()
-	for _, entry := range logs {
+	for _, entry := range appLogs.SnapshotAsc("", "") {
 		buf.WriteString(fmt.Sprintf("[%s] [%s] %s\n", entry.Time, entry.Level, entry.Message))
 		if entry.Error != "" {
 			buf.WriteString(fmt.Sprintf("  Error: %s\n", entry.Error))
 		}
 	}
-	logsMu.RUnlock()
 
 	if buf.Len() == 0 {
 		sendQQAPIMessage(userID, "📭 当前内存中无日志数据。")
@@ -696,9 +693,7 @@ func qqSendLongMessage(userID int64, text string) {
 }
 
 func qqHandleDashboard(userID int64) {
-	appConfigMu.RLock()
-	wsURL := appConfig.RemoteServer
-	appConfigMu.RUnlock()
+	wsURL := appCfg().RemoteServer
 
 	if wsURL == "" {
 		wsURL = "http://127.0.0.1:8080"
@@ -717,14 +712,10 @@ func qqHandleChart(userID int64) {
 	var dates []string
 	var values []float64
 
-	trendStats.Range(func(key, value interface{}) bool {
-		tp := value.(*TrendPoint)
-		tp.Mu.Lock()
+	for _, tp := range successStore.TrendSnapshot() {
 		dates = append(dates, tp.Date)
 		values = append(values, tp.Size)
-		tp.Mu.Unlock()
-		return true
-	})
+	}
 
 	if len(dates) == 0 {
 		sendQQAPIMessage(userID, "📭 系统暂无数据。")
@@ -918,11 +909,8 @@ func qqHandleStatus() string {
 
 	todayStr := time.Now().Format("01-02")
 	var todayTrafficBytes int64 = 0
-	if val, exists := trendStats.Load(todayStr); exists {
-		tp := val.(*TrendPoint)
-		tp.Mu.Lock()
-		todayTrafficBytes = int64(tp.Size * 1024 * 1024 * 1024)
-		tp.Mu.Unlock()
+	if sizeGB, _, ok := successStore.TrendByDate(todayStr); ok {
+		todayTrafficBytes = int64(sizeGB * 1024 * 1024 * 1024)
 	}
 
 	return fmt.Sprintf(`📊 运行资源状态
@@ -1000,7 +988,7 @@ func qqHandleList(userID int64, filter string) {
 	tasks := GetBuiltinRecorderTasks()
 	var onlineTasks []BuiltinTaskStatus
 	for _, t := range tasks {
-		if t.Status == "录制中" {
+		if isBuiltinLiveStatus(t.Status) {
 			if filter != "" && !strings.Contains(strings.ToLower(t.Platform), strings.ToLower(filter)) {
 				continue
 			}

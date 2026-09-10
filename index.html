@@ -1178,16 +1178,30 @@
                                     <template #cell="{ record }">
                                         <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap;">
                                             <span class="builtin-status-dot"
-                                                  :class="{ 'is-recording': record.status === '录制中' }"></span>
-                                            <span :style="{ color: record.status === '录制中' ? '#00b42a' : '#86909c' }">
-                                              {{ record.status === '录制中' ? '正在录制' : '未在录制' }}
+                                                  :class="{ 'is-recording': record.status === '录制中' || record.status === '截屏中' }"></span>
+                                            <span :style="{ color: (record.status === '录制中' || record.status === '截屏中') ? '#00b42a' : '#86909c' }">
+                                              {{ record.status === '截屏中' ? '正在截屏' : (record.status === '录制中' ? '正在录制' : '未在录制') }}
                                             </span>
-                                            <span v-if="record.status === '录制中'"
+                                            <span v-if="record.status === '录制中' || record.status === '截屏中'"
                                                   style="font-size: 11px; color: #86909c;">
                                               (<span style="color: #165dff;">{{ record.duration }}</span> | <span
                                                     style="color: #ff7d00;">{{ record.file_size }}</span>)
                                             </span>
                                         </div>
+                                    </template>
+                                </a-table-column>
+                                <a-table-column title="录屏" align="center" :width="72">
+                                    <template #cell="{ record }">
+                                        <a-switch :model-value="record.record !== false" size="small"
+                                                  :loading="record.flagsSwitching"
+                                                  @change="(val) => handleBuiltinFlags(val, null, record)"></a-switch>
+                                    </template>
+                                </a-table-column>
+                                <a-table-column title="截屏" align="center" :width="72">
+                                    <template #cell="{ record }">
+                                        <a-switch :model-value="record.screenshot !== false" size="small"
+                                                  :loading="record.flagsSwitching"
+                                                  @change="(val) => handleBuiltinFlags(null, val, record)"></a-switch>
                                     </template>
                                 </a-table-column>
                                 <a-table-column title="监听状态" :width="100">
@@ -1769,6 +1783,12 @@
                                         <a-switch v-model="configForm.enableUpload" size="small"></a-switch>
                                     </a-form-item>
                                 </a-col>
+                                <a-col :xs="24" :sm="6">
+                                    <a-form-item field="convertMP4" label="上传前 TS→MP4"
+                                                 tooltip="开启后：稳定 TS 先无损封装为 MP4（-c copy）再上传，成功后删除本地 TS；失败则回退直接上传原 TS">
+                                        <a-switch v-model="configForm.convertMP4" size="small"></a-switch>
+                                    </a-form-item>
+                                </a-col>
                             </a-row>
                             <a-divider style="margin: 12px 0 24px 0"></a-divider>
                             <div class="mobile-action-buttons">
@@ -1906,18 +1926,27 @@
                                             :max="1440"></a-input-number>
                         </a-form-item>
 
-                        <a-divider style="margin: 12px 0;"><span style="color: var(--color-text-3); font-size: 12px;">FFmpeg 截图水印设置</span></a-divider>
+                        <a-divider style="margin: 12px 0;"><span style="color: var(--color-text-3); font-size: 12px;">FFmpeg 水印设置</span></a-divider>
 
-                        <a-form-item field="watermark_enable" label="开启截图中自带时间和自定义水印">
+                        <a-form-item field="watermark_enable" label="截图水印（封面/归档图烧录时间与主播名）">
                             <a-switch v-model="builtinSettings.watermark_enable" checked-color="#165DFF" unchecked-color="#C9CDD4">
                                 <template #checked>ON</template>
                                 <template #unchecked>OFF</template>
                             </a-switch>
                         </a-form-item>
 
-                        <template v-if="builtinSettings.watermark_enable">
-                            <a-form-item label="自定义水印前缀内容" tooltip="显示在时间前方的固定文字">
-                                <a-input v-model="builtinSettings.watermark_text" placeholder="例如：监控画面"></a-input>
+                        <a-form-item field="video_watermark_enable"
+                                     label="视频画面烧录水印"
+                                     tooltip="开启后录制 TS 会实时重编码并把主播名+时间烧进画面，CPU 占用明显升高；关闭则保持零拷贝直录">
+                            <a-switch v-model="builtinSettings.video_watermark_enable" checked-color="#165DFF" unchecked-color="#C9CDD4">
+                                <template #checked>ON</template>
+                                <template #unchecked>OFF</template>
+                            </a-switch>
+                        </a-form-item>
+
+                        <template v-if="builtinSettings.watermark_enable || builtinSettings.video_watermark_enable">
+                            <a-form-item label="自定义水印前缀内容" tooltip="显示在时间前方的固定文字；留空则自动使用主播名">
+                                <a-input v-model="builtinSettings.watermark_text" placeholder="留空 = 主播名"></a-input>
                             </a-form-item>
 
                             <a-row :gutter="16">
@@ -2398,6 +2427,7 @@
                 segment_time: 0,
                 save_path: './downloads',
                 watermark_enable: false,
+                video_watermark_enable: false,
                 watermark_text: 'go-auto-uploader',
                 watermark_format: '%Y-%m-%d %H:%M:%S',
                 watermark_position: 'bottom-right',
@@ -2412,6 +2442,7 @@
             const builtinSaving = ref(false);
             const builtinSavingCookies = ref(false);
 
+            const isBuiltinLiveStatusJS = (s) => s === '录制中' || s === '截屏中';
             const sortedBuiltinTasks = computed(() => {
                 try {
                     let list = [...(builtinTasks.value || [])];
@@ -2426,8 +2457,8 @@
                         }
                     }
                     list.sort((a, b) => {
-                        const isARecording = (a && a.status === '录制中') ? 1 : 0;
-                        const isBRecording = (b && b.status === '录制中') ? 1 : 0;
+                        const isARecording = (a && isBuiltinLiveStatusJS(a.status)) ? 1 : 0;
+                        const isBRecording = (b && isBuiltinLiveStatusJS(b.status)) ? 1 : 0;
                         return isBRecording - isARecording;
                     });
                     return list;
@@ -2446,7 +2477,7 @@
             });
 
             const builtinActiveCount = computed(() => builtinTasks.value.filter(t => !t.is_paused).length);
-            const builtinRecordingCount = computed(() => builtinTasks.value.filter(t => t.status === '录制中').length);
+            const builtinRecordingCount = computed(() => builtinTasks.value.filter(t => isBuiltinLiveStatusJS(t.status)).length);
             const isAllBuiltinActive = computed(() => builtinTasks.value.length > 0 && builtinTasks.value.some(t => !t.is_paused));
 
             /**
@@ -2512,6 +2543,7 @@
                         builtinSettings.value.save_path = res1.data.save_path || './downloads';
 
                         builtinSettings.value.watermark_enable = res1.data.watermark_enable || false;
+                        builtinSettings.value.video_watermark_enable = res1.data.video_watermark_enable || false;
                         builtinSettings.value.watermark_text = res1.data.watermark_text || 'go-auto-uploader';
                         builtinSettings.value.watermark_format = res1.data.watermark_format || '%Y-%m-%d %H:%M:%S';
                         builtinSettings.value.watermark_position = res1.data.watermark_position || 'bottom-right';
@@ -2546,7 +2578,7 @@
                 builtinSaving.value = true;
                 try {
                     await api.post('/builtin_recorder/config', builtinSettings.value);
-                    Message.success("内置引擎基础设置及截图水印参数已生效！");
+                    Message.success("内置引擎水印与录制参数已生效！");
                     showBuiltinSettingsModal.value = false;
                 } catch (e) {
                 } finally {
@@ -2628,6 +2660,33 @@
                     await handleControlBuiltin(action, record);
                 } finally {
                     record.switching = false;
+                }
+            };
+
+            /**
+             * 更新单个主播的「录屏 / 截屏」独立开关
+             * @param {boolean|null} recordVal 录屏开关；null 表示不修改
+             * @param {boolean|null} shotVal 截屏开关；null 表示不修改
+             * @param {Object} record 任务行
+             */
+            const handleBuiltinFlags = async (recordVal, shotVal, record) => {
+                record.flagsSwitching = true;
+                try {
+                    const payload = {
+                        action: 'set_flags',
+                        platform: record.platform,
+                        room_id: record.room_id
+                    };
+                    if (recordVal !== null && recordVal !== undefined) payload.record = recordVal;
+                    if (shotVal !== null && shotVal !== undefined) payload.screenshot = shotVal;
+                    await api.post('/builtin_recorder/control', payload);
+                    if (recordVal !== null && recordVal !== undefined) record.record = recordVal;
+                    if (shotVal !== null && shotVal !== undefined) record.screenshot = shotVal;
+                    Message.success('录屏/截屏开关已更新');
+                } catch (e) {
+                    Message.error('开关更新失败');
+                } finally {
+                    record.flagsSwitching = false;
                 }
             };
 
@@ -3785,7 +3844,7 @@
                 builtinRecordingCount, isAllBuiltinActive, builtinAdding, builtinBatchAdding, builtinSaving,
                 builtinSavingCookies, getBuiltinLiveUrl, fetchBuiltinConfig, saveBuiltinConfig, saveBuiltinCookies,
                 handleAddBuiltin, handleBatchAddBuiltin, handleControlBuiltin, handleSwitchBuiltin,
-                handleMasterSwitchBuiltin, openBuiltinSettingsModal, downloadBuiltinCover, globalPreview, openPreview
+                handleBuiltinFlags, handleMasterSwitchBuiltin, openBuiltinSettingsModal, downloadBuiltinCover, globalPreview, openPreview
             };
         }
     });
