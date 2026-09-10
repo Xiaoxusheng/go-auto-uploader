@@ -111,15 +111,13 @@ func TestRestoreQueueCounts(t *testing.T) {
 // 使用 httptest.NewRecorder 直接在内存中模拟 HTTP 请求，免去绑定端口带来的网络开销。
 func TestHandleStatus(t *testing.T) {
 	// 初始化必要的配置项，避免空指针
-	appConfigMu.Lock()
-	appConfig = Config{
+	cfgStore.Replace(Config{
 		ScanInterval: 60,
 		Workers:      4,
 		DayRate:      1024,
 		NightRate:    2048,
 		Dirs:         []string{"./test_dir"},
-	}
-	appConfigMu.Unlock()
+	})
 
 	sysStatsMu.Lock()
 	cachedDiskFree = 1024 * 1024 * 1024 * 50 // 50GB

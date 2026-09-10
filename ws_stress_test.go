@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"upload/internal/config"
 )
 
 // setupMockWSServer 初始化并启动一个用于高并发测试的内存级 WebSocket 路由服务器。
@@ -17,9 +19,7 @@ import (
 // 并复用生产同款 authMiddleware 中间件拓扑，确保登录令牌链路真实有效。
 func setupMockWSServer() (*httptest.Server, string) {
 	// 临时关闭加密，专注测试并发分发性能
-	appConfigMu.Lock()
-	appConfig.EnableEncryption = false
-	appConfigMu.Unlock()
+	cfgStore.Update(func(c *config.Config) { c.EnableEncryption = false })
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws/live", handleWebSocket)

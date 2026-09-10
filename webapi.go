@@ -29,6 +29,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"upload/internal/config"
 )
 
 var (
@@ -97,39 +99,7 @@ type DirStatus struct {
 }
 
 // Config 定义系统核心配置结构 (✨ 已修复：补充 Telegram 及 QQ 核心配置字段)
-type Config struct {
-	ScanInterval       int      `json:"scanInterval"`
-	Workers            int      `json:"workers"`
-	DayRate            int      `json:"dayRate"`
-	NightRate          int      `json:"nightRate"`
-	EmailInterval      int      `json:"emailInterval"`
-	Running            bool     `json:"running"`
-	AutoRetry          bool     `json:"autoRetry"`
-	MaxRetry           int      `json:"maxRetry"`
-	EnableLogs         bool     `json:"enableLogs"`
-	LogLevel           string   `json:"logLevel"`
-	Dirs               []string `json:"dirs"`
-	RemoteServer       string   `json:"remoteServer"`
-	RemoteUser         string   `json:"remoteUser"`
-	RemotePass         string   `json:"remotePass"`
-	LiveConfigPath     string   `json:"liveConfigPath"`
-	RecorderContainer  string   `json:"recorderContainer"`
-	RecorderConfigPath string   `json:"recorderConfigPath"`
-	MailFrom           string   `json:"mailFrom"`
-	MailAuthCode       string   `json:"mailAuthCode"`
-	MailTo             string   `json:"mailTo"`
-	EnableEncryption   bool     `json:"enableEncryption"` // 决定是否开启通信层的数据安全加密
-	EnableUpload       bool     `json:"enableUpload"`     // ✨ 控制是否开启文件自动上传云端
-	ConvertMP4         bool     `json:"convertMP4"`       // 上传前将稳定 TS 无损封装为 MP4
-	WechatToken        string   `json:"wechatToken"`      // 推送加微信通知 Token
-	TelegramToken      string   `json:"telegramToken"`    // ✨ 接入 Telegram 机器人的 Token
-	TelegramChatID     int64    `json:"telegramChatID"`   // ✨ 用于鉴权和主动推送的 TG UserID/ChatID
-	QQBotWSURL         string   `json:"qqBotWsUrl"`       // ✨ 新增：QQ 机器人 OneBot WebSocket 地址 (例: ws://127.0.0.1:3001)
-	QQBotToken         string   `json:"qqBotToken"`       // ✨ 新增：QQ 机器人鉴权 Token (可选)
-	QQAdminID          int64    `json:"qqAdminId"`        // ✨ 新增：QQ 管理员号码
-	DashboardUser      string   `json:"dashboardUser"`    // 安全审计：控制台登录用户名（不通过 API 回显，只能写配置文件）
-	DashboardPass      string   `json:"dashboardPass"`    // 安全审计：控制台登录密码（留空则回落到内置默认值，强烈建议配置强密码）
-}
+type Config = config.Config
 
 // Streamer 录制主播配置
 type Streamer struct {
@@ -233,9 +203,7 @@ func decryptPayload(cryptoText string, key []byte) ([]byte, error) {
 
 // parseEncryptedRequest 拦截密文请求，并使用动态分配的密钥将其还原为实际业务结构体，支持降级回明文解析
 func parseEncryptedRequest(r *http.Request, target interface{}) error {
-	appConfigMu.RLock()
-	encEnabled := appConfig.EnableEncryption
-	appConfigMu.RUnlock()
+	encEnabled := appCfg().EnableEncryption
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -277,9 +245,7 @@ func sendJSONSuccess(w http.ResponseWriter, r *http.Request, data interface{}) {
 	resp := APIResponse{Code: 200, Message: "success", Data: data}
 	rawJSON, _ := json.Marshal(resp)
 
-	appConfigMu.RLock()
-	encEnabled := appConfig.EnableEncryption
-	appConfigMu.RUnlock()
+	encEnabled := appCfg().EnableEncryption
 
 	// 降级为明文直接响应
 	if !encEnabled {
@@ -310,9 +276,7 @@ func sendJSONError(w http.ResponseWriter, r *http.Request, statusCode int, messa
 	resp := APIResponse{Code: statusCode, Message: message}
 	rawJSON, _ := json.Marshal(resp)
 
-	appConfigMu.RLock()
-	encEnabled := appConfig.EnableEncryption
-	appConfigMu.RUnlock()
+	encEnabled := appCfg().EnableEncryption
 
 	if !encEnabled {
 		w.Write(rawJSON)
@@ -341,9 +305,7 @@ func sendJSONError(w http.ResponseWriter, r *http.Request, statusCode int, messa
 func handleGetPubKey(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	appConfigMu.RLock()
-	encEnabled := appConfig.EnableEncryption
-	appConfigMu.RUnlock()
+	encEnabled := appCfg().EnableEncryption
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"code": 200,
@@ -510,9 +472,7 @@ func sysStatsCollector() {
 	defer ticker.Stop()
 
 	update := func() {
-		appConfigMu.RLock()
-		configuredDirs := appConfig.Dirs
-		appConfigMu.RUnlock()
+		configuredDirs := appCfg().Dirs
 		targetDir := "."
 		if len(configuredDirs) > 0 && configuredDirs[0] != "" {
 			targetDir = configuredDirs[0]
@@ -619,9 +579,7 @@ func sendWeChatNotify(title, body string) {
 	// ✨ 新增：向底层派发一份到 QQ 的副本协程，实现全通讯矩阵监控无死角
 	go SendQQNotification(title, body)
 
-	appConfigMu.RLock()
-	token := appConfig.WechatToken
-	appConfigMu.RUnlock()
+	token := appCfg().WechatToken
 
 	if token == "" {
 		return // Token为空代表用户未开启功能，静默返回
@@ -776,9 +734,7 @@ func buildStatsTrendData() map[string]interface{} {
 func wsBroadcastLoop() {
 	encRefreshTicker := time.NewTicker(5 * time.Second)
 	var encEnabled bool
-	appConfigMu.RLock()
-	encEnabled = appConfig.EnableEncryption
-	appConfigMu.RUnlock()
+	encEnabled = appCfg().EnableEncryption
 
 	for {
 		select {
@@ -814,9 +770,7 @@ func wsBroadcastLoop() {
 			})
 
 		case <-encRefreshTicker.C:
-			appConfigMu.RLock()
-			encEnabled = appConfig.EnableEncryption
-			appConfigMu.RUnlock()
+			encEnabled = appCfg().EnableEncryption
 		}
 	}
 }
@@ -914,9 +868,7 @@ func (c *WSClient) writePump() {
 
 // handleWebSocket 处理 WebSocket 升级及接收逻辑，增加明密文双模控制支持并启动分离的 I/O 协程
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	appConfigMu.RLock()
-	encEnabled := appConfig.EnableEncryption
-	appConfigMu.RUnlock()
+	encEnabled := appCfg().EnableEncryption
 
 	var key []byte
 	var err error
@@ -1048,6 +1000,7 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 	revokeAuthToken(r)
 	sendJSONSuccess(w, r, nil)
 }
+
 // getDiskFreeSpaceStd 获取指定目录所在磁盘的剩余逻辑空间 (纯标准库跨平台实现)
 func getDiskFreeSpaceStd(pathStr string) int64 {
 	if pathStr == "" {
@@ -1144,13 +1097,12 @@ func buildStatusData() map[string]interface{} {
 	isRunning := running
 	runningMu.RUnlock()
 
-	appConfigMu.RLock()
-	currentScanInterval := appConfig.ScanInterval
-	currentDayRate := appConfig.DayRate
-	currentNightRate := appConfig.NightRate
-	currentWorkers := appConfig.Workers
-	configuredDirs := appConfig.Dirs
-	appConfigMu.RUnlock()
+	_cfgSnap := appCfg()
+	currentScanInterval := _cfgSnap.ScanInterval
+	currentDayRate := _cfgSnap.DayRate
+	currentNightRate := _cfgSnap.NightRate
+	currentWorkers := _cfgSnap.Workers
+	configuredDirs := _cfgSnap.Dirs
 
 	tokenMu.Lock()
 	tokenValid := token != ""
@@ -1417,9 +1369,7 @@ func handleControlClearSuccessQueue(w http.ResponseWriter, r *http.Request) {
 
 // handleDirsStatus 返回所有受监控目录及其内部文件的统计快照
 func handleDirsStatus(w http.ResponseWriter, r *http.Request) {
-	appConfigMu.RLock()
-	configuredDirs := appConfig.Dirs
-	appConfigMu.RUnlock()
+	configuredDirs := appCfg().Dirs
 
 	statuses := make([]*DirStatus, 0)
 	for _, dir := range configuredDirs {
@@ -1456,9 +1406,7 @@ func handleDirsStatus(w http.ResponseWriter, r *http.Request) {
 func handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		appConfigMu.RLock()
-		currentConfig := appConfig
-		appConfigMu.RUnlock()
+		currentConfig := appCfg()
 		// 安全审计修复：登录凭据不通过 API 回显，避免浏览器缓存/中间人旁路泄露
 		currentConfig.DashboardUser = ""
 		currentConfig.DashboardPass = ""
@@ -1469,12 +1417,11 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, r, http.StatusBadRequest, "非法配置实体或解密异常")
 			return
 		}
-		appConfigMu.Lock()
 		// 安全审计修复：凭据字段只认配置文件，拒绝被常规配置接口覆写清空
-		newConfig.DashboardUser = appConfig.DashboardUser
-		newConfig.DashboardPass = appConfig.DashboardPass
-		appConfig = newConfig
-		appConfigMu.Unlock()
+		prev := appCfg()
+		newConfig.DashboardUser = prev.DashboardUser
+		newConfig.DashboardPass = prev.DashboardPass
+		cfgStore.Replace(newConfig)
 
 		saveConfigToFile()
 
@@ -1491,9 +1438,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // handleCookies 处理读取或修改外部录制引擎中 Cookie 等凭据文件的请求
 func handleCookies(w http.ResponseWriter, r *http.Request) {
-	appConfigMu.RLock()
-	configPath := appConfig.RecorderConfigPath
-	appConfigMu.RUnlock()
+	configPath := appCfg().RecorderConfigPath
 
 	if configPath == "" {
 		sendJSONError(w, r, http.StatusBadRequest, "尚未配置录制引擎主配置文件路径 (config.ini)")
@@ -1626,9 +1571,7 @@ func handleCookies(w http.ResponseWriter, r *http.Request) {
 
 // getStreamersData 读取并解析直播录制名单文件内容，还原为结构体数组
 func getStreamersData() []Streamer {
-	appConfigMu.RLock()
-	configPath := appConfig.LiveConfigPath
-	appConfigMu.RUnlock()
+	configPath := appCfg().LiveConfigPath
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -1691,9 +1634,7 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPut || r.Method == http.MethodPost {
-		appConfigMu.RLock()
-		configPath := appConfig.LiveConfigPath
-		appConfigMu.RUnlock()
+		configPath := appCfg().LiveConfigPath
 
 		var req []Streamer
 		if err := parseEncryptedRequest(r, &req); err != nil {
@@ -1738,9 +1679,7 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 
 // getRecorderStatus 通过调用底层 Shell 获取外部 Docker 录制引擎的运行状态
 func getRecorderStatus() string {
-	appConfigMu.RLock()
-	container := appConfig.RecorderContainer
-	appConfigMu.RUnlock()
+	container := appCfg().RecorderContainer
 
 	if container == "" {
 		return "未配置"
@@ -1765,9 +1704,7 @@ func handleRecorderControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	appConfigMu.RLock()
-	container := appConfig.RecorderContainer
-	appConfigMu.RUnlock()
+	container := appCfg().RecorderContainer
 
 	log.Printf("[DOCKER] 用户请求执行容器控制: docker %s %s", action, container)
 	out, err := exec.Command("docker", action, container).CombinedOutput()
@@ -1783,9 +1720,7 @@ func handleRecorderControl(w http.ResponseWriter, r *http.Request) {
 
 // handleRecorderLogs 调用 Docker 指令拉取外部容器尾部的 100 行日志供调试使用
 func handleRecorderLogs(w http.ResponseWriter, r *http.Request) {
-	appConfigMu.RLock()
-	container := appConfig.RecorderContainer
-	appConfigMu.RUnlock()
+	container := appCfg().RecorderContainer
 
 	out, err := exec.Command("docker", "logs", "--tail", "100", container).CombinedOutput()
 	if err != nil {
@@ -1879,9 +1814,7 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	appConfigMu.RLock()
-	encEnabled := appConfig.EnableEncryption
-	appConfigMu.RUnlock()
+	encEnabled := appCfg().EnableEncryption
 
 	if !encEnabled {
 		w.Write([]byte(sb.String()))

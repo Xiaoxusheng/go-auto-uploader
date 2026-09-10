@@ -16,11 +16,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"upload/internal/config"
 	"upload/internal/convert"
 	"upload/internal/fsutil"
 	"upload/internal/hashstore"
 	"upload/internal/naming"
+	"upload/internal/ratelimit"
 )
+
+// appCfg 读取配置快照（单源 cfgStore）
+func appCfg() config.Config { return cfgStore.Get() }
 
 /* ================= 全局配置 ================= */
 
@@ -72,11 +77,8 @@ var (
 	consecutiveFailures int32
 )
 
-// 动态应用配置
-var (
-	appConfig   Config
-	appConfigMu sync.RWMutex
-)
+// 动态应用配置：单源 Store，禁止再散落 appConfigMu 双锁
+var cfgStore = config.NewStore("config.json")
 
 // 任务队列和历史记录状态 (极致性能优化：全量替换为 sync.Map 和 原子计算)
 var (
@@ -214,21 +216,10 @@ func (l *logInterceptor) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-// saveConfigToFile 将当前内存中的应用运行时设置持久化落盘至 config.json 文件
-// 注意：调用方必须在调用前自行加锁读取副本，此函数不再内部加锁，避免重入死锁
+// saveConfigToFile 将当前配置原子落盘至 config.json
 func saveConfigToFile() {
-	appConfigMu.RLock()
-	cfgCopy := appConfig
-	appConfigMu.RUnlock()
-
-	// 使用带缩进的 json 格式，便于用户直接查看或修改文件内容
-	data, err := json.MarshalIndent(cfgCopy, "", "  ")
-	if err == nil {
-		if werr := fsutil.AtomicWrite("config.json", data, 0644); werr != nil {
-			log.Printf("[CONFIG][ERR] 无法保存配置文件 config.json: %v", werr)
-		}
-	} else {
-		log.Printf("[CONFIG][ERR] 无法序列化配置: %v", err)
+	if err := cfgStore.Save(); err != nil {
+		log.Printf("[CONFIG][ERR] 无法保存配置文件 config.json: %v", err)
 	}
 }
 
@@ -293,9 +284,7 @@ func dirStatusPersistLoop() {
 // manageWorkers 全局常驻的动态 Worker 线程池调度器
 func manageWorkers() {
 	for {
-		appConfigMu.RLock()
-		desired := appConfig.Workers
-		appConfigMu.RUnlock()
+		desired := appCfg().Workers
 
 		current := atomic.LoadInt32(&workerCount)
 		for current < int32(desired) {
@@ -397,48 +386,29 @@ func main() {
 	loadDirStatuses()
 
 	// 初始化系统参数：优先从 config.json 读取；如果文件不存在，则使用启动参数进行填充
-	appConfigMu.Lock()
-	data, err := os.ReadFile("config.json")
-	if err == nil {
-		// 成功读取到文件则反序列化覆盖
-		json.Unmarshal(data, &appConfig)
-	} else {
-		// 文件不存在，写入默认及命令行参数
-		appConfig.ScanInterval = scanningInterval
-		appConfig.Workers = workers
-		appConfig.DayRate = dayRateMB
-		appConfig.NightRate = nightRateMB
-		appConfig.EmailInterval = reportMinutes
-		appConfig.Dirs = strings.Split(dirs, ",")
-		appConfig.EnableLogs = true
-		appConfig.RemoteServer = server
-		appConfig.RemoteUser = "admin"
-		appConfig.LiveConfigPath = liveConfigPath
-		appConfig.RecorderContainer = recorderContainer
-		appConfig.RecorderConfigPath = recorderConfigPath
-		appConfig.EnableEncryption = false // 默认关闭通道加密
-		appConfig.EnableUpload = false     // ✨ 默认关闭上传，仅录制
-
-		// 安全审计：不再在源码中预设真实远端凭据
-		appConfig.RemotePass = ""
-
-		// 写入默认的邮件配置参数（在此预设原有的硬编码值）
-		appConfig.MailFrom = "your_email@qq.com"
-		appConfig.MailAuthCode = "your_auth_code"
-		appConfig.MailTo = "receive_email@qq.com"
+	if err := cfgStore.LoadFromDisk(config.CLI{
+		Dirs:               dirs,
+		Server:             server,
+		Workers:            workers,
+		DayRate:            dayRateMB,
+		NightRate:          nightRateMB,
+		ScanInterval:       scanningInterval,
+		ReportMinutes:      reportMinutes,
+		LiveConfigPath:     liveConfigPath,
+		RecorderContainer:  recorderContainer,
+		RecorderConfigPath: recorderConfigPath,
+	}); err != nil {
+		log.Printf("[CONFIG][ERR] 加载配置失败: %v", err)
 	}
-	appConfigMu.Unlock()
 
 	// 安全审计修复：允许通过 config.json 的 dashboardUser/dashboardPass 覆盖内置默认账号
-	appConfigMu.RLock()
-	if appConfig.DashboardUser != "" {
-		dashboardUsername = appConfig.DashboardUser
+	if appCfg().DashboardUser != "" {
+		dashboardUsername = appCfg().DashboardUser
 	}
-	if appConfig.DashboardPass != "" {
-		dashboardPassword = appConfig.DashboardPass
+	if appCfg().DashboardPass != "" {
+		dashboardPassword = appCfg().DashboardPass
 	}
 	weakCreds := dashboardUsername == "admin" && dashboardPassword == "admin"
-	appConfigMu.RUnlock()
 	if weakCreds {
 		log.Println("[AUTH] 🚨 高危告警：控制台仍在使用默认弱口令 admin/admin，请立即在 config.json 中配置 dashboardUser 与 dashboardPass！")
 	}
@@ -456,9 +426,7 @@ func main() {
 	go successLogPersistLoop() // 挂载成功记录批量落盘守护机制（修复 Bug 5）
 	go manageWorkers()         // 挂载全局异步的 Worker 上传线程池
 
-	appConfigMu.RLock()
-	baseInterval := appConfig.ScanInterval
-	appConfigMu.RUnlock()
+	baseInterval := appCfg().ScanInterval
 	currentDynamicInterval := baseInterval
 	atomic.StoreInt64(&currentDynamicIntervalGlobal, int64(currentDynamicInterval))
 
@@ -504,9 +472,7 @@ func main() {
 			select {
 			case <-time.After(time.Until(targetTime)):
 				_ = login()
-				appConfigMu.RLock()
-				baseInterval = appConfig.ScanInterval
-				appConfigMu.RUnlock()
+				baseInterval = appCfg().ScanInterval
 
 				activeCount := runOnce("auto", currentDynamicInterval)
 
@@ -536,9 +502,7 @@ func main() {
 				_ = login()
 				log.Printf("[SYSTEM] ⚡ 收到指令打断，执行扫描 (触发源: %s)", reason)
 
-				appConfigMu.RLock()
-				baseInterval = appConfig.ScanInterval
-				appConfigMu.RUnlock()
+				baseInterval = appCfg().ScanInterval
 
 				activeCount := runOnce(reason, currentDynamicInterval)
 
@@ -574,9 +538,7 @@ func queueStatusLoop() {
 	start := time.Now()
 	ticker := time.NewTicker(10 * time.Second)
 	for range ticker.C {
-		appConfigMu.RLock()
-		currentWorkers := appConfig.Workers
-		appConfigMu.RUnlock()
+		currentWorkers := appCfg().Workers
 
 		log.Printf("[QUEUE][STATUS] 运行时长:%s | 等待任务:%d | 活动Worker:%d | 并发设定:%d",
 			time.Since(start).Truncate(time.Second),
@@ -595,12 +557,10 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 		atomic.StoreInt32(&consecutiveFailures, 0)
 	}
 
-	appConfigMu.RLock()
-	currentWorkers := appConfig.Workers
-	currentDirs := make([]string, len(appConfig.Dirs))
-	copy(currentDirs, appConfig.Dirs)
-	enableUpload := appConfig.EnableUpload // ✨ 获取全局上传开关
-	appConfigMu.RUnlock()
+	currentWorkers := appCfg().Workers
+	currentDirs := make([]string, len(appCfg().Dirs))
+	copy(currentDirs, appCfg().Dirs)
+	enableUpload := appCfg().EnableUpload // ✨ 获取全局上传开关
 
 	runningMu.RLock()
 	isRunning := running
@@ -842,9 +802,7 @@ func handleFile(path string) {
 
 	// TS→MP4：上传前无损封装；失败则回退直接传原 TS
 	var originalTS string
-	appConfigMu.RLock()
-	doConvert := appConfig.ConvertMP4
-	appConfigMu.RUnlock()
+	doConvert := appCfg().ConvertMP4
 	if doConvert && convert.IsTS(path) {
 		log.Printf("[CONVERT] 🎬 开始 TS→MP4 封装: %s (%.2f MB)", filepath.Base(path), float64(info.Size())/1024/1024)
 		if mp4Path, cerr := convert.TSToMP4(path, builtinFfmpegPath); cerr == nil {
@@ -1018,9 +976,7 @@ func upload(local, remote string, size int64) bool {
 		"startTime": startTime.UnixMilli(),
 	})
 
-	appConfigMu.RLock()
-	targetServer := appConfig.RemoteServer
-	appConfigMu.RUnlock()
+	targetServer := appCfg().RemoteServer
 
 	req, _ := http.NewRequest("PUT", targetServer+"/api/fs/put", pr)
 	req.ContentLength = size
@@ -1274,14 +1230,8 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 
 // currentRate 根据预设在应用配置里的时间节点自动切换与判定所处小时数的限流值
 func currentRate() int {
-	appConfigMu.RLock()
-	defer appConfigMu.RUnlock()
-
-	h := time.Now().Hour()
-	if h >= 8 && h < 23 {
-		return appConfig.DayRate
-	}
-	return appConfig.NightRate
+	_cfgSnap := appCfg()
+	return ratelimit.Select(_cfgSnap.DayRate, _cfgSnap.NightRate, time.Now())
 }
 
 type UploadRecord struct {
@@ -1376,9 +1326,7 @@ func successLogPersistLoop() {
 
 // reportLoop 长驻于后台的死循环机制，依靠时间计算判断向指定电子信箱推送数据的恰当时间
 func reportLoop() {
-	appConfigMu.RLock()
-	intervalMinutes := appConfig.EmailInterval
-	appConfigMu.RUnlock()
+	intervalMinutes := appCfg().EmailInterval
 	// 1. 预先算出下一次应该发邮件的绝对时间点 (比如：现在是 10:00，间隔 6 小时，那 next 应该是 16:00)
 	nextReportTime := time.Now().Add(time.Duration(intervalMinutes) * time.Minute)
 
@@ -1389,9 +1337,7 @@ func reportLoop() {
 		if sleepDuration <= 0 {
 			sendReport()
 
-			appConfigMu.RLock()
-			intervalMinutes = appConfig.EmailInterval
-			appConfigMu.RUnlock()
+			intervalMinutes = appCfg().EmailInterval
 
 			nextReportTime = time.Now().Add(time.Duration(intervalMinutes) * time.Minute)
 			continue
@@ -1417,9 +1363,7 @@ func sendReport() {
 	copy(list, successRecords)
 	successLogMu.Unlock()
 
-	appConfigMu.RLock()
-	repMinutes := appConfig.EmailInterval
-	appConfigMu.RUnlock()
+	repMinutes := appCfg().EmailInterval
 
 	// ⭐ 核心过滤：计算周期截止时间，只发送最近这个周期内（如6小时内）的记录
 	cutoffTime := time.Now().Add(-time.Duration(repMinutes) * time.Minute)
@@ -1493,11 +1437,10 @@ func sendReport() {
 
 // sendQQMail 利用 SMTP 将带有授权码的主体信息发给外网腾讯服务器
 func sendQQMail(subject, body string) {
-	appConfigMu.RLock()
-	mailFrom := appConfig.MailFrom
-	mailAuthCode := appConfig.MailAuthCode
-	mailTo := appConfig.MailTo
-	appConfigMu.RUnlock()
+	_cfgSnap := appCfg()
+	mailFrom := _cfgSnap.MailFrom
+	mailAuthCode := _cfgSnap.MailAuthCode
+	mailTo := _cfgSnap.MailTo
 
 	// 增加对邮箱配置缺失的安全判断
 	if mailFrom == "" || mailAuthCode == "" || mailTo == "" {
@@ -1522,11 +1465,10 @@ func sendQQMail(subject, body string) {
 
 // login 携带后台配置内配置账号及加密体密码向存储总机做 HTTP POST 请求并提取令牌回传
 func login() error {
-	appConfigMu.RLock()
-	targetServer := appConfig.RemoteServer
-	usr := appConfig.RemoteUser
-	pwd := appConfig.RemotePass
-	appConfigMu.RUnlock()
+	_cfgSnap := appCfg()
+	targetServer := _cfgSnap.RemoteServer
+	usr := _cfgSnap.RemoteUser
+	pwd := _cfgSnap.RemotePass
 
 	body := fmt.Sprintf("Username=%s&Password=%s", usr, pwd)
 	req, _ := http.NewRequest("POST", targetServer+"/api/auth/login", strings.NewReader(body))
@@ -1557,10 +1499,8 @@ func login() error {
 func detectRoot(path string) string {
 	path = filepath.Clean(path)
 
-	appConfigMu.RLock()
-	currentDirs := make([]string, len(appConfig.Dirs))
-	copy(currentDirs, appConfig.Dirs)
-	appConfigMu.RUnlock()
+	currentDirs := make([]string, len(appCfg().Dirs))
+	copy(currentDirs, appCfg().Dirs)
 
 	for _, d := range currentDirs {
 		root := filepath.Clean(strings.TrimSpace(d))
@@ -1574,9 +1514,7 @@ func detectRoot(path string) string {
 
 // addLog 作为业务和展示系统隔离的桥梁，负责筛选后将指定等级事件装箱并经加密投递到浏览器
 func addLog(level, message, errorMsg string) {
-	appConfigMu.RLock()
-	enabled := appConfig.EnableLogs
-	appConfigMu.RUnlock()
+	enabled := appCfg().EnableLogs
 
 	if !enabled {
 		return
@@ -1597,9 +1535,7 @@ func addLog(level, message, errorMsg string) {
 
 // getActiveStreamers 通过探测各目录内是否存在时间较新的文件，推断当前正在处于写入(活跃录制)状态的主播名单，并与上次比对触发微信开播/下播通知
 func getActiveStreamers() []string {
-	appConfigMu.RLock()
-	configuredDirs := appConfig.Dirs
-	appConfigMu.RUnlock()
+	configuredDirs := appCfg().Dirs
 
 	activeMap := make(map[string]bool)
 
