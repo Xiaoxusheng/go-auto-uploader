@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"upload/internal/recorder"
 	"upload/internal/uploader"
 )
 
@@ -193,7 +194,7 @@ func BenchmarkBuiltinSM3(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		// 每个 Goroutine 独立实例化 SM3 计算器避免锁争用
 		for pb.Next() {
-			sm3 := NewBuiltinSM3()
+			sm3 := recorder.NewSM3()
 			sm3.Write(testData)
 			_ = sm3.Sum()
 		}
