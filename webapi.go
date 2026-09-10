@@ -31,6 +31,7 @@ import (
 
 	"upload/internal/config"
 	"upload/internal/storage"
+	"upload/internal/ws"
 )
 
 var (
@@ -47,8 +48,11 @@ var (
 		EnableCompression: false, // 核心优化：局域网内关闭压缩，用带宽换取极致的低延迟
 	}
 
-	wsClients   sync.Map // 升级优化：无锁化的 WS 客户端广播池
-	wsBroadcast = make(chan WSMessage, 1024)
+	// wsHub WebSocket 广播中心（internal/ws）
+	wsHub = ws.New(ws.WithEncrypt(
+		func(plain, key []byte) (string, error) { return encryptPayload(plain, key) },
+		func() bool { return appCfg().EnableEncryption },
+	))
 
 	running   = false
 	runningMu sync.RWMutex
@@ -72,17 +76,9 @@ var (
 )
 
 // WSClient 增加专属的 AES 密钥字段和独立消息通道，实现真正的无阻塞 Fan-out 广播
-type WSClient struct {
-	conn   *websocket.Conn
-	AESKey []byte
-	send   chan []byte // 核心优化：替换互斥锁，采用无锁高并发通道
-}
-
-// WSMessage WebSocket 标准通信载荷
-type WSMessage struct {
-	Type    string      `json:"type"`
-	Payload interface{} `json:"payload"`
-}
+// WSClient / WSMessage 兼容别名
+type WSClient = ws.Client
+type WSMessage = ws.Message
 
 // DirStatus 目录统计（实现见 internal/storage）
 type DirStatus = storage.DirStatus
@@ -711,49 +707,13 @@ func buildStatsTrendData() map[string]interface{} {
 	}
 }
 
-// wsBroadcastLoop 处理 WebSocket 广播队列，极速非阻塞向客户端通道投递预先拼接好的字节流
+// wsBroadcastLoop 消费 internal/ws Hub
 func wsBroadcastLoop() {
-	encRefreshTicker := time.NewTicker(5 * time.Second)
-	var encEnabled bool
-	encEnabled = appCfg().EnableEncryption
-
-	for {
-		select {
-		case msg := <-wsBroadcast:
-			rawBytes, _ := json.Marshal(msg)
-
-			wsClients.Range(func(key, value interface{}) bool {
-				client := key.(*WSClient)
-
-				var finalBytes []byte
-				// 优化：彻底避免单向广播时对每个客户端做二次 json.Marshal 的 CPU 开销
-				if encEnabled && client.AESKey != nil {
-					encryptedPayload, err := encryptPayload(rawBytes, client.AESKey)
-					if err == nil {
-						// 极致性能直接字符串拼接组装 JSON
-						finalBytes = []byte(`{"encrypted":"` + encryptedPayload + `"}`)
-					}
-				} else {
-					finalBytes = rawBytes
-				}
-
-				if finalBytes != nil {
-					// 无锁且非阻塞式推送：如果客户端网络过差导致通道写满，直接丢弃避免影响全局
-					select {
-					case client.send <- finalBytes:
-					default:
-						wsClients.Delete(client)
-						close(client.send)
-						client.conn.Close()
-					}
-				}
-				return true
-			})
-
-		case <-encRefreshTicker.C:
-			encEnabled = appCfg().EnableEncryption
-		}
+	stop := make(chan struct{})
+	if appCtx != nil {
+		go func() { <-appCtx.Done(); close(stop) }()
 	}
+	wsHub.Run(stop)
 }
 
 // wsDashboardBroadcaster 定时向面板广播系统实时状态数据、系统负载及图表
@@ -776,13 +736,7 @@ func wsDashboardBroadcaster() {
 	for {
 		select {
 		case <-fastTicker.C:
-			clientCount := 0
-			wsClients.Range(func(_, _ interface{}) bool {
-				clientCount++
-				return true
-			})
-
-			if clientCount > 0 {
+			if wsHub.ClientCount() > 0 {
 				broadcastWS("systemStatus", buildStatusData())
 				broadcastWS("queueStatus", buildQueueData())
 
@@ -820,31 +774,7 @@ func wsDashboardBroadcaster() {
 
 // broadcastWS 将指定类型的消息压入广播队列
 func broadcastWS(msgType string, payload interface{}) {
-	select {
-	case wsBroadcast <- WSMessage{Type: msgType, Payload: payload}:
-	default: // 如果全局广播队列满了直接丢弃，保证非阻塞
-	}
-}
-
-// writePump 独立处理每个客户端的网络写入，彻底解除老版本基于 Mutex 的全局广播阻塞瓶颈
-func (c *WSClient) writePump() {
-	defer func() {
-		c.conn.Close()
-	}()
-	for {
-		select {
-		case message, ok := <-c.send:
-			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-			// 单个客户端拥有严格独立的写入超时，网络再差也不会牵连整个系统
-			c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				return
-			}
-		}
-	}
+	wsHub.PublishTyped(msgType, payload)
 }
 
 // handleWebSocket 处理 WebSocket 升级及接收逻辑，增加明密文双模控制支持并启动分离的 I/O 协程
@@ -867,67 +797,49 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 赋予独立高并发通道
-	client := &WSClient{
-		conn:   conn,
+	client := &ws.Client{
+		Conn:   conn,
 		AESKey: key,
-		send:   make(chan []byte, 1024),
 	}
+	wsHub.Register(client)
 
-	wsClients.Store(client, true)
+	go ws.WritePump(client, 2*time.Second)
 
-	// 核心架构升级：启动专属的非阻塞写入协程
-	go client.writePump()
-
-	defer func() {
-		wsClients.Delete(client)
-		close(client.send) // 读协程退出时通知写协程结束
-		client.conn.Close()
-	}()
-
-	for {
-		var msg WSMessage
-
-		if encEnabled {
-			var encMsg EncryptedRequest
-			err := client.conn.ReadJSON(&encMsg)
-			if err != nil {
-				break
-			}
-
-			decryptedBytes, err := decryptPayload(encMsg.Encrypted, client.AESKey)
-			if err != nil {
-				log.Printf("[WS][ERR] WebSocket 密文非法或解密失败: %v", err)
-				continue
-			}
-
-			if err := json.Unmarshal(decryptedBytes, &msg); err != nil {
-				continue
-			}
-		} else {
-			err := client.conn.ReadJSON(&msg)
-			if err != nil {
-				break
-			}
-		}
-
-		if msg.Type == "ping" {
-			pongRaw, _ := json.Marshal(WSMessage{Type: "pong", Payload: msg.Payload})
-
-			var finalBytes []byte
-			if encEnabled && client.AESKey != nil {
-				pongEnc, _ := encryptPayload(pongRaw, client.AESKey)
-				finalBytes = []byte(`{"encrypted":"` + pongEnc + `"}`)
+	encOn := encEnabled
+	go func() {
+		defer wsHub.Unregister(client)
+		defer conn.Close()
+		for {
+			var msg WSMessage
+			if encOn && client.AESKey != nil {
+				var encMsg EncryptedRequest
+				if err := conn.ReadJSON(&encMsg); err != nil {
+					return
+				}
+				decrypted, err := decryptPayload(encMsg.Encrypted, client.AESKey)
+				if err != nil {
+					continue
+				}
+				if err := json.Unmarshal(decrypted, &msg); err != nil {
+					continue
+				}
 			} else {
-				finalBytes = pongRaw
+				if err := conn.ReadJSON(&msg); err != nil {
+					return
+				}
 			}
-
-			select {
-			case client.send <- finalBytes:
-			default:
+			if msg.Type == "ping" {
+				pongRaw, _ := json.Marshal(WSMessage{Type: "pong", Payload: msg.Payload})
+				final := pongRaw
+				if encOn && client.AESKey != nil {
+					if enc, err := encryptPayload(pongRaw, client.AESKey); err == nil {
+						final = []byte(`{"encrypted":"` + enc + `"}`)
+					}
+				}
+				client.TrySend(final)
 			}
 		}
-	}
+	}()
 }
 
 // handleLogin 处理登录请求，从解密体中验证凭据并下发 Token
