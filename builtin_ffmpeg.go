@@ -93,82 +93,14 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string)
 	// 基础视频滤镜：精准抓取第一个关键帧 (I-frame)，避免花屏和解码黑屏
 	vfFilter := "select='eq(pict_type,I)'"
 
-	// ✨ 水印渲染核心逻辑 (最高性能优化：临时文件挂载降维打击法)
+	// 截图水印：复用 recorder.PrepareDrawtextFilter（textfile 内不转义冒号，保证 %{localtime} 正确展开）
 	if builtinConfig != nil && builtinConfig.WatermarkEnable {
-		// 1. 获取当前可执行文件的路径
-		exePath, err := os.Executable()
-		if err != nil {
-			// 修复：不再 log.Fatal 杀掉整个进程，仅跳过水印继续抽帧
-			log.Printf("[BUILTIN] ⚠️ 无法定位可执行文件路径，跳过水印: %v", err)
+		drawtext, textFile, werr := prepareBuiltinDrawtextFilter(anchorName, "shot")
+		if werr != nil {
+			log.Printf("[BUILTIN] ⚠️ 截图水印准备失败，跳过水印: %v", werr)
 		} else {
-			// 2. 获取可执行文件所在目录
-			exeDir := filepath.Dir(exePath)
-			// 3. 拼接出字体文件的完整路径（跨平台分隔符）
-			fontPath := filepath.Join(exeDir, "font.ttf")
-			//fontPath := "/home/upload/font.ttf"
-
-			// 校验字体文件状态
-			if _, err := os.Stat(fontPath); os.IsNotExist(err) {
-				log.Printf("[BUILTIN] ⚠️ 警告：开启了截图水印，但未找到物理字体文件 %s！", fontPath)
-			} else {
-				// 剥离所有的单引号，保持纯净文本
-				formatStr := strings.ReplaceAll(builtinConfig.WatermarkFormat, "'", "")
-				textStr := strings.ReplaceAll(builtinConfig.WatermarkText, "'", "")
-
-				// ✨ 核心功能追加：如果未设置水印文本，则智能降级将主播名字作为水印
-				if strings.TrimSpace(textStr) == "" {
-					textStr = strings.ReplaceAll(anchorName, "'", "")
-				}
-
-				// 【终极修复】：将时间格式中的冒号强制转义为 \:，防止 FFmpeg 的动态宏解析器误判参数数量
-				formatStr = strings.ReplaceAll(formatStr, ":", "\\:")
-
-				fullText := textStr
-				if fullText != "" {
-					fullText += " "
-				}
-				// 拼接动态时间宏，现在时间格式里的冒号已经被转义了
-				fullText += "%{localtime:" + formatStr + "}"
-
-				// 核心终极修复 1：将相对路径转为绝对路径，防止底层 FFmpeg 进程工作目录不一致导致找不到文件
-				textFileName := fmt.Sprintf("wm_%d.txt", time.Now().UnixNano())
-				absTextFileName, _ := filepath.Abs(textFileName)
-
-				// 核心终极修复 2：写入临时文件并确保其在 FFmpeg 执行完毕后销毁
-				if err := os.WriteFile(absTextFileName, []byte(fullText), 0644); err == nil {
-					defer os.Remove(absTextFileName)
-
-					// 解析水印的九宫格坐标方位
-					var posStr string
-					switch builtinConfig.WatermarkPosition {
-					case "top-left":
-						posStr = "x=20:y=20"
-					case "top-right":
-						posStr = "x=w-tw-20:y=20"
-					case "bottom-left":
-						posStr = "x=20:y=h-th-20"
-					case "bottom-right":
-						posStr = "x=w-tw-20:y=h-th-20"
-					default:
-						posStr = "x=w-tw-20:y=h-th-20" // 默认右下角
-					}
-
-					// ✨ 动态提取用户配置的字体大小和颜色（并设置默认安全回退值）
-					fontSize := builtinConfig.WatermarkFontSize
-					if fontSize <= 0 {
-						fontSize = 38
-					}
-					// 修复：前端 #RRGGBBAA 需归一为 FFmpeg 的 0xRRGGBBAA
-					fontColor := normalizeFFmpegFontColor(builtinConfig.WatermarkFontColor)
-
-					// 核心终极修复 3：动态注入用户配置的字号与颜色，并融合电影级字幕特效投影
-					drawtext := fmt.Sprintf("drawtext=fontfile='%s':textfile='%s':fontcolor=%s:fontsize=%d:borderw=2:bordercolor=black@0.75:shadowcolor=black@0.5:shadowx=3:shadowy=3:%s", fontPath, absTextFileName, fontColor, fontSize, posStr)
-					vfFilter += "," + drawtext
-
-				} else {
-					log.Printf("[BUILTIN] ⚠️ 水印临时文件写入失败，将跳过水印生成: %v", err)
-				}
-			}
+			defer os.Remove(textFile)
+			vfFilter += "," + drawtext
 		}
 	}
 
