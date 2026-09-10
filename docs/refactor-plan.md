@@ -48,19 +48,18 @@ recorder / bots → notification, recorder API
 
 ## 阶段落地顺序
 
-| Phase | 内容 | 验收 |
+| Phase | 内容 | 状态 |
 |-------|------|------|
-| A | fsutil + hashstore + naming + convert | test PASS，行为不变 |
-| B | config 单源 + 读路径收敛 | 旧 config.json 可加载 |
-| C | remote.OpenList 接口 + ratelimit | 上传仍通 |
-| D | uploader.Task 状态机 + Queue + Worker(ctx) | 扫描→上传通 |
-| E | scanner 只产出候选 | 不再在 scan 里 handleFile |
-| F | storage history/success/dirStatus | 落盘仍兼容 |
-| G | auth + ws Hub + api/http | 现有 API 路径不变 |
-| H | notification Notifier | 通知仍发出 |
-| I | recorder 拆分 | 录制/开关仍可用 |
-| J | main 瘦身 + signal 优雅退出 | main < ~150 行 |
-| K | 文档 + 集成测试骨架 | go vet/test 通过 |
+| A | fsutil + hashstore + naming + convert | ✅ |
+| B | config 单源 + ratelimit | ✅ |
+| C | remote.OpenList | ✅ |
+| D | uploader Queue/WorkerPool + signal | ✅ |
+| E | scanner | ✅ |
+| F | storage | ✅ |
+| G | ws Hub | ✅ |
+| H | notification | ✅ |
+| I | recorder(Docker) + 文档 | ✅ |
+| 后续 | builtin_recorder 拆包、auth/logx、api/http、main <150 行 | 待做 |
 
 ## 明确不做（本阶段）
 

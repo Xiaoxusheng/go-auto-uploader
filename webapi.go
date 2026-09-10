@@ -32,6 +32,7 @@ import (
 
 	"upload/internal/config"
 	"upload/internal/notification"
+	"upload/internal/recorder"
 	"upload/internal/storage"
 	"upload/internal/ws"
 )
@@ -1511,18 +1512,14 @@ func handleStreamers(w http.ResponseWriter, r *http.Request) {
 	sendJSONError(w, r, http.StatusMethodNotAllowed, "Method not allowed")
 }
 
+// dockerRecorder 外部 Docker 录制引擎控制器
+var dockerRecorder = &recorder.DockerController{
+	ContainerNameFn: func() string { return appCfg().RecorderContainer },
+}
+
 // getRecorderStatus 通过调用底层 Shell 获取外部 Docker 录制引擎的运行状态
 func getRecorderStatus() string {
-	container := appCfg().RecorderContainer
-
-	if container == "" {
-		return "未配置"
-	}
-	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", container).CombinedOutput()
-	if err != nil {
-		return "离线/异常"
-	}
-	return strings.TrimSpace(string(out))
+	return dockerRecorder.Status()
 }
 
 // handleRecorderStatus 响应查询外部 Docker 引擎健康与运行状态的请求
@@ -1533,35 +1530,22 @@ func handleRecorderStatus(w http.ResponseWriter, r *http.Request) {
 // handleRecorderControl 执行对宿主机底层外部 Docker 容器的启动、停止、重启指令操作
 func handleRecorderControl(w http.ResponseWriter, r *http.Request) {
 	action := r.URL.Query().Get("action")
-	if action != "start" && action != "stop" && action != "restart" {
-		sendJSONError(w, r, http.StatusBadRequest, "非法的控制指令")
+	if err := dockerRecorder.Control(action); err != nil {
+		log.Printf("[DOCKER][ERR] %v", err)
+		sendJSONError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	container := appCfg().RecorderContainer
-
-	log.Printf("[DOCKER] 用户请求执行容器控制: docker %s %s", action, container)
-	out, err := exec.Command("docker", action, container).CombinedOutput()
-
-	if err != nil {
-		log.Printf("[DOCKER][ERR] 执行失败: %s", string(out))
-		sendJSONError(w, r, http.StatusInternalServerError, "操作失败: "+string(out))
-		return
-	}
-
 	sendJSONSuccess(w, r, "操作成功执行")
 }
 
 // handleRecorderLogs 调用 Docker 指令拉取外部容器尾部的 100 行日志供调试使用
 func handleRecorderLogs(w http.ResponseWriter, r *http.Request) {
-	container := appCfg().RecorderContainer
-
-	out, err := exec.Command("docker", "logs", "--tail", "100", container).CombinedOutput()
+	out, err := dockerRecorder.Logs(100)
 	if err != nil {
-		sendJSONError(w, r, http.StatusInternalServerError, "获取日志失败: "+string(out))
+		sendJSONError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
-	sendJSONSuccess(w, r, string(out))
+	sendJSONSuccess(w, r, out)
 }
 
 // handleLogs 提供带分页参数、等级筛选以及关键字搜索的应用层日志查询视图接口
