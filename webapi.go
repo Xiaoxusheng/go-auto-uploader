@@ -11,7 +11,6 @@ import (
 	"crypto/x509"
 	_ "embed"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,6 +29,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"upload/internal/auth"
 	"upload/internal/config"
 	"upload/internal/notification"
 	"upload/internal/recorder"
@@ -353,104 +353,35 @@ func handleExchangeKey(w http.ResponseWriter, r *http.Request) {
 }
 
 // ==========================================
-// 安全审计修复：Dashboard 登录令牌与全局访问控制
+// 安全审计修复：Dashboard 登录令牌与全局访问控制（实现见 internal/auth）
 // ==========================================
 
-var (
-	// 登录会话令牌池：token -> 过期时间(Unix 秒)。旧版仅签发可预测的静态 Token 且从未校验，等于整个控制台裸奔
-	authSessions   sync.Map
-	authSessionCnt atomic.Int64
+var authSessions = auth.NewSessionStore()
 
-	// 密钥协商池容量计数：防止未认证接口被恶意刷爆内存
-	keyPoolCnt atomic.Int64
-
-	// 登录防爆破：连续失败计数与锁定截止时间
-	loginFailCnt   atomic.Int64
-	loginLockUntil atomic.Int64
-)
+// 密钥协商池容量计数：防止未认证接口被恶意刷爆内存
+var keyPoolCnt atomic.Int64
 
 const (
-	authSessionTTL   = 24 * time.Hour
-	maxKeyPoolSize   = 4096
-	maxLoginAttempts = 10
-	loginLockWindow  = 5 * time.Minute
+	authSessionTTL = 24 * time.Hour
+	maxKeyPoolSize = 4096
 )
 
 // issueAuthToken 签发 256bit 加密随机会话令牌，并在 TTL 后自动吊销
-func issueAuthToken() string {
-	buf := make([]byte, 32)
-	if _, err := cryptorand.Read(buf); err != nil {
-		log.Printf("[AUTH] ⚠️ 随机数生成异常，拒绝签发令牌: %v", err)
-		return ""
-	}
-	token := hex.EncodeToString(buf)
-	authSessions.Store(token, time.Now().Add(authSessionTTL).Unix())
-	authSessionCnt.Add(1)
-	time.AfterFunc(authSessionTTL, func() {
-		if _, ok := authSessions.Load(token); ok {
-			authSessions.Delete(token)
-			authSessionCnt.Add(-1)
-		}
-	})
-	return token
-}
+func issueAuthToken() string { return authSessions.Issue() }
 
-// verifyAuthToken 校验请求携带的登录令牌：优先取 Authorization: Bearer 头，兼容 WebSocket 的 token 查询参数
+// verifyAuthToken 校验请求携带的登录令牌
 func verifyAuthToken(r *http.Request) bool {
-	token := ""
-	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-		token = strings.TrimPrefix(h, "Bearer ")
-	}
-	if token == "" {
-		token = r.URL.Query().Get("token")
-	}
-	if token == "" {
-		return false
-	}
-	val, ok := authSessions.Load(token)
-	if !ok {
-		return false
-	}
-	if time.Now().Unix() > val.(int64) {
-		authSessions.Delete(token)
-		authSessionCnt.Add(-1)
-		return false
-	}
-	return true
+	return authSessions.Verify(auth.TokenFromRequest(r))
 }
 
 // revokeAuthToken 注销指定令牌
 func revokeAuthToken(r *http.Request) {
-	h := r.Header.Get("Authorization")
-	if strings.HasPrefix(h, "Bearer ") {
-		token := strings.TrimPrefix(h, "Bearer ")
-		if _, ok := authSessions.LoadAndDelete(token); ok {
-			authSessionCnt.Add(-1)
-		}
-	}
+	authSessions.Revoke(auth.TokenFromRequest(r))
 }
 
-// authMiddleware 强制所有敏感 API 与 WebSocket 通道必须持有合法登录令牌。
-// 公开面仅保留：登录接口、密钥协商接口、静态页面与封面资源
+// authMiddleware 强制所有敏感 API 与 WebSocket 通道必须持有合法登录令牌
 func authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Path
-		if p == "/api/v1/auth/login" || p == "/api/v1/sec/pubkey" || p == "/api/v1/sec/exchange" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if !strings.HasPrefix(p, "/api/") && !strings.HasPrefix(p, "/ws/") {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if !verifyAuthToken(r) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte(`{"code":401,"message":"未认证：请先登录"}`))
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return auth.Middleware(authSessions, next)
 }
 
 // sysStatsCollector 后台异步收集极度耗时的 OS 级别系统指标（磁盘/内存）
@@ -806,8 +737,8 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 安全审计修复：防爆破锁死，连续失败超阈值后强制冷却，抑制在线口令爆破
-	if lock := loginLockUntil.Load(); lock > time.Now().Unix() {
-		sendJSONError(w, r, http.StatusTooManyRequests, "失败次数过多，账户已临时锁定，请稍后再试")
+	if until, locked := authSessions.CheckLocked(); locked {
+		sendJSONError(w, r, http.StatusTooManyRequests, "失败次数过多，账户已临时锁定，请稍后再试（至 "+until.Format("15:04:05")+"）")
 		return
 	}
 
@@ -815,17 +746,13 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	userOK := subtle.ConstantTimeCompare([]byte(req.Username), []byte(dashboardUsername)) == 1
 	passOK := subtle.ConstantTimeCompare([]byte(req.Password), []byte(dashboardPassword)) == 1
 	if !userOK || !passOK {
-		if fails := loginFailCnt.Add(1); fails >= maxLoginAttempts {
-			loginLockUntil.Store(time.Now().Add(loginLockWindow).Unix())
-			loginFailCnt.Store(0)
-			log.Printf("[AUTH] 🚨 检测到疑似口令爆破（来自 %s），登录已锁定 %v", r.RemoteAddr, loginLockWindow)
-		}
+		authSessions.RecordLoginFailure()
 		sendJSONError(w, r, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
-	loginFailCnt.Store(0)
+	authSessions.ResetLoginFailures()
 
-	// 安全审计修复：签发加密随机高熵令牌（旧版为可预测的 dash-token-时间戳 且后端从不校验）
+	// 安全审计修复：签发加密随机高熵令牌
 	currentToken := issueAuthToken()
 	if currentToken == "" {
 		sendJSONError(w, r, http.StatusInternalServerError, "令牌签发失败")

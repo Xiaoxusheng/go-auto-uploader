@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestAuthMiddlewareEnforcement 安全审计回归测试：验证全局认证中间件的放行与拦截边界。
@@ -24,7 +23,7 @@ func TestAuthMiddlewareEnforcement(t *testing.T) {
 	if token == "" {
 		t.Fatal("令牌签发失败")
 	}
-	defer authSessions.Delete(token)
+	defer authSessions.Revoke(token)
 
 	cases := []struct {
 		name string
@@ -65,15 +64,11 @@ func TestAuthMiddlewareEnforcement(t *testing.T) {
 
 // TestLoginBruteForceLockout 安全审计回归测试：验证连续口令失败会触发防爆破锁定。
 func TestLoginBruteForceLockout(t *testing.T) {
-	// 保存并恢复全局状态，避免污染其他测试
-	oldLock := loginLockUntil.Load()
-	defer loginLockUntil.Store(oldLock)
-	loginLockUntil.Store(0)
-	loginFailCnt.Store(0)
-	defer loginFailCnt.Store(0)
+	authSessions.ResetLoginFailures()
+	defer authSessions.ResetLoginFailures()
 
 	reqBody := `{"username":"admin","password":"wrong"}`
-	for i := 0; i < maxLoginAttempts; i++ {
+	for i := 0; i < 10; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(reqBody))
 		w := httptest.NewRecorder()
 		handleLogin(w, req)
@@ -83,7 +78,7 @@ func TestLoginBruteForceLockout(t *testing.T) {
 	}
 
 	// 阈值达成后应被锁定
-	if loginLockUntil.Load() <= time.Now().Unix() {
+	if _, locked := authSessions.CheckLocked(); !locked {
 		t.Fatal("连续失败达阈值后未触发锁定")
 	}
 
@@ -97,7 +92,7 @@ func TestLoginBruteForceLockout(t *testing.T) {
 	}
 
 	// 重置锁定后正确凭据应签发令牌
-	loginLockUntil.Store(0)
+	authSessions.ResetLoginFailures()
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login",
 		strings.NewReader(`{"username":"admin","password":"admin"}`))
 	w = httptest.NewRecorder()

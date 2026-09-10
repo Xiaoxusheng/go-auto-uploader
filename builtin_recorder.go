@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp" // ✨ 引入无头浏览器库
+
+	"upload/internal/recorder"
 )
 
 // ==========================================
@@ -100,19 +102,16 @@ type BuiltinTaskStatus struct {
 	startTime time.Time `json:"-"`
 }
 
-// BuiltinTaskFlags 单主播「录屏 / 截屏」独立开关
-type BuiltinTaskFlags struct {
-	Record     bool
-	Screenshot bool
-}
+// BuiltinTaskFlags 单主播「录屏 / 截屏」独立开关（实现见 internal/recorder）
+type BuiltinTaskFlags = recorder.TaskFlags
 
 func defaultBuiltinTaskFlags() BuiltinTaskFlags {
-	return BuiltinTaskFlags{Record: true, Screenshot: true}
+	return recorder.DefaultFlags()
 }
 
 // isBuiltinLiveStatus 判定任务是否处于“已接管推流”的活跃状态（录屏或截屏中）
 func isBuiltinLiveStatus(s string) bool {
-	return s == "录制中" || s == "截屏中"
+	return recorder.IsLiveStatus(s)
 }
 
 func builtinFlagsKey(platform, roomID string) string {
@@ -155,17 +154,17 @@ var builtinAnchorLinesMutex sync.Mutex
 
 // BuiltinConfig 存储内置录制引擎的所有核心配置参数，新增了字体大小和颜色的动态控制
 type BuiltinConfig struct {
-	Quality            string `json:"quality"`
-	SegmentTime        int    `json:"segment_time"`
-	CheckInterval      int    `json:"check_interval"`
-	SavePath           string `json:"save_path"`
-	WatermarkEnable    bool   `json:"watermark_enable"`     // 截图水印
-	VideoWatermarkEnable bool `json:"video_watermark_enable"` // 视频烧录水印（需重编码）
-	WatermarkText      string `json:"watermark_text"`
-	WatermarkFormat    string `json:"watermark_format"`
-	WatermarkPosition  string `json:"watermark_position"`
-	WatermarkFontSize  int    `json:"watermark_font_size"`
-	WatermarkFontColor string `json:"watermark_font_color"`
+	Quality              string `json:"quality"`
+	SegmentTime          int    `json:"segment_time"`
+	CheckInterval        int    `json:"check_interval"`
+	SavePath             string `json:"save_path"`
+	WatermarkEnable      bool   `json:"watermark_enable"`       // 截图水印
+	VideoWatermarkEnable bool   `json:"video_watermark_enable"` // 视频烧录水印（需重编码）
+	WatermarkText        string `json:"watermark_text"`
+	WatermarkFormat      string `json:"watermark_format"`
+	WatermarkPosition    string `json:"watermark_position"`
+	WatermarkFontSize    int    `json:"watermark_font_size"`
+	WatermarkFontColor   string `json:"watermark_font_color"`
 }
 
 // BuiltinCookieConfig 定义了多平台防爬虫所需挂载的鉴权会话
@@ -659,25 +658,7 @@ func checkFFmpegBuiltin() {
 
 // extractBuiltinRoomID 从各类直播间 URL 中提取出统一格式的纯净房间 ID
 func extractBuiltinRoomID(input string) string {
-	input = strings.TrimSpace(input)
-	if strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://") {
-		u, err := url.Parse(input)
-		if err == nil {
-			path := strings.Trim(u.Path, "/")
-			segments := strings.Split(path, "/")
-
-			if strings.Contains(u.Host, "sooplive.co.kr") || strings.Contains(u.Host, "afreecatv.com") || strings.Contains(u.Host, "sooplive.com") {
-				if len(segments) > 0 {
-					return segments[0]
-				}
-			}
-
-			if len(segments) > 0 {
-				return segments[len(segments)-1]
-			}
-		}
-	}
-	return input
+	return recorder.ExtractRoomID(input)
 }
 
 // sanitizeBuiltinFileName 清洗并规范化主播名称，剔除非法及容易导致操作异常的特殊字符
@@ -762,106 +743,14 @@ func formatBuiltinQualityName(quality string) string {
 	}
 }
 
-// parseBuiltinLine 分析本地监控的行数据，提炼平台归属、房间ID及自定义备注名
+// parseBuiltinLine 分析本地监控的行数据（委托 internal/recorder）
 func parseBuiltinLine(line string) (isPaused bool, platform string, roomID string, customName string, rawURL string, flags BuiltinTaskFlags) {
-	line = strings.TrimSpace(line)
-	flags = defaultBuiltinTaskFlags()
-	if line == "" {
-		return
-	}
-
-	if strings.HasPrefix(line, "#") {
-		isPaused = true
-		line = strings.TrimSpace(strings.TrimPrefix(line, "#"))
-	}
-
-	// 先解析并剥离开关后缀，再解析主播名，兼容「url,别名,录屏:0,截屏:1」
-	flags = parseBuiltinFlagsFromLine(line)
-	line = stripBuiltinFlagSuffixes(line)
-
-	// 统一 LastIndex：主播名内可能再次出现 ",主播:" 子串
-	if idx := strings.LastIndex(line, ",主播:"); idx != -1 {
-		customName = strings.TrimSpace(line[idx+len(",主播:"):])
-		rawURL = strings.TrimSpace(line[:idx])
-	} else if idx := strings.LastIndex(line, ", 主播:"); idx != -1 {
-		customName = strings.TrimSpace(line[idx+len(", 主播:"):])
-		rawURL = strings.TrimSpace(line[:idx])
-	} else if idx := strings.LastIndex(line, ","); idx != -1 {
-		// 旧格式「url,别名」
-		customName = strings.TrimSpace(line[idx+1:])
-		rawURL = strings.TrimSpace(line[:idx])
-	} else {
-		rawURL = line
-	}
-
-	if strings.Contains(rawURL, "douyin.com") || strings.Contains(rawURL, "amemv.com") || strings.Contains(rawURL, "iesdouyin.com") || strings.Contains(rawURL, "douyin") {
-		platform = "Douyin"
-	} else if strings.Contains(rawURL, "kuaishou.com") || strings.Contains(rawURL, "chenzhongtech.com") {
-		platform = "Kuaishou"
-	} else if strings.Contains(rawURL, "sooplive.co.kr") || strings.Contains(rawURL, "afreecatv.com") || strings.Contains(rawURL, "sooplive.com") {
-		platform = "Soop"
-	}
-
-	roomID = extractBuiltinRoomID(rawURL)
-	// 不在此处写 flags 表，避免 rebuild/parse 互相覆盖；由加载与 set_flags 负责入库
-	return
+	return recorder.ParseLine(line)
 }
 
-// stripBuiltinFlagSuffixes 从行尾反复剥离 ,录屏:x / ,截屏:y 后缀
-func stripBuiltinFlagSuffixes(line string) string {
-	line = strings.TrimSpace(line)
-	for {
-		idx := strings.LastIndex(line, ",")
-		if idx < 0 {
-			return line
-		}
-		tail := strings.TrimSpace(line[idx+1:])
-		if strings.HasPrefix(tail, "录屏:") || strings.HasPrefix(tail, "截屏:") {
-			line = strings.TrimSpace(line[:idx])
-			continue
-		}
-		return line
-	}
-}
-
-func parseBuiltinFlagsFromLine(line string) BuiltinTaskFlags {
-	flags := defaultBuiltinTaskFlags()
-	for _, part := range strings.Split(line, ",") {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "录屏:") {
-			v := strings.TrimSpace(strings.TrimPrefix(part, "录屏:"))
-			flags.Record = v != "0" && !strings.EqualFold(v, "off") && !strings.EqualFold(v, "false")
-		} else if strings.HasPrefix(part, "截屏:") {
-			v := strings.TrimSpace(strings.TrimPrefix(part, "截屏:"))
-			flags.Screenshot = v != "0" && !strings.EqualFold(v, "off") && !strings.EqualFold(v, "false")
-		}
-	}
-	return flags
-}
-
-// rebuildBuiltinLineWithFlags 在名单行上写回/更新录屏截屏后缀，保持主播名与暂停前缀
+// rebuildBuiltinLineWithFlags 在名单行上写回/更新录屏截屏后缀
 func rebuildBuiltinLineWithFlags(trimmedLine string, flags BuiltinTaskFlags) string {
-	isPaused, _, _, customName, rawURL, _ := parseBuiltinLine(trimmedLine)
-	if rawURL == "" {
-		return trimmedLine
-	}
-	prefix := ""
-	if isPaused {
-		prefix = "#"
-	}
-	out := rawURL
-	if customName != "" {
-		out += ",主播:" + customName
-	}
-	out += fmt.Sprintf(",录屏:%d,截屏:%d", boolToInt(flags.Record), boolToInt(flags.Screenshot))
-	return prefix + out
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
+	return recorder.RebuildLineWithFlags(trimmedLine, flags)
 }
 
 // syncBuiltinAnchorToTxt 依据前端指令对本地配置文件里的内容作增、删、改并落地
