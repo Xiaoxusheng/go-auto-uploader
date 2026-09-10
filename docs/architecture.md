@@ -16,10 +16,11 @@ cmd/main (package main)
   ├── internal/ratelimit     日夜限速
   ├── internal/ws            WebSocket Hub
   ├── internal/notification  Notifier 扇出
-  ├── internal/recorder      Docker 容器控制
+  ├── internal/auth          登录会话 + Middleware
+  ├── internal/recorder      Docker 控制 + 名单行/开关纯函数
   ├── internal/naming        文件名清洗
   ├── internal/fsutil        原子写
-  └── package main 遗留      builtin_recorder / webapi / bots / upload 编排
+  └── package main 遗留      builtin_recorder 运行时 / webapi 加密与 Handler / bots / handleFile
 ```
 
 ## 上传数据流

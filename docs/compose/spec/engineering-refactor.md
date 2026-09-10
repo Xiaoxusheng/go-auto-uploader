@@ -47,4 +47,6 @@ commits: 6691b0c..HEAD
 - [x] T7: ws Hub — acceptance: test PASS (covers: S2)
 - [x] T8: notification Hub — acceptance: test PASS (covers: S2)
 - [x] T9: recorder Docker + docs — acceptance: test PASS + 文档齐全 (covers: S2)
-- [ ] T10: builtin_recorder/auth/api-http/main&lt;150 行 — acceptance: 待后续 (covers: S2)
+- [x] T10a: auth SessionStore/Middleware — acceptance: test PASS (covers: S2)
+- [x] T10b: recorder 名单行/开关纯函数 — acceptance: test PASS (covers: S2)
+- [ ] T10c: builtin_recorder 运行时 / api-http / main&lt;150 行 — acceptance: 待后续 (covers: S2)
