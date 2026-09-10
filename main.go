@@ -17,10 +17,9 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	"upload/internal/recorder"
 
 	"upload/internal/config"
-	"upload/internal/convert"
+
 	"upload/internal/hashstore"
 	"upload/internal/logx"
 	"upload/internal/naming"
@@ -649,147 +648,9 @@ func cleanupFailedTasksByPath(targetPath string) {
 	})
 }
 
-// handleFile 负责调度单一目标文件的生命周期，包括名称净洗、秒传对比、上报排队及执行下层上传操作
+// handleFile 委托 internal/uploader.Pipeline（见 handlefile_pipeline.go 的装配）
 func handleFile(path string) {
-	if convert.IsArtifact(path) {
-		return
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		log.Printf("[FILE][ERR] 无法获取文件状态 %s: %v", path, err)
-		return
-	}
-
-	// ✨ 核心修复二：作为防线托底，拒绝 0 字节切片进入推流流程，避免 NaN 以及远端 500
-	if info.Size() == 0 {
-		log.Printf("[FILE][SKIP] 拦截到 0 字节死文件，阻断上传并执行清理: %s", path)
-		os.Remove(path)
-		return
-	}
-
-	// TS→MP4：上传前无损封装；失败则回退直接传原 TS
-	var originalTS string
-	doConvert := appCfg().ConvertMP4
-	if doConvert && convert.IsTS(path) {
-		log.Printf("[CONVERT] 🎬 开始 TS→MP4 封装: %s (%.2f MB)", filepath.Base(path), float64(info.Size())/1024/1024)
-		if mp4Path, cerr := convert.TSToMP4(path, recorder.FFmpegBin()); cerr == nil {
-			originalTS = path
-			path = mp4Path
-			if ni, nerr := os.Stat(path); nerr == nil {
-				info = ni
-			} else {
-				log.Printf("[CONVERT] 转换后无法读取 MP4，回退原 TS: %v", nerr)
-				path = originalTS
-				originalTS = ""
-				_ = os.Remove(mp4Path)
-			}
-		} else {
-			log.Printf("[CONVERT] ⚠️ 转换失败，将直接上传原 TS: %v", cerr)
-		}
-	}
-
-	root := detectRoot(path)
-	if root == "" {
-		log.Println("[SKIP][NO_ROOT_MATCH] 找不到匹配的根目录:", path)
-		return
-	}
-
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		log.Println("[PATH][REL][ERR]", err, path)
-		return
-	}
-
-	name := naming.CleanFileName(filepath.Base(rel))
-	remote := naming.BuildRemotePath(safeBaseDir, filepath.Dir(rel), filepath.Base(rel))
-
-	// 检测秒传机制 (Hash)
-	hash := hashstore.FileHash(path)
-	if hash != "" && hashDB.Exists(hash) {
-		log.Println("[SKIP][HASH] 文件已存在于记录中 (秒传触发):", path)
-
-		taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
-
-		newTask := &Task{
-			ID:        taskID,
-			Name:      name,
-			Path:      path,
-			Size:      info.Size(),
-			Progress:  100,
-			Speed:     0,
-			Status:    "success(秒传)",
-			CreatedAt: time.Now(),
-			EndTime:   time.Now(),
-		}
-		liveTasks.Store(taskID, newTask)
-
-		queueSuccess.Store(taskID, struct{}{})
-		atomic.AddInt64(&queueSuccessCount, 1)
-
-		addHistoryRecord(path, remote, info.Size(), "success(秒传)", 0, "")
-
-		// 一旦秒传判定成功，不仅记录增加，更要减扣其身处待处理列表的份额
-		if ds, exists := dirStatusStore.Get(root); exists {
-			_ = ds
-			ds.Mu.Lock()
-			if ds.PendingFiles > 0 {
-				ds.PendingFiles--
-			}
-			ds.UploadedFiles++
-			ds.UploadedSize += info.Size()
-			ds.TotalFiles = ds.PendingFiles + ds.UploadedFiles
-			ds.Mu.Unlock()
-		}
-		markDirStatusDirty()
-
-		broadcastWS("taskDone", map[string]interface{}{
-			"id":     taskID,
-			"status": "success",
-			"size":   info.Size(),
-		})
-
-		cleanupFailedTasksByPath(path)
-
-		if err := os.Remove(path); err != nil {
-			log.Printf("[FILE][CLEAN][ERR] 秒传触发，移除本地文件失败 %s: %v", path, err)
-		}
-		if originalTS != "" {
-			if err := os.Remove(originalTS); err != nil {
-				log.Printf("[FILE][CLEAN][ERR] 秒传触发，移除原 TS 失败 %s: %v", originalTS, err)
-			}
-		}
-		return
-	}
-
-	// 开始执行远端上传
-	// upload() 内部持有文件句柄（defer f.Close()），函数返回后句柄已关闭，此时再 Remove 安全
-	if upload(path, remote, info.Size()) {
-		hashDB.Save(hash)
-		if err := os.Remove(path); err != nil {
-			log.Printf("[FILE][CLEAN][ERR] 移除本地文件失败 %s: %v", path, err)
-		}
-		if originalTS != "" {
-			if err := os.Remove(originalTS); err != nil {
-				log.Printf("[FILE][CLEAN][ERR] 移除原 TS 失败 %s: %v", originalTS, err)
-			}
-		}
-		recordSuccess(remote, name, info.Size())
-
-		// 真实物理上传完毕后扣除待处理余量
-		if ds, exists := dirStatusStore.Get(root); exists {
-			_ = ds
-			ds.Mu.Lock()
-			if ds.PendingFiles > 0 {
-				ds.PendingFiles--
-			}
-			ds.UploadedFiles++
-			ds.UploadedSize += info.Size()
-			ds.TotalFiles = ds.PendingFiles + ds.UploadedFiles
-			ds.Mu.Unlock()
-		}
-		markDirStatusDirty()
-	}
+	ensureUploadPipeline().HandleFile(context.Background(), path, appCfg().Dirs)
 }
 
 // upload 建立与远端 API 的长连接将流数据打包为 HTTP PUT 方法传输，并承载错误重试及异常鉴权上报
