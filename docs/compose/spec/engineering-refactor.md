@@ -10,16 +10,16 @@ commits: 6691b0c..HEAD
 
 ## Report
 
-**What was built** — 在不改对外 CLI/REST/配置 JSON 字段的前提下，将「巨型 package main」逐步拆为 `internal/*` 领域包：配置单源、原子写、秒传哈希、TS→MP4、OpenList 客户端、可取消 Worker 池、扫描候选、历史/成功/目录统计、WebSocket Hub、通知扇出、Docker 录制控制。`main`/`webapi` 改为调用 Store/Hub/Client，功能路径保持兼容。SIGINT/SIGTERM 可优雅停 Worker。
+**What was built** — 在不改对外 CLI/REST/配置 JSON 字段的前提下，将巨型 `package main` 拆为 16 个 `internal/*` 领域包：配置单源、原子写、秒传、TS→MP4、OpenList、Worker 池、扫描、存储、WS Hub、通知、鉴权、RSA/AES 加密、日志环、Docker/名单解析。`main`/`webapi` 改为 Store/Hub/Client 薄包装，功能路径保持兼容。SIGINT/SIGTERM 可优雅停 Worker。
 
-**Verification** — 每阶段 `go build ./...`、`go test ./...`、`go vet ./...` 均 PASS；最终全绿含 internal 各包单测。
+**Verification** — 最终 `go build ./...`、`go test ./...`、`go vet ./...` 均 PASS（含全部 internal 包单测）。
 
 **Journey log** —
 1. `.gitignore` 裸 `uploader` 会忽略 `internal/uploader`，改为 `/uploader`。
 2. `safeBaseDir` 变更导致 `DetectStreamer` 取错段，抽包时顺手修复。
 3. `TrendSnapshot` 曾拷贝 `sync.Mutex`，改 DTO。
-4. 裸 `dirStatuses.Load`→`Get` 后残留 `val.(*DirStatus)` 会编译失败，批量替换需扫全库。
-5. builtin_recorder (~2700 行) 仍留 main，作为下一阶段边界。
+4. RSA 从 `StartWebServer` 抽走后测试空指针，改为 `ensureRSAKeyPair` 懒加载。
+5. builtin_recorder 运行时仍留 main，作为下一阶段边界。
 
 ## [S1] Problem
 
@@ -49,4 +49,5 @@ commits: 6691b0c..HEAD
 - [x] T9: recorder Docker + docs — acceptance: test PASS + 文档齐全 (covers: S2)
 - [x] T10a: auth SessionStore/Middleware — acceptance: test PASS (covers: S2)
 - [x] T10b: recorder 名单行/开关纯函数 — acceptance: test PASS (covers: S2)
+- [x] T10d: cryptox RSA/AES 会话 + logx 日志环 — acceptance: test PASS (covers: S2)
 - [ ] T10c: builtin_recorder 运行时 / api-http / main&lt;150 行 — acceptance: 待后续 (covers: S2)

@@ -2,13 +2,8 @@ package main
 
 import (
 	"context"
-	cryptorand "crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/subtle"
-	"crypto/x509"
 	_ "embed"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,6 +25,7 @@ import (
 	"upload/internal/auth"
 	"upload/internal/config"
 	"upload/internal/cryptox"
+	"upload/internal/logx"
 	"upload/internal/notification"
 	"upload/internal/recorder"
 	"upload/internal/storage"
@@ -60,10 +56,6 @@ var (
 	runningMu sync.RWMutex
 	startTime time.Time
 
-	logs    = make([]*LogEntry, 0, 5000) // 优化：扩容到 5000 条，重度运行时 1000 条极易打满
-	logsMu  sync.RWMutex
-	logChan = make(chan *LogEntry, 1000)
-
 	// 新增全局缓存变量：用于彻底消除通过 OS Shell 获取系统状态带来的致命阻塞延迟
 	cachedDiskFree  int64
 	cachedFFmpegMem int64
@@ -72,9 +64,8 @@ var (
 	// ==========================================
 	// 动态密钥交换中心 (RSA + AES PFS 完美前向保密)
 	// ==========================================
-	rsaPrivateKey      *rsa.PrivateKey
-	rsaPublicKeyBase64 string
-	sessionKeys        = cryptox.NewSessionStore(maxKeyPoolSize)
+	rsaKeyPair  *cryptox.RSAKeyPair
+	sessionKeys = cryptox.NewSessionStore(maxKeyPoolSize)
 )
 
 // WSClient 增加专属的 AES 密钥字段和独立消息通道，实现真正的无阻塞 Fan-out 广播
@@ -96,12 +87,7 @@ type Streamer struct {
 }
 
 // LogEntry 标准日志实体
-type LogEntry struct {
-	Time    string `json:"time"`
-	Level   string `json:"level"`
-	Message string `json:"message"`
-	Error   string `json:"error,omitempty"`
-}
+type LogEntry = logx.Entry
 
 // APIResponse 统一前端接口返回结构
 type APIResponse struct {
@@ -245,16 +231,34 @@ func sendJSONError(w http.ResponseWriter, r *http.Request, statusCode int, messa
 // 密钥交换前置 API
 // ==========================================
 
+// ensureRSAKeyPair 懒加载 RSA 密钥对（测试环境可能未启动 StartWebServer）
+func ensureRSAKeyPair() *cryptox.RSAKeyPair {
+	if rsaKeyPair != nil {
+		return rsaKeyPair
+	}
+	kp, err := cryptox.GenerateRSAKeyPair()
+	if err != nil {
+		log.Printf("[SEC] 生成 RSA 密钥失败: %v", err)
+		return nil
+	}
+	rsaKeyPair = kp
+	return kp
+}
+
 // handleGetPubKey 前端获取系统的随机 RSA 公钥，并下发当前系统的安全开关状态
 func handleGetPubKey(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	encEnabled := appCfg().EnableEncryption
+	pub := ""
+	if kp := ensureRSAKeyPair(); kp != nil {
+		pub = kp.PublicBase64
+	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"code": 200,
 		"data": map[string]interface{}{
-			"pubkey":  rsaPublicKeyBase64,
+			"pubkey":  pub,
 			"enabled": encEnabled,
 		},
 	})
@@ -270,15 +274,13 @@ func handleExchangeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ciphertext, err := base64.StdEncoding.DecodeString(req.EncKey)
-	if err != nil {
-		http.Error(w, "invalid base64", 400)
+	kp := ensureRSAKeyPair()
+	if kp == nil {
+		http.Error(w, "crypto not ready", 500)
 		return
 	}
-
-	// 使用 RSA-OAEP 对前端传来的专属 AES 密钥进行解密
-	aesKey, err := rsa.DecryptOAEP(sha256.New(), cryptorand.Reader, rsaPrivateKey, ciphertext, nil)
-	if err != nil || len(aesKey) != 32 {
+	aesKey, err := kp.UnwrapAESKey(req.EncKey)
+	if err != nil {
 		http.Error(w, "decryption failed", 400)
 		return
 	}
@@ -362,16 +364,11 @@ func sysStatsCollector() {
 // StartWebServer 启动动态安全的 Web 服务器，挂载所有路由端点
 func StartWebServer(port int) {
 	// 系统启动时动态生成 RSA-2048 密钥对，彻底抛弃硬编码密钥
-	priv, err := rsa.GenerateKey(cryptorand.Reader, 2048)
+	kp, err := cryptox.GenerateRSAKeyPair()
 	if err != nil {
 		log.Fatalf("[SEC] 生成 RSA 密钥失败: %v", err)
 	}
-	rsaPrivateKey = priv
-	pubASN1, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
-	if err != nil {
-		log.Fatalf("[SEC] 导出公钥失败: %v", err)
-	}
-	rsaPublicKeyBase64 = base64.StdEncoding.EncodeToString(pubASN1)
+	rsaKeyPair = kp
 	log.Println("[SEC] 🛡️ 商业级动态 RSA+AES 混合加密中心已初始化")
 
 	runningMu.Lock()
@@ -1437,19 +1434,7 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
-	logsMu.RLock()
-	filtered := make([]*LogEntry, 0)
-	for i := len(logs) - 1; i >= 0; i-- {
-		entry := logs[i]
-		if level != "" && entry.Level != level {
-			continue
-		}
-		if keyword != "" && !strings.Contains(strings.ToLower(entry.Message), strings.ToLower(keyword)) {
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-	logsMu.RUnlock()
+	filtered := appLogs.Snapshot(level, keyword)
 
 	total := len(filtered)
 	start := (page - 1) * limit
@@ -1481,18 +1466,7 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"system_logs_%s.txt\"", time.Now().Format("20060102-150405")))
 
-	logsMu.RLock()
-	filtered := make([]*LogEntry, 0)
-	for _, entry := range logs {
-		if level != "" && entry.Level != level {
-			continue
-		}
-		if keyword != "" && !strings.Contains(strings.ToLower(entry.Message), strings.ToLower(keyword)) {
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-	logsMu.RUnlock()
+	filtered := appLogs.SnapshotAsc(level, keyword)
 
 	if exportLimit > 0 && len(filtered) > exportLimit {
 		filtered = filtered[len(filtered)-exportLimit:]
@@ -1527,14 +1501,8 @@ func handleLogsDownload(w http.ResponseWriter, r *http.Request) {
 
 // logCollector 异步日志收集器，通过通道接收系统各处投递的日志并维护定长的内存队列
 func logCollector() {
-	for entry := range logChan {
-		logsMu.Lock()
-		logs = append(logs, entry)
-		if len(logs) > 5000 {
-			logs = logs[1:]
-		}
-		logsMu.Unlock()
-
+	for entry := range appLogs.Chan() {
+		appLogs.Append(entry)
 		broadcastWS("newLog", entry)
 	}
 }

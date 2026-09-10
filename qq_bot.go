@@ -610,14 +610,12 @@ func qqHandleWatermark(userID int64, parts []string) {
 // 机制：弃用磁盘路径挂载，在内存将数据转换为 Base64 流封包穿透 Docker，解决跨环境发送文件失败的问题。
 func qqHandleLog(userID int64) {
 	var buf strings.Builder
-	logsMu.RLock()
-	for _, entry := range logs {
+	for _, entry := range appLogs.SnapshotAsc("", "") {
 		buf.WriteString(fmt.Sprintf("[%s] [%s] %s\n", entry.Time, entry.Level, entry.Message))
 		if entry.Error != "" {
 			buf.WriteString(fmt.Sprintf("  Error: %s\n", entry.Error))
 		}
 	}
-	logsMu.RUnlock()
 
 	if buf.Len() == 0 {
 		sendQQAPIMessage(userID, "📭 当前内存中无日志数据。")

@@ -40,10 +40,7 @@ func TestConcurrentStateMutations(t *testing.T) {
 					)
 
 					// 2. 疯狂推送并发日志
-					select {
-					case logChan <- &LogEntry{Time: time.Now().Format(time.RFC3339), Level: "INFO", Message: "Chaos Test"}:
-					default:
-					}
+					appLogs.Add("INFO", "Chaos Test", "")
 
 					// 3. 疯狂更替热重载配置
 					cfgStore.Update(func(c *config.Config) { c.Workers = counter%10 + 1 })

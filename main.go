@@ -21,6 +21,7 @@ import (
 	"upload/internal/config"
 	"upload/internal/convert"
 	"upload/internal/hashstore"
+	"upload/internal/logx"
 	"upload/internal/naming"
 	"upload/internal/ratelimit"
 	"upload/internal/remote"
@@ -82,6 +83,9 @@ var (
 
 // 动态应用配置：单源 Store，禁止再散落 appConfigMu 双锁
 var cfgStore = config.NewStore("config.json")
+
+// appLogs 应用日志环形缓冲（Web 终端）
+var appLogs = logx.NewStore(5000, 1000)
 
 // 任务队列和历史记录状态 (极致性能优化：全量替换为 sync.Map 和 原子计算)
 var (
@@ -176,33 +180,6 @@ const (
 	successLogFile = "upload_success.json" // 本地成功日志，用于图表统计
 	dirStatusFile  = "dir_status.json"     // 本地目录状态统计持久化文件
 )
-
-// logInterceptor 拦截系统内部各类标准打印流，并实现同步推送到前端 WebSocket 展示
-type logInterceptor struct {
-	original io.Writer
-}
-
-// Write 实现接口拦截标准日志，并组装投递给面板日志监控系统
-func (l *logInterceptor) Write(p []byte) (n int, err error) {
-	n, err = l.original.Write(p)
-	msg := strings.TrimSpace(string(p))
-
-	parts := strings.SplitN(msg, " ", 3)
-	if len(parts) >= 3 && strings.Contains(parts[0], "/") && strings.Contains(parts[1], ":") {
-		msg = parts[2]
-	}
-
-	level := "info"
-	lowerMsg := strings.ToLower(msg)
-	if strings.Contains(lowerMsg, "[err]") || strings.Contains(lowerMsg, "error") || strings.Contains(lowerMsg, "fail") {
-		level = "error"
-	} else if strings.Contains(lowerMsg, "[warn]") || strings.Contains(lowerMsg, "warning") {
-		level = "warn"
-	}
-
-	addLog(level, msg, "")
-	return n, err
-}
 
 // saveConfigToFile 将当前配置原子落盘至 config.json
 func saveConfigToFile() {
@@ -303,7 +280,7 @@ func main() {
 
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	// 启用日志拦截器，将日志传回加密网页
-	log.SetOutput(&logInterceptor{original: os.Stdout})
+	log.SetOutput(&logx.Interceptor{Original: os.Stdout, Store: appLogs})
 
 	// 启动时读取本地上传成功记录缓存入内存，并重建增量聚合
 	successStore.Load()
@@ -1297,23 +1274,10 @@ func detectRoot(path string) string {
 
 // addLog 作为业务和展示系统隔离的桥梁，负责筛选后将指定等级事件装箱并经加密投递到浏览器
 func addLog(level, message, errorMsg string) {
-	enabled := appCfg().EnableLogs
-
-	if !enabled {
+	if !appCfg().EnableLogs {
 		return
 	}
-
-	entry := &LogEntry{
-		Time:    time.Now().Format(time.DateTime),
-		Level:   level,
-		Message: message,
-		Error:   errorMsg,
-	}
-
-	select {
-	case logChan <- entry:
-	default:
-	}
+	appLogs.Add(level, message, errorMsg)
 }
 
 // getActiveStreamers 通过探测各目录内是否存在时间较新的文件，推断当前正在处于写入(活跃录制)状态的主播名单，并与上次比对触发微信开播/下播通知

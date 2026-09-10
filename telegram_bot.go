@@ -1400,14 +1400,12 @@ func tgHandleLog(chatID int64) string {
 		var buf bytes.Buffer
 		buf.Grow(1024 * 1024)
 
-		logsMu.RLock()
-		for _, entry := range logs {
+		for _, entry := range appLogs.SnapshotAsc("", "") {
 			buf.WriteString(fmt.Sprintf("[%s] [%s] %s\n", entry.Time, entry.Level, entry.Message))
 			if entry.Error != "" {
 				buf.WriteString(fmt.Sprintf("  Error: %s\n", entry.Error))
 			}
 		}
-		logsMu.RUnlock()
 
 		if buf.Len() == 0 {
 			splitAndSendTelegramMsg(chatID, "📭 当前内存中没有任何系统日志数据。")

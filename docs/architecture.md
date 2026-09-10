@@ -17,10 +17,12 @@ cmd/main (package main)
   ├── internal/ws            WebSocket Hub
   ├── internal/notification  Notifier 扇出
   ├── internal/auth          登录会话 + Middleware
+  ├── internal/cryptox       AES-GCM + RSA 会话密钥
+  ├── internal/logx          日志环形缓冲 + stdout 拦截
   ├── internal/recorder      Docker 控制 + 名单行/开关纯函数
   ├── internal/naming        文件名清洗
   ├── internal/fsutil        原子写
-  └── package main 遗留      builtin_recorder 运行时 / webapi 加密与 Handler / bots / handleFile
+  └── package main 遗留      builtin_recorder 运行时 / webapi Handler 与业务编排 / bots
 ```
 
 ## 上传数据流
