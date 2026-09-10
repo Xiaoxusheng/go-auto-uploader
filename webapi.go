@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -31,6 +29,7 @@ import (
 
 	"upload/internal/auth"
 	"upload/internal/config"
+	"upload/internal/cryptox"
 	"upload/internal/notification"
 	"upload/internal/recorder"
 	"upload/internal/storage"
@@ -75,7 +74,7 @@ var (
 	// ==========================================
 	rsaPrivateKey      *rsa.PrivateKey
 	rsaPublicKeyBase64 string
-	sessionKeys        sync.Map // 升级优化：支持极速无锁查询的专属隧道密钥池
+	sessionKeys        = cryptox.NewSessionStore(maxKeyPoolSize)
 )
 
 // WSClient 增加专属的 AES 密钥字段和独立消息通道，实现真正的无阻塞 Fan-out 广播
@@ -125,68 +124,25 @@ type StreamerRank struct {
 }
 
 // EncryptedRequest 加密通信的载体结构
-type EncryptedRequest struct {
-	Encrypted string `json:"encrypted"`
-}
+type EncryptedRequest = cryptox.Envelope
 
 // ==========================================
-// 核心加解密与 Session 管理逻辑
+// 核心加解密与 Session 管理逻辑（实现见 internal/cryptox）
 // ==========================================
 
 // getSessionKey 从请求头或 URL Query 中提取客户端的动态分配 AES 密钥
 func getSessionKey(r *http.Request) ([]byte, error) {
-	sid := r.Header.Get("X-Session-Id")
-	if sid == "" {
-		sid = r.URL.Query().Get("session_id")
-	}
-	if sid == "" {
-		return nil, fmt.Errorf("missing session id")
-	}
-	keyVal, ok := sessionKeys.Load(sid)
-	if !ok {
-		return nil, fmt.Errorf("invalid or expired session id")
-	}
-	return keyVal.([]byte), nil
+	return sessionKeys.SessionKeyFromRequest(r)
 }
 
 // encryptPayload 使用客户端专属的动态 AES 密钥进行载荷加密
 func encryptPayload(plaintext []byte, key []byte) (string, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-	aesGCM, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	nonce := make([]byte, aesGCM.NonceSize())
-	if _, err = io.ReadFull(cryptorand.Reader, nonce); err != nil {
-		return "", err
-	}
-	ciphertext := aesGCM.Seal(nonce, nonce, plaintext, nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	return cryptox.Encrypt(plaintext, key)
 }
 
 // decryptPayload 使用客户端专属的动态 AES 密钥进行载荷解密
 func decryptPayload(cryptoText string, key []byte) ([]byte, error) {
-	ciphertext, err := base64.StdEncoding.DecodeString(cryptoText)
-	if err != nil {
-		return nil, err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	aesGCM, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonceSize := aesGCM.NonceSize()
-	if len(ciphertext) < nonceSize {
-		return nil, fmt.Errorf("密文格式被破坏或长度不足")
-	}
-	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	return aesGCM.Open(nil, nonce, ciphertext, nil)
+	return cryptox.Decrypt(cryptoText, key)
 }
 
 // parseEncryptedRequest 拦截密文请求，并使用动态分配的密钥将其还原为实际业务结构体，支持降级回明文解析
@@ -327,22 +283,16 @@ func handleExchangeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 安全审计修复：密钥池容量熔断，防止匿名高频协商耗尽内存
-	if keyPoolCnt.Load() >= maxKeyPoolSize {
+	sessionID := fmt.Sprintf("sess-%d-%d", time.Now().UnixNano(), rand.Intn(1000000))
+	if err := sessionKeys.Put(sessionID, aesKey); err != nil {
+		// 会话池满等容量熔断
 		http.Error(w, "too many sessions", http.StatusTooManyRequests)
 		return
 	}
 
-	sessionID := fmt.Sprintf("sess-%d-%d", time.Now().UnixNano(), rand.Intn(1000000))
-	sessionKeys.Store(sessionID, aesKey)
-	keyPoolCnt.Add(1)
-
 	// 优化：使用 time.AfterFunc 替代独立 goroutine sleep，避免大量并发登录时产生孤儿 goroutine 堆积
 	time.AfterFunc(24*time.Hour, func() {
-		if _, ok := sessionKeys.Load(sessionID); ok {
-			sessionKeys.Delete(sessionID)
-			keyPoolCnt.Add(-1)
-		}
+		sessionKeys.Delete(sessionID)
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -357,9 +307,6 @@ func handleExchangeKey(w http.ResponseWriter, r *http.Request) {
 // ==========================================
 
 var authSessions = auth.NewSessionStore()
-
-// 密钥协商池容量计数：防止未认证接口被恶意刷爆内存
-var keyPoolCnt atomic.Int64
 
 const (
 	authSessionTTL = 24 * time.Hour
