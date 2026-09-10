@@ -1104,9 +1104,7 @@ func buildStatusData() map[string]interface{} {
 	currentWorkers := _cfgSnap.Workers
 	configuredDirs := _cfgSnap.Dirs
 
-	tokenMu.Lock()
-	tokenValid := token != ""
-	tokenMu.Unlock()
+	tokenValid := remoteClient != nil && remoteClient.Token() != ""
 
 	dynInterval := atomic.LoadInt64(&currentDynamicIntervalGlobal)
 	if dynInterval == 0 {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"upload/internal/hashstore"
 	"upload/internal/naming"
 	"upload/internal/ratelimit"
+	"upload/internal/remote"
 )
 
 // appCfg 读取配置快照（单源 cfgStore）
@@ -46,11 +48,6 @@ var (
 	dashboardUsername = "admin"
 	dashboardPassword = "admin" // 安全审计：默认弱口令，可通过 config.json 的 dashboardUser/dashboardPass 覆盖，启动时若仍为默认值会打印高危告警
 
-	// 修复 Bug 7：将远端服务器 Token 与 Dashboard 登录 Token 分开
-	// token 原先被 login() 和 handleLogin() 同时写入，两者语义不同会互相覆盖
-	token   string // 远端 Alist 服务器的 Bearer Token（用于文件上传鉴权）
-	tokenMu sync.Mutex
-
 	// 优化点：为 httpCli 配置连接池，复用空闲连接，极大减少频繁新建 TCP 请求带来的内存和 CPU 消耗
 	httpCli = &http.Client{
 		Timeout: 0,
@@ -60,6 +57,9 @@ var (
 			IdleConnTimeout:     90 * time.Second, // 空闲连接保活时间
 		},
 	}
+
+	// remoteClient OpenList/AList 远端客户端（登录 + PUT）
+	remoteClient *remote.OpenListClient
 
 	hashFile = "uploaded_hash.db" // 已经上传的文件哈希记录（秒传用）
 
@@ -938,7 +938,7 @@ func handleFile(path string) {
 }
 
 // upload 建立与远端 API 的长连接将流数据打包为 HTTP PUT 方法传输，并承载错误重试及异常鉴权上报
-func upload(local, remote string, size int64) bool {
+func upload(local, remotePath string, size int64) bool {
 	f, err := os.Open(local)
 	if err != nil {
 		log.Printf("[UPLOAD][ERR] 无法打开文件 %s: %v", local, err)
@@ -948,11 +948,11 @@ func upload(local, remote string, size int64) bool {
 
 	taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
 	startTime := time.Now()
-	pr := NewProgressReaderWithID(filepath.Base(remote), f, size, taskID)
+	pr := NewProgressReaderWithID(filepath.Base(remotePath), f, size, taskID)
 
 	newTask := &Task{
 		ID:        taskID,
-		Name:      filepath.Base(remote),
+		Name:      filepath.Base(remotePath),
 		Path:      local,
 		Size:      size,
 		Progress:  0,
@@ -967,7 +967,7 @@ func upload(local, remote string, size int64) bool {
 
 	broadcastWS("uploadProgress", map[string]interface{}{
 		"id":        taskID,
-		"filename":  filepath.Base(remote),
+		"filename":  filepath.Base(remotePath),
 		"path":      local,
 		"size":      size,
 		"uploaded":  0,
@@ -976,18 +976,14 @@ func upload(local, remote string, size int64) bool {
 		"startTime": startTime.UnixMilli(),
 	})
 
-	targetServer := appCfg().RemoteServer
+	if remoteClient == nil {
+		_cfgSnap := appCfg()
+		remoteClient = remote.NewOpenListClient(_cfgSnap.RemoteServer, _cfgSnap.RemoteUser, _cfgSnap.RemotePass, httpCli)
+	}
 
-	req, _ := http.NewRequest("PUT", targetServer+"/api/fs/put", pr)
-	req.ContentLength = size
-	req.Header.Set("File-Path", remote)
-	req.Header.Set("Content-Type", "application/octet-stream")
-
-	tokenMu.Lock()
-	req.Header.Set("Authorization", token)
-	tokenMu.Unlock()
-
-	resp, err := httpCli.Do(req)
+	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
+	defer cancel()
+	putRes, err := remoteClient.Put(ctx, remotePath, pr, size)
 
 	if err != nil {
 		log.Printf("[UPLOAD][HTTP][ERR] %s -> %v", filepath.Base(local), err)
@@ -1009,7 +1005,7 @@ func upload(local, remote string, size int64) bool {
 		queueFail.Store(taskID, struct{}{})
 		atomic.AddInt64(&queueFailCount, 1)
 
-		addHistoryRecord(local, remote, size, "failed", time.Since(startTime).Seconds(), err.Error())
+		addHistoryRecord(local, remotePath, size, "failed", time.Since(startTime).Seconds(), err.Error())
 
 		broadcastWS("taskDone", map[string]interface{}{
 			"id":     taskID,
@@ -1025,21 +1021,9 @@ func upload(local, remote string, size int64) bool {
 
 		return false
 	}
-	defer resp.Body.Close()
 
-	// 解析出服务器真实返回的 Message，拒绝吃掉任何服务端返回的详细报错
-	var r struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-	}
-	if decodeErr := json.NewDecoder(resp.Body).Decode(&r); decodeErr != nil {
-		r.Code = resp.StatusCode
-		r.Message = "解析远端响应体失败或非标准化 JSON 格式"
-	} else if r.Code == 0 {
-		r.Code = resp.StatusCode
-	}
-
-	if r.Code == 200 {
+	// putRes.Code == 200 表示远端接受
+	if putRes.OK() {
 		if val, exists := liveTasks.Load(taskID); exists {
 			task := val.(*Task)
 			task.Mu.Lock()
@@ -1055,7 +1039,7 @@ func upload(local, remote string, size int64) bool {
 		queueSuccess.Store(taskID, struct{}{})
 		atomic.AddInt64(&queueSuccessCount, 1)
 
-		addHistoryRecord(local, remote, size, "success", time.Since(startTime).Seconds(), "")
+		addHistoryRecord(local, remotePath, size, "success", time.Since(startTime).Seconds(), "")
 
 		broadcastWS("taskDone", map[string]interface{}{
 			"id":       taskID,
@@ -1072,11 +1056,11 @@ func upload(local, remote string, size int64) bool {
 
 	} else {
 		// 截获服务器的真实拦截明细输出到日志
-		log.Printf("[UPLOAD][REMOTE][ERR] 远端服务器拒绝或异常，状态码: %d 详细报错: %s 文件: %s", r.Code, r.Message, filepath.Base(local))
-		errMsg := fmt.Sprintf("远端拒绝 (Code: %d, 报错: %s)", r.Code, r.Message)
+		log.Printf("[UPLOAD][REMOTE][ERR] 远端服务器拒绝或异常，状态码: %d 详细报错: %s 文件: %s", putRes.Code, putRes.Message, filepath.Base(local))
+		errMsg := fmt.Sprintf("远端拒绝 (Code: %d, 报错: %s)", putRes.Code, putRes.Message)
 
 		// 将服务端真实错误暴露给用户的气泡系统
-		SendAlert("error", "上传遭拒绝", fmt.Sprintf("文件: %s\n状态码: %d\n详细报错: %s", filepath.Base(local), r.Code, r.Message))
+		SendAlert("error", "上传遭拒绝", fmt.Sprintf("文件: %s\n状态码: %d\n详细报错: %s", filepath.Base(local), putRes.Code, putRes.Message))
 
 		if val, exists := liveTasks.Load(taskID); exists {
 			task := val.(*Task)
@@ -1093,7 +1077,7 @@ func upload(local, remote string, size int64) bool {
 		queueFail.Store(taskID, struct{}{})
 		atomic.AddInt64(&queueFailCount, 1)
 
-		addHistoryRecord(local, remote, size, "failed", time.Since(startTime).Seconds(), errMsg)
+		addHistoryRecord(local, remotePath, size, "failed", time.Since(startTime).Seconds(), errMsg)
 
 		broadcastWS("taskDone", map[string]interface{}{
 			"id":     taskID,
@@ -1104,7 +1088,7 @@ func upload(local, remote string, size int64) bool {
 		// 判断 Token 失效或服务器磁盘已满的逻辑熔断
 		fails := atomic.AddInt32(&consecutiveFailures, 1)
 		if fails >= 30 {
-			pauseSystemOnFailure(fmt.Sprintf("连续 %d 个文件被远端服务器拒绝接收 (状态码: %d，报错: %s)。", fails, r.Code, r.Message))
+			pauseSystemOnFailure(fmt.Sprintf("连续 %d 个文件被远端服务器拒绝接收 (状态码: %d，报错: %s)。", fails, putRes.Code, putRes.Message))
 		}
 
 		return false
@@ -1466,33 +1450,14 @@ func sendQQMail(subject, body string) {
 // login 携带后台配置内配置账号及加密体密码向存储总机做 HTTP POST 请求并提取令牌回传
 func login() error {
 	_cfgSnap := appCfg()
-	targetServer := _cfgSnap.RemoteServer
-	usr := _cfgSnap.RemoteUser
-	pwd := _cfgSnap.RemotePass
-
-	body := fmt.Sprintf("Username=%s&Password=%s", usr, pwd)
-	req, _ := http.NewRequest("POST", targetServer+"/api/auth/login", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := httpCli.Do(req)
-	if err != nil {
-		return err
+	if remoteClient == nil {
+		remoteClient = remote.NewOpenListClient(_cfgSnap.RemoteServer, _cfgSnap.RemoteUser, _cfgSnap.RemotePass, httpCli)
+	} else {
+		remoteClient.SetCredentials(_cfgSnap.RemoteServer, _cfgSnap.RemoteUser, _cfgSnap.RemotePass)
 	}
-	defer resp.Body.Close()
-
-	var r struct {
-		Code int
-		Data struct{ Token string }
-	}
-	json.NewDecoder(resp.Body).Decode(&r)
-	if r.Code != 200 {
-		return fmt.Errorf("login failed with code %d", r.Code)
-	}
-
-	tokenMu.Lock()
-	token = r.Data.Token
-	tokenMu.Unlock()
-	return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return remoteClient.Login(ctx)
 }
 
 // detectRoot 提供针对底层物理目录映射的反推机制从而确定文件属主节点
