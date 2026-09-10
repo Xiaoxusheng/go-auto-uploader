@@ -180,11 +180,10 @@ type QQAction struct {
 
 func InitQQBot() {
 	log.Println("[QQ-BOT] 🚀 开始初始化 QQ 机器人引擎 (兼容 NapCat)...")
-	appConfigMu.RLock()
-	wsURL := appConfig.QQBotWSURL
-	token := appConfig.QQBotToken
-	adminID := appConfig.QQAdminID
-	appConfigMu.RUnlock()
+	_cfgSnap := appCfg()
+	wsURL := _cfgSnap.QQBotWSURL
+	token := _cfgSnap.QQBotToken
+	adminID := _cfgSnap.QQAdminID
 
 	if wsURL == "" || adminID == 0 {
 		log.Println("[QQ-BOT] ⚠️ 未配置参数，已跳过 QQ 引擎初始化")
@@ -696,9 +695,7 @@ func qqSendLongMessage(userID int64, text string) {
 }
 
 func qqHandleDashboard(userID int64) {
-	appConfigMu.RLock()
-	wsURL := appConfig.RemoteServer
-	appConfigMu.RUnlock()
+	wsURL := appCfg().RemoteServer
 
 	if wsURL == "" {
 		wsURL = "http://127.0.0.1:8080"

@@ -38,9 +38,7 @@ var (
 // 职责：注入防假死网络客户端，读取全局配置，建立长连接。增加独立守护协程与指数退避重连机制，彻底解决系统启动时断网导致的失效问题。
 func InitTelegramBot() {
 	log.Println("[TG-BOT] 🚀 开始初始化 Telegram 引擎...")
-	appConfigMu.RLock()
-	token := appConfig.TelegramToken
-	appConfigMu.RUnlock()
+	token := appCfg().TelegramToken
 
 	if token == "" {
 		log.Println("[TG-BOT] ⚠️ 未配置 Telegram Token，已跳过机器人初始化")
@@ -162,9 +160,7 @@ func startTelegramListener() {
 				// 网络通信健康，重置退避时间
 				backoff = 2 * time.Second
 
-				appConfigMu.RLock()
-				allowedChatID := appConfig.TelegramChatID
-				appConfigMu.RUnlock()
+				allowedChatID := appCfg().TelegramChatID
 
 				if update.CallbackQuery != nil {
 					if allowedChatID != 0 && update.CallbackQuery.Message.Chat.ID != allowedChatID {
@@ -1109,9 +1105,7 @@ func SendTelegramNotification(title, body string) {
 		return
 	}
 
-	appConfigMu.RLock()
-	chatID := appConfig.TelegramChatID
-	appConfigMu.RUnlock()
+	chatID := appCfg().TelegramChatID
 
 	if chatID == 0 {
 		return
