@@ -1,9 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,13 +9,17 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"upload/internal/convert"
+	"upload/internal/fsutil"
+	"upload/internal/hashstore"
+	"upload/internal/naming"
 )
 
 /* ================= 全局配置 ================= */
@@ -56,6 +57,9 @@ var (
 	}
 
 	hashFile = "uploaded_hash.db" // 已经上传的文件哈希记录（秒传用）
+
+	// hashDB 由 internal/hashstore 承载秒传去重
+	hashDB *hashstore.Store
 
 	queueCount   int64 // 等待队列数量
 	activeWorker int64 // 当前活跃的 Worker 数量
@@ -101,10 +105,6 @@ var (
 	// 优化点：将图表统计从每次 O(N) 全量遍历 50W 条数据优化为 O(1) 增量聚合维护
 	trendStats sync.Map // key: date (MM-DD), value: *TrendPoint
 	rankStats  sync.Map // key: streamer string, value: *atomic.Int64
-
-	// 哈希表优化：移除全局锁，换用高并发 sync.Map 承载海量哈希验证
-	hashCache  sync.Map
-	hashFileMu sync.Mutex // 专为哈希值追记落盘提供的 I/O 锁
 
 	// 高性能合并落盘脏标记，采用无锁原子操作防止并发瓶颈
 	dirStatusDirty int32
@@ -182,7 +182,7 @@ type HistoryRecord struct {
 
 // 常量定义，包含安全的前置远端目录与本地磁盘化缓存文件
 const (
-	safeBaseDir    = "/home/_safe_uploads"      // 远端安全目录
+	safeBaseDir    = "/home/_safe_uploads" // 远端安全目录
 	successLogFile = "upload_success.json" // 本地成功日志，用于图表统计
 	dirStatusFile  = "dir_status.json"     // 本地目录状态统计持久化文件
 )
@@ -224,9 +224,11 @@ func saveConfigToFile() {
 	// 使用带缩进的 json 格式，便于用户直接查看或修改文件内容
 	data, err := json.MarshalIndent(cfgCopy, "", "  ")
 	if err == nil {
-		os.WriteFile("config.json", data, 0644)
+		if werr := fsutil.AtomicWrite("config.json", data, 0644); werr != nil {
+			log.Printf("[CONFIG][ERR] 无法保存配置文件 config.json: %v", werr)
+		}
 	} else {
-		log.Printf("[CONFIG][ERR] 无法保存配置文件 config.json: %v", err)
+		log.Printf("[CONFIG][ERR] 无法序列化配置: %v", err)
 	}
 }
 
@@ -271,15 +273,9 @@ func flushDirStatuses() {
 
 	data, err := json.MarshalIndent(tempMap, "", "  ")
 	if err == nil {
-		targetDir := filepath.Dir(dirStatusFile)
-		f, err := os.CreateTemp(targetDir, "dir_status_*.json")
-		if err != nil {
-			return
+		if werr := fsutil.AtomicWrite(dirStatusFile, data, 0644); werr != nil {
+			log.Printf("[DIR_STATUS][ERR] 落盘失败: %v", werr)
 		}
-		tmpName := f.Name()
-		f.Write(data)
-		f.Close()
-		os.Rename(tmpName, dirStatusFile) // 原子替换，避免写入中途宕机导致损坏
 	}
 }
 
@@ -393,8 +389,9 @@ func main() {
 		successRecords = make([]UploadRecord, 0)
 	}
 
-	// 启动时一次性加载哈希库到内存，后续 hashExists/saveHash 全走内存
-	loadHashCache()
+	// 启动时一次性加载哈希库到内存，后续 Exists/Save 全走内存
+	hashDB = hashstore.New(hashFile)
+	hashDB.Load()
 
 	// 启动时加载硬盘目录累积统计数据
 	loadDirStatuses()
@@ -824,71 +821,9 @@ func cleanupFailedTasksByPath(targetPath string) {
 	})
 }
 
-// isTSVideoFile 判断是否为直播切片 TS
-func isTSVideoFile(path string) bool {
-	return strings.EqualFold(filepath.Ext(path), ".ts")
-}
-
-// shouldSkipUploadArtifact 转换中间文件（.part/.tmp）不得进入上传链路
-func shouldSkipUploadArtifact(path string) bool {
-	lower := strings.ToLower(path)
-	return strings.HasSuffix(lower, ".part") || strings.HasSuffix(lower, ".tmp")
-}
-
-// convertTSToMP4 将 TS 无损 remux 为 MP4（-c copy，不重编码）。
-// 先写 .part 再原子改名，防止扫描器读到半截文件。
-func convertTSToMP4(tsPath string) (string, error) {
-	ext := filepath.Ext(tsPath)
-	base := strings.TrimSuffix(tsPath, ext)
-	mp4Path := base + ".mp4"
-	partPath := mp4Path + ".part"
-
-	// 优先使用内置引擎探测到的 ffmpeg，否则走 PATH
-	ffmpegBin := builtinFfmpegPath
-	if ffmpegBin == "" || ffmpegBin == "ffmpeg" {
-		if p, err := exec.LookPath("ffmpeg"); err == nil {
-			ffmpegBin = p
-		}
-	}
-
-	// 先尝试 AAC ADTS→ASC（直播 TS 常见），失败再退回纯 copy
-	attempts := [][]string{
-		{"-y", "-i", tsPath, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart", partPath},
-		{"-y", "-i", tsPath, "-c", "copy", "-movflags", "+faststart", partPath},
-	}
-
-	var lastErr error
-	for i, args := range attempts {
-		start := time.Now()
-		cmd := exec.Command(ffmpegBin, args...)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			lastErr = fmt.Errorf("尝试#%d失败: %v / %s", i+1, err, strings.TrimSpace(stderr.String()))
-			_ = os.Remove(partPath)
-			continue
-		}
-		info, err := os.Stat(partPath)
-		if err != nil || info.Size() == 0 {
-			lastErr = fmt.Errorf("输出为空: %v", err)
-			_ = os.Remove(partPath)
-			continue
-		}
-		if err := os.Rename(partPath, mp4Path); err != nil {
-			lastErr = err
-			_ = os.Remove(partPath)
-			continue
-		}
-		log.Printf("[CONVERT] ✅ TS→MP4 成功: %s → %s (%.2f MB, 耗时 %s)",
-			filepath.Base(tsPath), filepath.Base(mp4Path), float64(info.Size())/1024/1024, time.Since(start).Truncate(time.Millisecond))
-		return mp4Path, nil
-	}
-	return "", fmt.Errorf("TS 转 MP4 失败: %v", lastErr)
-}
-
 // handleFile 负责调度单一目标文件的生命周期，包括名称净洗、秒传对比、上报排队及执行下层上传操作
 func handleFile(path string) {
-	if shouldSkipUploadArtifact(path) {
+	if convert.IsArtifact(path) {
 		return
 	}
 
@@ -910,9 +845,9 @@ func handleFile(path string) {
 	appConfigMu.RLock()
 	doConvert := appConfig.ConvertMP4
 	appConfigMu.RUnlock()
-	if doConvert && isTSVideoFile(path) {
+	if doConvert && convert.IsTS(path) {
 		log.Printf("[CONVERT] 🎬 开始 TS→MP4 封装: %s (%.2f MB)", filepath.Base(path), float64(info.Size())/1024/1024)
-		if mp4Path, cerr := convertTSToMP4(path); cerr == nil {
+		if mp4Path, cerr := convert.TSToMP4(path, builtinFfmpegPath); cerr == nil {
 			originalTS = path
 			path = mp4Path
 			if ni, nerr := os.Stat(path); nerr == nil {
@@ -953,12 +888,12 @@ func handleFile(path string) {
 	}
 	cleanDir := strings.Join(dirParts, "/")
 
-	name := cleanFileName(filepath.Base(rel))
+	name := naming.CleanFileName(filepath.Base(rel))
 	remote := filepath.ToSlash(filepath.Join(safeBaseDir, cleanDir, name))
 
 	// 检测秒传机制 (Hash)
-	hash := fileHash(path)
-	if hash != "" && hashExists(hash) {
+	hash := hashstore.FileHash(path)
+	if hash != "" && hashDB.Exists(hash) {
 		log.Println("[SKIP][HASH] 文件已存在于记录中 (秒传触发):", path)
 
 		taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
@@ -1017,7 +952,7 @@ func handleFile(path string) {
 	// 开始执行远端上传
 	// upload() 内部持有文件句柄（defer f.Close()），函数返回后句柄已关闭，此时再 Remove 安全
 	if upload(path, remote, info.Size()) {
-		saveHash(hash)
+		hashDB.Save(hash)
 		if err := os.Remove(path); err != nil {
 			log.Printf("[FILE][CLEAN][ERR] 移除本地文件失败 %s: %v", path, err)
 		}
@@ -1349,48 +1284,6 @@ func currentRate() int {
 	return appConfig.NightRate
 }
 
-// cleanFileName 对文件命中可能包含表情符、敏感词或导致 500 异常的不规则符号进行剔除修剪
-// 优化：对扩展名也做合法性验证，防止含非 ASCII 字符的扩展名污染上传路径
-func cleanFileName(name string) string {
-	ext := filepath.Ext(name)
-	base := strings.TrimSuffix(name, ext)
-
-	// 校验扩展名：只允许字母和数字，非法字符一律清除（如中文扩展名、含空格的扩展名等）
-	cleanExt := ext
-	if ext != "" {
-		var eb strings.Builder
-		eb.WriteRune('.') // 保留前导点
-		for _, r := range strings.TrimPrefix(ext, ".") {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-				eb.WriteRune(r)
-			}
-		}
-		cleanExt = eb.String()
-		if cleanExt == "." {
-			cleanExt = "" // 扩展名全部是非法字符，直接丢弃
-		}
-	}
-
-	var b strings.Builder
-	lastDash := false
-
-	for _, r := range base {
-		if (r >= 0x4E00 && r <= 0x9FFF) || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-			lastDash = false
-		} else if !lastDash {
-			b.WriteRune('-')
-			lastDash = true
-		}
-	}
-
-	res := strings.Trim(b.String(), "-")
-	if res == "" {
-		res = "file"
-	}
-	return res + cleanExt
-}
-
 type UploadRecord struct {
 	Time     time.Time
 	Streamer string
@@ -1429,7 +1322,7 @@ func updateStatsIncrementally(rec UploadRecord) {
 func recordSuccess(remote, name string, size int64) {
 	rec := UploadRecord{
 		Time:     time.Now(),
-		Streamer: detectStreamer(remote),
+		Streamer: naming.DetectStreamer(remote),
 		Name:     name,
 		Remote:   remote,
 		Size:     size,
@@ -1461,25 +1354,13 @@ func flushSuccessLog() {
 	copy(snapshot, successRecords)
 	successLogMu.Unlock()
 
-	targetDir := filepath.Dir(successLogFile)
-	f, err := os.CreateTemp(targetDir, "upload_success_*.json")
+	data, err := json.Marshal(snapshot)
 	if err != nil {
-		log.Printf("[SUCCESS_LOG][ERR] 创建临时日志文件失败: %v", err)
+		log.Printf("[SUCCESS_LOG][ERR] 序列化日志失败: %v", err)
 		return
 	}
-	tmpName := f.Name()
-	enc := json.NewEncoder(f)
-	encErr := enc.Encode(snapshot)
-	f.Close()
-	if encErr != nil {
-		log.Printf("[SUCCESS_LOG][ERR] 序列化日志失败: %v", encErr)
-		os.Remove(tmpName)
-		return
-	}
-	// 原子替换，防止写一半时进程崩溃导致文件损坏
-	if err := os.Rename(tmpName, successLogFile); err != nil {
-		log.Printf("[SUCCESS_LOG][ERR] 写入日志失败: %v", err)
-		os.Remove(tmpName)
+	if werr := fsutil.AtomicWrite(successLogFile, data, 0644); werr != nil {
+		log.Printf("[SUCCESS_LOG][ERR] 写入日志失败: %v", werr)
 	}
 }
 
@@ -1672,70 +1553,6 @@ func login() error {
 	return nil
 }
 
-// fileHash 读取文件二进制流将其哈希压缩为无碰撞的 SHA-256 签名用于唯一身份核对
-func fileHash(p string) string {
-	f, err := os.Open(p)
-	if err != nil {
-		log.Printf("[HASH][ERR] 无法打开文件计算哈希 %s: %v", p, err)
-		return ""
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		log.Printf("[HASH][ERR] 读取文件计算哈希失败 %s: %v", p, err)
-		return ""
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// loadHashCache 启动时一次性加载哈希库到内存l
-func loadHashCache() {
-	data, err := os.ReadFile(hashFile)
-	if err != nil {
-		return
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			hashCache.Store(line, struct{}{})
-		}
-	}
-	// 利用 Range 快计缓存总数
-	count := 0
-	hashCache.Range(func(_, _ interface{}) bool { count++; return true })
-	log.Printf("[HASH] 已从磁盘加载 %d 条哈希记录到高并发无锁哈希表中", count)
-}
-
-// hashExists 直接查内存哈希集合，O(1) 精确匹配，彻底消灭全文件读写锁瓶颈
-func hashExists(h string) bool {
-	if h == "" {
-		return false
-	}
-	_, ok := hashCache.Load(h)
-	return ok
-}
-
-// saveHash 向库内追加全新的防重复哈希值字符串，并同步更新内存缓存
-func saveHash(h string) {
-	if h == "" {
-		return
-	}
-
-	// 先写内存缓存，保证下次 hashExists 毫无延迟即可见
-	hashCache.Store(h, struct{}{})
-
-	// 追加写入必须锁住 File I/O 以防数据覆盖或坏块
-	hashFileMu.Lock()
-	defer hashFileMu.Unlock()
-	f, err := os.OpenFile(hashFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Printf("[HASH][ERR] 打开哈希库文件失败: %v", err)
-		return
-	}
-	defer f.Close()
-	f.WriteString(h + "\n")
-}
-
 // detectRoot 提供针对底层物理目录映射的反推机制从而确定文件属主节点
 func detectRoot(path string) string {
 	path = filepath.Clean(path)
@@ -1753,15 +1570,6 @@ func detectRoot(path string) string {
 		}
 	}
 	return ""
-}
-
-// detectStreamer 切割并归类服务器返回的远程文件树节点获得流数据所属的主播用户名
-func detectStreamer(remote string) string {
-	parts := strings.Split(remote, "/")
-	if len(parts) > 2 {
-		return parts[2]
-	}
-	return "未知"
 }
 
 // addLog 作为业务和展示系统隔离的桥梁，负责筛选后将指定等级事件装箱并经加密投递到浏览器
