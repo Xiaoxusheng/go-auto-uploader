@@ -94,6 +94,8 @@ func FindFontPath() string {
 }
 
 // BuildWatermarkText 组装「前缀（默认主播名）+ 动态时间」。
+// 用于 textfile= 时，内容按字面读入后再做宏展开，**不要**对冒号做 filter 语法转义，
+// 否则旧版 FFmpeg 会显示字面 %{localtime:...} 或出现 \: 杂质。
 func BuildWatermarkText(style WatermarkStyle, anchorName string) string {
 	formatStr := strings.ReplaceAll(style.Format, "'", "")
 	textStr := strings.ReplaceAll(style.Text, "'", "")
@@ -103,7 +105,6 @@ func BuildWatermarkText(style WatermarkStyle, anchorName string) string {
 	if formatStr == "" {
 		formatStr = "%Y-%m-%d %H:%M:%S"
 	}
-	formatStr = strings.ReplaceAll(formatStr, ":", "\\:")
 	fullText := strings.TrimSpace(textStr)
 	if fullText != "" {
 		fullText += " "

@@ -301,7 +301,7 @@ func TestBuildBuiltinWatermarkText(t *testing.T) {
 		WatermarkFormat: "%Y-%m-%d %H:%M:%S",
 	}
 	got := buildBuiltinWatermarkText("测试主播")
-	wantPrefix := "测试主播 %{localtime:%Y-%m-%d %H\\:%M\\:%S}"
+	wantPrefix := "测试主播 %{localtime:%Y-%m-%d %H:%M:%S}"
 	if got != wantPrefix {
 		t.Fatalf("empty text should fall back to anchor: got %q want %q", got, wantPrefix)
 	}

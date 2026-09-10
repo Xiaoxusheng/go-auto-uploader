@@ -26,7 +26,7 @@ func TestFormatDurationAndBytes(t *testing.T) {
 func TestBuildWatermarkTextAndPos(t *testing.T) {
 	st := StyleFrom("", "%Y-%m-%d %H:%M:%S", "bottom-right", "#FFFFFF", 38)
 	got := BuildWatermarkText(st, "主播")
-	wantPrefix := "主播 %{localtime:%Y-%m-%d %H\\:%M\\:%S}"
+	wantPrefix := "主播 %{localtime:%Y-%m-%d %H:%M:%S}"
 	if got != wantPrefix {
 		t.Fatalf("got %q want %q", got, wantPrefix)
 	}

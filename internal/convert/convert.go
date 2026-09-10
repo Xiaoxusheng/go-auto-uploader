@@ -40,9 +40,10 @@ func TSToMP4(tsPath, ffmpegBin string) (string, error) {
 	mp4Path := base + ".mp4"
 	partPath := mp4Path + ".part"
 
+	// 必须显式 -f mp4：输出扩展名是 .mp4.part，ffmpeg 无法识别格式
 	attempts := [][]string{
-		{"-y", "-i", tsPath, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart", partPath},
-		{"-y", "-i", tsPath, "-c", "copy", "-movflags", "+faststart", partPath},
+		{"-y", "-i", tsPath, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mp4", "-movflags", "+faststart", partPath},
+		{"-y", "-i", tsPath, "-c", "copy", "-f", "mp4", "-movflags", "+faststart", partPath},
 	}
 
 	var lastErr error
