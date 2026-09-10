@@ -21,7 +21,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +30,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"upload/internal/config"
+	"upload/internal/storage"
 )
 
 var (
@@ -53,8 +53,6 @@ var (
 	running   = false
 	runningMu sync.RWMutex
 	startTime time.Time
-
-	dirStatuses sync.Map // 升级优化：彻底废弃 dirStatusesMu，改用高性能字典
 
 	logs    = make([]*LogEntry, 0, 5000) // 优化：扩容到 5000 条，重度运行时 1000 条极易打满
 	logsMu  sync.RWMutex
@@ -86,17 +84,8 @@ type WSMessage struct {
 	Payload interface{} `json:"payload"`
 }
 
-// DirStatus 添加结构体自身锁解决统计冲突并确保原子性
-type DirStatus struct {
-	Mu            sync.RWMutex
-	Path          string `json:"path"`
-	TotalFiles    int    `json:"totalFiles"`
-	UploadedFiles int    `json:"uploadedFiles"`
-	PendingFiles  int    `json:"pendingFiles"`
-	TotalSize     int64  `json:"totalSize"`
-	UploadedSize  int64  `json:"uploadedSize"`
-	LastScanTime  int64  `json:"lastScanTime"`
-}
+// DirStatus 目录统计（实现见 internal/storage）
+type DirStatus = storage.DirStatus
 
 // Config 定义系统核心配置结构 (✨ 已修复：补充 Telegram 及 QQ 核心配置字段)
 type Config = config.Config
@@ -691,37 +680,29 @@ func buildStatsTrendData() map[string]interface{} {
 	}
 
 	trendResult := make([]TrendPointRes, 0)
+	trendByDate := map[string]storage.TrendPointDTO{}
+	for _, tp := range successStore.TrendSnapshot() {
+		trendByDate[tp.Date] = tp
+	}
 	for i := 6; i >= 0; i-- {
 		d := now.AddDate(0, 0, -i).Format("01-02")
-		if val, exists := trendStats.Load(d); exists {
-			tp := val.(*TrendPoint)
-			tp.Mu.Lock()
+		if tp, exists := trendByDate[d]; exists {
 			trendResult = append(trendResult, TrendPointRes{
 				Date:  tp.Date,
 				Size:  tp.Size,
 				Count: tp.Count,
 			})
-			tp.Mu.Unlock()
 		} else {
 			trendResult = append(trendResult, *trendMap[d])
 		}
 	}
 
 	rankResult := make([]StreamerRank, 0)
-	rankStats.Range(func(key, value interface{}) bool {
-		sizeAtom := value.(*atomic.Int64)
+	for _, p := range successStore.RankTop(5) {
 		rankResult = append(rankResult, StreamerRank{
-			Name: key.(string),
-			Size: float64(sizeAtom.Load()) / 1024 / 1024 / 1024,
+			Name: p[0].(string),
+			Size: float64(p[1].(int64)) / 1024 / 1024 / 1024,
 		})
-		return true
-	})
-
-	sort.Slice(rankResult, func(i, j int) bool {
-		return rankResult[i].Size > rankResult[j].Size
-	})
-	if len(rankResult) > 5 {
-		rankResult = rankResult[:5]
 	}
 
 	return map[string]interface{}{
@@ -1118,8 +1099,7 @@ func buildStatusData() map[string]interface{} {
 		if dir == "" {
 			continue
 		}
-		if val, exists := dirStatuses.Load(dir); exists {
-			status := val.(*DirStatus)
+		if status, exists := dirStatusStore.Get(dir); exists {
 			status.Mu.RLock()
 			dirs = append(dirs, map[string]interface{}{
 				"path":          status.Path,
@@ -1236,9 +1216,9 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
-	historyMu.RLock()
+	allHistory := historyStore.Snapshot()
 	filtered := make([]*HistoryRecord, 0)
-	for _, record := range history {
+	for _, record := range allHistory {
 		if status != "" && !strings.Contains(record.Status, status) {
 			continue
 		}
@@ -1252,7 +1232,6 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	start := (page - 1) * limit
 	end := start + limit
 	if start >= total {
-		historyMu.RUnlock()
 		sendJSONSuccess(w, r, map[string]interface{}{"items": []*HistoryRecord{}, "total": total})
 		return
 	}
@@ -1261,7 +1240,6 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := filtered[start:end]
-	historyMu.RUnlock()
 
 	items := make([]map[string]interface{}, 0, len(result))
 	for _, record := range result {
@@ -1375,8 +1353,8 @@ func handleDirsStatus(w http.ResponseWriter, r *http.Request) {
 		if dir == "" {
 			continue
 		}
-		if val, exists := dirStatuses.Load(dir); exists {
-			ds := val.(*DirStatus)
+		if ds, exists := dirStatusStore.Get(dir); exists {
+			_ = ds
 			ds.Mu.RLock()
 			clone := &DirStatus{
 				Path:          ds.Path,

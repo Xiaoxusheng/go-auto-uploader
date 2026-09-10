@@ -714,14 +714,10 @@ func qqHandleChart(userID int64) {
 	var dates []string
 	var values []float64
 
-	trendStats.Range(func(key, value interface{}) bool {
-		tp := value.(*TrendPoint)
-		tp.Mu.Lock()
+	for _, tp := range successStore.TrendSnapshot() {
 		dates = append(dates, tp.Date)
 		values = append(values, tp.Size)
-		tp.Mu.Unlock()
-		return true
-	})
+	}
 
 	if len(dates) == 0 {
 		sendQQAPIMessage(userID, "📭 系统暂无数据。")
@@ -915,11 +911,8 @@ func qqHandleStatus() string {
 
 	todayStr := time.Now().Format("01-02")
 	var todayTrafficBytes int64 = 0
-	if val, exists := trendStats.Load(todayStr); exists {
-		tp := val.(*TrendPoint)
-		tp.Mu.Lock()
-		todayTrafficBytes = int64(tp.Size * 1024 * 1024 * 1024)
-		tp.Mu.Unlock()
+	if sizeGB, _, ok := successStore.TrendByDate(todayStr); ok {
+		todayTrafficBytes = int64(sizeGB * 1024 * 1024 * 1024)
 	}
 
 	return fmt.Sprintf(`📊 运行资源状态

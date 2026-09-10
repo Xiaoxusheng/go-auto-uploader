@@ -1476,12 +1476,8 @@ func tgHandleStatus() string {
 	// ✨ 动态计算今日上传流量 (读取内存中的 O(1) 增量统计池)
 	todayStr := time.Now().Format("01-02")
 	var todayTrafficBytes int64 = 0
-	if val, exists := trendStats.Load(todayStr); exists {
-		tp := val.(*TrendPoint)
-		tp.Mu.Lock()
-		// 由于主系统在追加写入时已转换为了 GB (除以了三次 1024)，此处逆向还原为 Byte 方便复用现成的高级格式化函数
-		todayTrafficBytes = int64(tp.Size * 1024 * 1024 * 1024)
-		tp.Mu.Unlock()
+	if sizeGB, _, ok := successStore.TrendByDate(todayStr); ok {
+		todayTrafficBytes = int64(sizeGB * 1024 * 1024 * 1024)
 	}
 
 	var sb strings.Builder

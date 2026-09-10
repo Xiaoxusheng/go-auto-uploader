@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -21,12 +20,12 @@ import (
 
 	"upload/internal/config"
 	"upload/internal/convert"
-	"upload/internal/fsutil"
 	"upload/internal/hashstore"
 	"upload/internal/naming"
 	"upload/internal/ratelimit"
 	"upload/internal/remote"
 	"upload/internal/scanner"
+	"upload/internal/storage"
 	"upload/internal/uploader"
 )
 
@@ -100,23 +99,10 @@ var (
 	queueFailCount      int64
 	queueRetryingCount  int64
 
-	history   = make([]*HistoryRecord, 0)
-	historyMu sync.RWMutex
-
-	// 优化点：专门用于保护 successRecords 内存数据和 json 文件并发读写的互斥锁
-	successLogMu sync.Mutex
-	// 优化点：在内存中常驻成功记录，消除前端轮询及 Worker 追加数据时对磁盘和 GC 产生的巨大压力
-	successRecords []UploadRecord
-
-	// 优化点：将图表统计从每次 O(N) 全量遍历 50W 条数据优化为 O(1) 增量聚合维护
-	trendStats sync.Map // key: date (MM-DD), value: *TrendPoint
-	rankStats  sync.Map // key: streamer string, value: *atomic.Int64
-
-	// 高性能合并落盘脏标记，采用无锁原子操作防止并发瓶颈
-	dirStatusDirty int32
-
-	// 修复 Bug 5：成功记录的合并落盘脏标记，避免每次上传完都全量重写 50 万条 JSON
-	successLogDirty int32
+	// 本地持久化（internal/storage）
+	historyStore   = storage.NewHistoryStore(1000)
+	successStore   = storage.NewSuccessStore(successLogFile, 500000)
+	dirStatusStore = storage.NewDirStatusStore(dirStatusFile)
 
 	// 上传队列 + Worker 池（internal/uploader）
 	taskQueue  = uploader.NewQueue(100000)
@@ -175,17 +161,14 @@ type Task struct {
 	Error      string
 }
 
-// HistoryRecord 定义了长期沉淀入库的历史文件上传记录
-type HistoryRecord struct {
-	UploadTime string `json:"uploadTime"`
-	Name       string `json:"name"`
-	Size       int64  `json:"size"`
-	LocalPath  string `json:"localPath"`
-	Remote     string `json:"remote"`
-	Status     string `json:"status"`
-	Duration   int    `json:"duration"`
-	ErrorMsg   string `json:"errorMsg"`
-}
+// HistoryRecord 上传历史条目（类型见 internal/storage）
+type HistoryRecord = storage.HistoryRecord
+
+// UploadRecord 成功统计条目
+type UploadRecord = storage.UploadRecord
+
+// TrendPoint 单日流量聚合
+type TrendPoint = storage.TrendPoint
 
 // 常量定义，包含安全的前置远端目录与本地磁盘化缓存文件
 const (
@@ -230,60 +213,26 @@ func saveConfigToFile() {
 
 // loadDirStatuses 启动时从本地磁盘恢复各个监控目录的累计上传数据，防止重启清空
 func loadDirStatuses() {
-	data, err := os.ReadFile(dirStatusFile)
-	if err == nil {
-		var tempMap map[string]*DirStatus
-		if err := json.Unmarshal(data, &tempMap); err == nil {
-			for k, v := range tempMap {
-				// 转入高并发 sync.Map 容器
-				dirStatuses.Store(k, v)
-			}
-		}
-	}
+	dirStatusStore.Load()
 }
 
 // markDirStatusDirty 标记内存中的目录状态已被更改，触发后台异步落盘
 func markDirStatusDirty() {
-	atomic.StoreInt32(&dirStatusDirty, 1)
+	dirStatusStore.MarkDirty()
 }
 
 // flushDirStatuses 提取内存中的最新目录状态并执行物理层面的覆盖落盘
 func flushDirStatuses() {
-	tempMap := make(map[string]*DirStatus)
-	dirStatuses.Range(func(key, value interface{}) bool {
-		ds := value.(*DirStatus)
-		ds.Mu.RLock()
-		// 复制出状态快照用于落盘
-		tempMap[key.(string)] = &DirStatus{
-			Path:          ds.Path,
-			TotalFiles:    ds.TotalFiles,
-			UploadedFiles: ds.UploadedFiles,
-			PendingFiles:  ds.PendingFiles,
-			TotalSize:     ds.TotalSize,
-			UploadedSize:  ds.UploadedSize,
-			LastScanTime:  ds.LastScanTime,
-		}
-		ds.Mu.RUnlock()
-		return true
-	})
-
-	data, err := json.MarshalIndent(tempMap, "", "  ")
-	if err == nil {
-		if werr := fsutil.AtomicWrite(dirStatusFile, data, 0644); werr != nil {
-			log.Printf("[DIR_STATUS][ERR] 落盘失败: %v", werr)
-		}
-	}
+	dirStatusStore.Flush()
 }
 
 // dirStatusPersistLoop 驻留于后台的合并落盘守护协程，按固定心跳检查并持久化状态
 func dirStatusPersistLoop() {
-	ticker := time.NewTicker(5 * time.Second) // 5 秒合并写一次，化解 I/O 阻塞瓶颈
-	for range ticker.C {
-		// CAS 原子操作：如果当前为脏数据(1)，则置为干净(0)并执行实际的写盘操作
-		if atomic.CompareAndSwapInt32(&dirStatusDirty, 1, 0) {
-			flushDirStatuses()
-		}
+	stop := make(chan struct{})
+	if appCtx != nil {
+		go func() { <-appCtx.Done(); close(stop) }()
 	}
+	dirStatusStore.PersistLoop(5*time.Second, stop)
 }
 
 // manageWorkers 启动 internal/uploader Worker 池，并镜像计数到展示用原子变量
@@ -356,15 +305,8 @@ func main() {
 	// 启用日志拦截器，将日志传回加密网页
 	log.SetOutput(&logInterceptor{original: os.Stdout})
 
-	// 优化点：启动时读取一次本地上传成功记录缓存入内存，并依此构建高性能的增量聚合面板所需数据源
-	if data, err := os.ReadFile(successLogFile); err == nil {
-		json.Unmarshal(data, &successRecords)
-		for _, rec := range successRecords {
-			updateStatsIncrementally(rec) // 将已存的数据恢复到高并发增量池
-		}
-	} else {
-		successRecords = make([]UploadRecord, 0)
-	}
+	// 启动时读取本地上传成功记录缓存入内存，并重建增量聚合
+	successStore.Load()
 
 	// 启动时一次性加载哈希库到内存，后续 Exists/Save 全走内存
 	hashDB = hashstore.New(hashFile)
@@ -592,15 +534,15 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 		if root == "." || root == "" {
 			continue
 		}
-		if val, exists := dirStatuses.Load(root); exists {
-			ds := val.(*DirStatus)
+		if ds, exists := dirStatusStore.Get(root); exists {
+			_ = ds
 			ds.Mu.Lock()
 			ds.PendingFiles = 0
 			ds.TotalSize = 0
 			ds.LastScanTime = time.Now().UnixMilli()
 			ds.Mu.Unlock()
 		} else {
-			dirStatuses.Store(root, &DirStatus{
+			dirStatusStore.Put(root, &DirStatus{
 				Path:         root,
 				LastScanTime: time.Now().UnixMilli(),
 			})
@@ -621,8 +563,8 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 		IsQueued: isQueuedFn,
 		OnFile: func(root, path string, size int64) {
 			// 目录统计：无论是否入队，合法文件都计入 Pending/TotalSize
-			if val, exists := dirStatuses.Load(root); exists {
-				ds := val.(*DirStatus)
+			if ds, exists := dirStatusStore.Get(root); exists {
+				_ = ds
 				ds.Mu.Lock()
 				ds.PendingFiles++
 				ds.TotalSize += size
@@ -690,8 +632,7 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	}
 
 	// 在扫描终点，将累加出的准确待处理量 + 内存记录的成功上传量 = 当下的总文件数
-	dirStatuses.Range(func(key, value interface{}) bool {
-		ds := value.(*DirStatus)
+	dirStatusStore.Range(func(_ string, ds *DirStatus) bool {
 		ds.Mu.Lock()
 		ds.TotalFiles = ds.PendingFiles + ds.UploadedFiles
 		ds.Mu.Unlock()
@@ -824,8 +765,8 @@ func handleFile(path string) {
 		addHistoryRecord(path, remote, info.Size(), "success(秒传)", 0, "")
 
 		// 一旦秒传判定成功，不仅记录增加，更要减扣其身处待处理列表的份额
-		if val, exists := dirStatuses.Load(root); exists {
-			ds := val.(*DirStatus)
+		if ds, exists := dirStatusStore.Get(root); exists {
+			_ = ds
 			ds.Mu.Lock()
 			if ds.PendingFiles > 0 {
 				ds.PendingFiles--
@@ -871,8 +812,8 @@ func handleFile(path string) {
 		recordSuccess(remote, name, info.Size())
 
 		// 真实物理上传完毕后扣除待处理余量
-		if val, exists := dirStatuses.Load(root); exists {
-			ds := val.(*DirStatus)
+		if ds, exists := dirStatusStore.Get(root); exists {
+			_ = ds
 			ds.Mu.Lock()
 			if ds.PendingFiles > 0 {
 				ds.PendingFiles--
@@ -1046,7 +987,7 @@ func upload(local, remotePath string, size int64) bool {
 
 // addHistoryRecord 将最终确定状态的上传操作以标准格式记录至系统的长驻内存历史队列中
 func addHistoryRecord(local, remote string, size int64, status string, duration float64, errorMsg string) {
-	record := HistoryRecord{
+	historyStore.Add(HistoryRecord{
 		UploadTime: time.Now().Format("2006-01-02 15:04:05"),
 		Name:       filepath.Base(remote),
 		Size:       size,
@@ -1055,14 +996,7 @@ func addHistoryRecord(local, remote string, size int64, status string, duration 
 		Status:     status,
 		Duration:   int(duration),
 		ErrorMsg:   errorMsg,
-	}
-
-	historyMu.Lock()
-	history = append(history, &record)
-	if len(history) > 1000 {
-		history = history[1:]
-	}
-	historyMu.Unlock()
+	})
 }
 
 // ProgressReader 带速率限制和进度通知的自定义文件读取数据结构
@@ -1167,94 +1101,34 @@ func currentRate() int {
 	return ratelimit.Select(_cfgSnap.DayRate, _cfgSnap.NightRate, time.Now())
 }
 
-type UploadRecord struct {
-	Time     time.Time
-	Streamer string
-	Name     string
-	Remote   string
-	Size     int64
-}
-
-// TrendPoint 为增量统计专属配备的高性能细粒度锁定数据结构
-type TrendPoint struct {
-	Mu    sync.Mutex
-	Date  string  `json:"date"`
-	Size  float64 `json:"size"`
-	Count int     `json:"count"`
-}
-
-// updateStatsIncrementally 并发安全的图表源数据累加器，消除了过去 O(N) O(500,000) 的遍历消耗
+// updateStatsIncrementally 由 successStore 内部维护，保留空壳避免外部误调
 func updateStatsIncrementally(rec UploadRecord) {
-	day := rec.Time.Format("01-02")
-	// 获取或初始化当天的 TrendPoint
-	tVal, _ := trendStats.LoadOrStore(day, &TrendPoint{Date: day})
-	tp := tVal.(*TrendPoint)
-
-	tp.Mu.Lock()
-	tp.Size += float64(rec.Size) / 1024 / 1024 / 1024
-	tp.Count++
-	tp.Mu.Unlock()
-
-	// 更新主播流量排行 Rank
-	rVal, _ := rankStats.LoadOrStore(rec.Streamer, &atomic.Int64{})
-	rInt := rVal.(*atomic.Int64)
-	rInt.Add(rec.Size)
+	successStore.Add(rec) // Add 会 applyStats；此函数仅为兼容旧调用点
 }
 
 // recordSuccess 专门记录最终通过网络被写入目标端存储系统的文件日志以供统计
 func recordSuccess(remote, name string, size int64) {
-	rec := UploadRecord{
+	successStore.Add(UploadRecord{
 		Time:     time.Now(),
 		Streamer: naming.DetectStreamer(remote),
 		Name:     name,
 		Remote:   remote,
 		Size:     size,
-	}
-
-	// 立刻提交至高性能的增量内存统计池
-	updateStatsIncrementally(rec)
-
-	successLogMu.Lock()
-	defer successLogMu.Unlock()
-
-	// 优化点：直接向常驻内存的 Slice 追加数据，完全摆脱 `json.Unmarshal(data, &list)` 的 CPU/GC 消耗
-	successRecords = append(successRecords, rec)
-
-	// 优化点：限制最多保留 500000 条历史记录，防止内存无限膨胀
-	if len(successRecords) > 500000 {
-		successRecords = successRecords[len(successRecords)-500000:]
-	}
-
-	// 修复 Bug 5：不再每次追加都全量重写整个 JSON 文件（50 万条时 IO 和 GC 压力极大）
-	// 改为打脏标记，由 successLogPersistLoop 每 15 秒批量合并落盘一次
-	atomic.StoreInt32(&successLogDirty, 1)
+	})
 }
 
 // flushSuccessLog 将内存中的成功记录全量序列化后以原子替换方式写入磁盘
 func flushSuccessLog() {
-	successLogMu.Lock()
-	snapshot := make([]UploadRecord, len(successRecords))
-	copy(snapshot, successRecords)
-	successLogMu.Unlock()
-
-	data, err := json.Marshal(snapshot)
-	if err != nil {
-		log.Printf("[SUCCESS_LOG][ERR] 序列化日志失败: %v", err)
-		return
-	}
-	if werr := fsutil.AtomicWrite(successLogFile, data, 0644); werr != nil {
-		log.Printf("[SUCCESS_LOG][ERR] 写入日志失败: %v", werr)
-	}
+	successStore.Flush()
 }
 
 // successLogPersistLoop 后台守护协程：每 15 秒检查脏标记，批量合并落盘成功记录
 func successLogPersistLoop() {
-	ticker := time.NewTicker(15 * time.Second)
-	for range ticker.C {
-		if atomic.CompareAndSwapInt32(&successLogDirty, 1, 0) {
-			flushSuccessLog()
-		}
+	stop := make(chan struct{})
+	if appCtx != nil {
+		go func() { <-appCtx.Done(); close(stop) }()
 	}
+	successStore.PersistLoop(15*time.Second, stop)
 }
 
 // reportLoop 长驻于后台的死循环机制，依靠时间计算判断向指定电子信箱推送数据的恰当时间
@@ -1286,15 +1160,10 @@ func reportLoop() {
 
 // sendReport 获取固定周期跨度内的所有成功提交资料，编排为精致富文本并交给邮件 SMTP 系统
 func sendReport() {
-	successLogMu.Lock()
-	if len(successRecords) == 0 {
-		successLogMu.Unlock()
+	list := successStore.Snapshot()
+	if len(list) == 0 {
 		return
 	}
-	// 优化点：直接复制内存副本来处理，脱离磁盘读取
-	list := make([]UploadRecord, len(successRecords))
-	copy(list, successRecords)
-	successLogMu.Unlock()
 
 	repMinutes := appCfg().EmailInterval
 
