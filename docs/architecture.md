@@ -22,7 +22,24 @@ cmd/main (package main)
   ├── internal/recorder      Docker 控制 + 名单行/开关纯函数
   ├── internal/naming        文件名清洗
   ├── internal/fsutil        原子写
-  └── package main 遗留      builtin_recorder 运行时 / webapi Handler 与业务编排 / bots
+  └── package main 遗留      webapi Handler / bots / handleFile 编排
+```
+
+内置录制已按域拆分（仍在 `package main`，便于依赖注入后再迁包）：
+
+```text
+builtin_types.go          状态/开关/配置类型
+builtin_status.go         状态更新 + WS 防抖广播
+builtin_init.go           启动/热重载/任务快照
+builtin_txt.go            名单文件读写
+builtin_douyin_crypto.go  短链 + SM3/RC4/a_bogus
+builtin_douyin.go         抖音推流探测
+builtin_kuaishou.go       快手
+builtin_soop.go           Soop
+builtin_proxy.go          封面反代 SSRF 防护
+builtin_ffmpeg.go         抽帧 + 录制/截屏主流程
+builtin_monitor.go        监控协程
+builtin_api.go            Web API
 ```
 
 ## 上传数据流
