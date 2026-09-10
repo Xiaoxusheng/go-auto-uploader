@@ -1235,7 +1235,7 @@ func tgHandleList(chatID int64) string {
 	var onlineTasks []BuiltinTaskStatus
 
 	for _, t := range tasks {
-		if t.Status == "录制中" {
+		if isBuiltinLiveStatus(t.Status) {
 			onlineTasks = append(onlineTasks, t)
 		}
 	}
@@ -1337,11 +1337,11 @@ func tgHandleAdd(rawArgs string) string {
 			}
 		}
 
-		isP, platformName, roomID, customName, rawURL := parseBuiltinLine(line)
+		isP, platformName, roomID, customName, rawURL, _ := parseBuiltinLine(line)
 		if roomID == "" || platformName == "" {
 			urlRe := regexp.MustCompile(`https?://[^\s,]+`)
 			if found := urlRe.FindString(line); found != "" {
-				isP, platformName, roomID, customName, rawURL = parseBuiltinLine(found)
+				isP, platformName, roomID, customName, rawURL, _ = parseBuiltinLine(found)
 			}
 		}
 

@@ -120,6 +120,7 @@ type Config struct {
 	MailTo             string   `json:"mailTo"`
 	EnableEncryption   bool     `json:"enableEncryption"` // 决定是否开启通信层的数据安全加密
 	EnableUpload       bool     `json:"enableUpload"`     // ✨ 控制是否开启文件自动上传云端
+	ConvertMP4         bool     `json:"convertMP4"`       // 上传前将稳定 TS 无损封装为 MP4
 	WechatToken        string   `json:"wechatToken"`      // 推送加微信通知 Token
 	TelegramToken      string   `json:"telegramToken"`    // ✨ 接入 Telegram 机器人的 Token
 	TelegramChatID     int64    `json:"telegramChatID"`   // ✨ 用于鉴权和主动推送的 TG UserID/ChatID
@@ -1477,7 +1478,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 		saveConfigToFile()
 
-		log.Printf("[CONTROL] ⚙️ 用户保存了新配置，目标扫描目录已变更为: [%s]，加密模式: %v，上传开关: %v", strings.Join(newConfig.Dirs, " | "), newConfig.EnableEncryption, newConfig.EnableUpload)
+		log.Printf("[CONTROL] ⚙️ 用户保存了新配置，目标扫描目录已变更为: [%s]，加密模式: %v，上传开关: %v，TS转MP4: %v", strings.Join(newConfig.Dirs, " | "), newConfig.EnableEncryption, newConfig.EnableUpload, newConfig.ConvertMP4)
 
 		triggerScan("config-update")
 		triggerReportReset()

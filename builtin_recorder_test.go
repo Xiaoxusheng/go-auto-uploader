@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -166,7 +167,7 @@ func TestParseBuiltinLine(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			isPaused, platform, roomID, customName, rawURL := parseBuiltinLine(tt.line)
+			isPaused, platform, roomID, customName, rawURL, _ := parseBuiltinLine(tt.line)
 
 			if isPaused != tt.expected.isPaused ||
 				platform != tt.expected.platform ||
@@ -194,5 +195,120 @@ func TestBuiltinRC4Encrypt(t *testing.T) {
 
 	if decrypted != plaintext {
 		t.Errorf("RC4 加解密异常: 得到 %v, 预期 %v", decrypted, plaintext)
+	}
+}
+
+func TestParseBuiltinLineFlags(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		line     string
+		roomID   string
+		nameWant string
+		record   bool
+		shot     bool
+	}{
+		{
+			name:     "default both on",
+			line:     "https://live.douyin.com/111,主播:甲",
+			roomID:   "111",
+			nameWant: "甲",
+			record:   true,
+			shot:     true,
+		},
+		{
+			name:     "screenshot only",
+			line:     "https://live.douyin.com/222,主播:乙,录屏:0,截屏:1",
+			roomID:   "222",
+			nameWant: "乙",
+			record:   false,
+			shot:     true,
+		},
+		{
+			name:     "record only",
+			line:     "#https://live.douyin.com/333,主播:丙,录屏:1,截屏:0",
+			roomID:   "333",
+			nameWant: "丙",
+			record:   true,
+			shot:     false,
+		},
+		{
+			name:     "legacy alias with flags",
+			line:     "https://live.douyin.com/555,别名,录屏:0,截屏:1",
+			roomID:   "555",
+			nameWant: "别名",
+			record:   false,
+			shot:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, platform, roomID, customName, rawURL, flags := parseBuiltinLine(tt.line)
+			if platform != "Douyin" || roomID != tt.roomID {
+				t.Fatalf("platform/roomID = %v/%v, want Douyin/%v raw=%q", platform, roomID, tt.roomID, rawURL)
+			}
+			if customName != tt.nameWant {
+				t.Fatalf("name = %q, want %q", customName, tt.nameWant)
+			}
+			if flags.Record != tt.record || flags.Screenshot != tt.shot {
+				t.Fatalf("flags = %+v, want record=%v shot=%v", flags, tt.record, tt.shot)
+			}
+		})
+	}
+}
+
+func TestRebuildBuiltinLineWithFlags(t *testing.T) {
+	t.Parallel()
+
+	in := "#https://live.douyin.com/444,主播:丁,录屏:1,截屏:0"
+	out := rebuildBuiltinLineWithFlags(in, BuiltinTaskFlags{Record: false, Screenshot: true})
+	if out != "#https://live.douyin.com/444,主播:丁,录屏:0,截屏:1" {
+		t.Fatalf("rebuild = %q", out)
+	}
+
+	_, _, roomID, name, _, flags := parseBuiltinLine(out)
+	if roomID != "444" || name != "丁" || flags.Record || !flags.Screenshot {
+		t.Fatalf("reparse failed: room=%s name=%s flags=%+v", roomID, name, flags)
+	}
+}
+
+func TestNormalizeFFmpegFontColor(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"#FFFFFFE6":  "0xFFFFFFE6",
+		"#FF0000":    "0xFF0000",
+		"white@0.95": "white@0.95",
+		"":           "white@0.95",
+	}
+	for in, want := range cases {
+		if got := normalizeFFmpegFontColor(in); got != want {
+			t.Fatalf("normalize(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+func TestBuildBuiltinWatermarkText(t *testing.T) {
+	// 本测试改写全局配置，不可与其它并行用例共享
+	old := builtinConfig
+	defer func() { builtinConfig = old }()
+
+	builtinConfig = &BuiltinConfig{
+		WatermarkText:   "",
+		WatermarkFormat: "%Y-%m-%d %H:%M:%S",
+	}
+	got := buildBuiltinWatermarkText("测试主播")
+	wantPrefix := "测试主播 %{localtime:%Y-%m-%d %H\\:%M\\:%S}"
+	if got != wantPrefix {
+		t.Fatalf("empty text should fall back to anchor: got %q want %q", got, wantPrefix)
+	}
+
+	builtinConfig.WatermarkText = "监控"
+	got = buildBuiltinWatermarkText("测试主播")
+	if !strings.HasPrefix(got, "监控 %{localtime:") {
+		t.Fatalf("custom prefix: got %q", got)
 	}
 }

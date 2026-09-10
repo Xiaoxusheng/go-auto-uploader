@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -180,7 +182,7 @@ type HistoryRecord struct {
 
 // 常量定义，包含安全的前置远端目录与本地磁盘化缓存文件
 const (
-	safeBaseDir    = "/_safe_uploads"      // 远端安全目录
+	safeBaseDir    = "/home/_safe_uploads"      // 远端安全目录
 	successLogFile = "upload_success.json" // 本地成功日志，用于图表统计
 	dirStatusFile  = "dir_status.json"     // 本地目录状态统计持久化文件
 )
@@ -472,7 +474,7 @@ func main() {
 		builtinRecordingCount := 0
 		/* 若需要对接内置录制状态，可在此恢复代码
 		for _, t := range GetBuiltinRecorderTasks() {
-			if t.Status == "录制中" {
+			if isBuiltinLiveStatus(t.Status) {
 				builtinRecordingCount++
 			}
 		}
@@ -678,6 +680,12 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 					return nil
 				}
 
+				// 跳过转换中间产物，避免半截 MP4 被扫进上传队列
+				lowerName := strings.ToLower(d.Name())
+				if strings.HasSuffix(lowerName, ".part") || strings.HasSuffix(lowerName, ".tmp") {
+					return nil
+				}
+
 				info, err := d.Info()
 				if err != nil {
 					return nil
@@ -736,23 +744,28 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	scanWg.Wait()
 
 	// 智能调度核心-修改版：解决大文件全部扎堆导致通道严重拥堵的问题
-	// 1. 依然先按大小降序排列
+	// 1. 先按大小降序排列
 	sort.Slice(collectedTasks, func(i, j int) bool {
 		return collectedTasks[i].size > collectedTasks[j].size
 	})
 
-	// 2. 双指针交替提取：按 [最大, 最小, 第二大, 第二小...] 的顺序重组序列，实现负载穿插均衡化
-	var mixedTasks []fileTask
-	left, right := 0, len(collectedTasks)-1
-	for left <= right {
-		mixedTasks = append(mixedTasks, collectedTasks[left])
-		left++
-		if left <= right {
-			mixedTasks = append(mixedTasks, collectedTasks[right])
-			right--
+	// 2. 双指针交替提取：按 [第二大, 最小, 第三大, 次小...] 穿插；
+	//    绝对最大文件挪到序列末尾，避免开场 Worker 被超大文件长期占满
+	if len(collectedTasks) > 1 {
+		largest := collectedTasks[0]
+		rest := collectedTasks[1:]
+		var mixedTasks []fileTask
+		left, right := 0, len(rest)-1
+		for left <= right {
+			mixedTasks = append(mixedTasks, rest[left])
+			left++
+			if left <= right {
+				mixedTasks = append(mixedTasks, rest[right])
+				right--
+			}
 		}
+		collectedTasks = append(mixedTasks, largest)
 	}
-	collectedTasks = mixedTasks // 覆写回主切片供下发推流
 
 	// 将排序及混合完成后的任务真正抛入全局异步大容量缓冲通道中
 	for _, t := range collectedTasks {
@@ -811,8 +824,74 @@ func cleanupFailedTasksByPath(targetPath string) {
 	})
 }
 
+// isTSVideoFile 判断是否为直播切片 TS
+func isTSVideoFile(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".ts")
+}
+
+// shouldSkipUploadArtifact 转换中间文件（.part/.tmp）不得进入上传链路
+func shouldSkipUploadArtifact(path string) bool {
+	lower := strings.ToLower(path)
+	return strings.HasSuffix(lower, ".part") || strings.HasSuffix(lower, ".tmp")
+}
+
+// convertTSToMP4 将 TS 无损 remux 为 MP4（-c copy，不重编码）。
+// 先写 .part 再原子改名，防止扫描器读到半截文件。
+func convertTSToMP4(tsPath string) (string, error) {
+	ext := filepath.Ext(tsPath)
+	base := strings.TrimSuffix(tsPath, ext)
+	mp4Path := base + ".mp4"
+	partPath := mp4Path + ".part"
+
+	// 优先使用内置引擎探测到的 ffmpeg，否则走 PATH
+	ffmpegBin := builtinFfmpegPath
+	if ffmpegBin == "" || ffmpegBin == "ffmpeg" {
+		if p, err := exec.LookPath("ffmpeg"); err == nil {
+			ffmpegBin = p
+		}
+	}
+
+	// 先尝试 AAC ADTS→ASC（直播 TS 常见），失败再退回纯 copy
+	attempts := [][]string{
+		{"-y", "-i", tsPath, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart", partPath},
+		{"-y", "-i", tsPath, "-c", "copy", "-movflags", "+faststart", partPath},
+	}
+
+	var lastErr error
+	for i, args := range attempts {
+		start := time.Now()
+		cmd := exec.Command(ffmpegBin, args...)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			lastErr = fmt.Errorf("尝试#%d失败: %v / %s", i+1, err, strings.TrimSpace(stderr.String()))
+			_ = os.Remove(partPath)
+			continue
+		}
+		info, err := os.Stat(partPath)
+		if err != nil || info.Size() == 0 {
+			lastErr = fmt.Errorf("输出为空: %v", err)
+			_ = os.Remove(partPath)
+			continue
+		}
+		if err := os.Rename(partPath, mp4Path); err != nil {
+			lastErr = err
+			_ = os.Remove(partPath)
+			continue
+		}
+		log.Printf("[CONVERT] ✅ TS→MP4 成功: %s → %s (%.2f MB, 耗时 %s)",
+			filepath.Base(tsPath), filepath.Base(mp4Path), float64(info.Size())/1024/1024, time.Since(start).Truncate(time.Millisecond))
+		return mp4Path, nil
+	}
+	return "", fmt.Errorf("TS 转 MP4 失败: %v", lastErr)
+}
+
 // handleFile 负责调度单一目标文件的生命周期，包括名称净洗、秒传对比、上报排队及执行下层上传操作
 func handleFile(path string) {
+	if shouldSkipUploadArtifact(path) {
+		return
+	}
+
 	info, err := os.Stat(path)
 	if err != nil {
 		log.Printf("[FILE][ERR] 无法获取文件状态 %s: %v", path, err)
@@ -824,6 +903,29 @@ func handleFile(path string) {
 		log.Printf("[FILE][SKIP] 拦截到 0 字节死文件，阻断上传并执行清理: %s", path)
 		os.Remove(path)
 		return
+	}
+
+	// TS→MP4：上传前无损封装；失败则回退直接传原 TS
+	var originalTS string
+	appConfigMu.RLock()
+	doConvert := appConfig.ConvertMP4
+	appConfigMu.RUnlock()
+	if doConvert && isTSVideoFile(path) {
+		log.Printf("[CONVERT] 🎬 开始 TS→MP4 封装: %s (%.2f MB)", filepath.Base(path), float64(info.Size())/1024/1024)
+		if mp4Path, cerr := convertTSToMP4(path); cerr == nil {
+			originalTS = path
+			path = mp4Path
+			if ni, nerr := os.Stat(path); nerr == nil {
+				info = ni
+			} else {
+				log.Printf("[CONVERT] 转换后无法读取 MP4，回退原 TS: %v", nerr)
+				path = originalTS
+				originalTS = ""
+				_ = os.Remove(mp4Path)
+			}
+		} else {
+			log.Printf("[CONVERT] ⚠️ 转换失败，将直接上传原 TS: %v", cerr)
+		}
 	}
 
 	root := detectRoot(path)
@@ -904,6 +1006,11 @@ func handleFile(path string) {
 		if err := os.Remove(path); err != nil {
 			log.Printf("[FILE][CLEAN][ERR] 秒传触发，移除本地文件失败 %s: %v", path, err)
 		}
+		if originalTS != "" {
+			if err := os.Remove(originalTS); err != nil {
+				log.Printf("[FILE][CLEAN][ERR] 秒传触发，移除原 TS 失败 %s: %v", originalTS, err)
+			}
+		}
 		return
 	}
 
@@ -913,6 +1020,11 @@ func handleFile(path string) {
 		saveHash(hash)
 		if err := os.Remove(path); err != nil {
 			log.Printf("[FILE][CLEAN][ERR] 移除本地文件失败 %s: %v", path, err)
+		}
+		if originalTS != "" {
+			if err := os.Remove(originalTS); err != nil {
+				log.Printf("[FILE][CLEAN][ERR] 移除原 TS 失败 %s: %v", originalTS, err)
+			}
 		}
 		recordSuccess(remote, name, info.Size())
 
@@ -1723,7 +1835,7 @@ func getActiveStreamers() []string {
 	// ✨ 核心防重排斥机制：提取当前处于活跃状态的内置引擎任务名单
 	builtinNames := make(map[string]bool)
 	for _, t := range GetBuiltinRecorderTasks() {
-		if t.Status == "录制中" { // 只排斥确实在录制中的任务，防止干扰
+		if isBuiltinLiveStatus(t.Status) { // 只排斥确实在录制中的任务，防止干扰
 			// 将特殊字符去除，匹配目录名可能发生的清洗化逻辑
 			safeName := t.AnchorName
 			invalidChars := []string{"\\", "/", ":", "*", "?", "\"", "<", ">", "|", "\r", "\n", "\t", "　"}

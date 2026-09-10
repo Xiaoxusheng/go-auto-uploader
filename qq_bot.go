@@ -1000,7 +1000,7 @@ func qqHandleList(userID int64, filter string) {
 	tasks := GetBuiltinRecorderTasks()
 	var onlineTasks []BuiltinTaskStatus
 	for _, t := range tasks {
-		if t.Status == "录制中" {
+		if isBuiltinLiveStatus(t.Status) {
 			if filter != "" && !strings.Contains(strings.ToLower(t.Platform), strings.ToLower(filter)) {
 				continue
 			}
