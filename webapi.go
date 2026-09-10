@@ -1847,8 +1847,8 @@ func logCollector() {
 
 // restoreQueueCounts 从恢复内存数据状态计算当前待处理、成功和失败的队列长度
 func restoreQueueCounts() {
-	var waiting, uploading, success, failed, retrying int64
-	enqueuedFiles.Range(func(_, _ interface{}) bool { waiting++; return true })
+	waiting := taskQueue.Pending()
+	var uploading, success, failed, retrying int64
 	queueUploading.Range(func(_, _ interface{}) bool { uploading++; return true })
 	queueSuccess.Range(func(_, _ interface{}) bool { success++; return true })
 	queueFail.Range(func(_, _ interface{}) bool { failed++; return true })

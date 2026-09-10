@@ -10,11 +10,13 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"upload/internal/config"
@@ -24,6 +26,7 @@ import (
 	"upload/internal/naming"
 	"upload/internal/ratelimit"
 	"upload/internal/remote"
+	"upload/internal/uploader"
 )
 
 // appCfg 读取配置快照（单源 cfgStore）
@@ -66,8 +69,8 @@ var (
 	// hashDB 由 internal/hashstore 承载秒传去重
 	hashDB *hashstore.Store
 
-	queueCount   int64 // 等待队列数量
-	activeWorker int64 // 当前活跃的 Worker 数量
+	queueCount   int64 // 等待队列数量（展示用镜像，真源为 taskQueue.Pending）
+	activeWorker int64 // 当前活跃的 Worker 数量（展示用镜像，真源为 uploadPool.Active）
 
 	// 暴露给前端的动态扫描周期与倒计时时间戳
 	currentDynamicIntervalGlobal int64
@@ -114,10 +117,11 @@ var (
 	// 修复 Bug 5：成功记录的合并落盘脏标记，避免每次上传完都全量重写 50 万条 JSON
 	successLogDirty int32
 
-	// 【彻底解耦扫描与上传】新增的全局异步 Worker 池核心组件
-	globalTaskCh  = make(chan string, 100000) // 十万级超大缓冲，保证扫描引擎永不阻塞
-	enqueuedFiles sync.Map                    // 任务防重防漏护盾
-	workerCount   int32                       // 当前实际运行的 Worker 数量
+	// 上传队列 + Worker 池（internal/uploader）
+	taskQueue  = uploader.NewQueue(100000)
+	uploadPool *uploader.WorkerPool
+	appCtx     context.Context
+	appCancel  context.CancelFunc
 
 	// ✨ 记录外部引擎活跃主播字典，用于对比下发开播/下播通知
 	lastActiveMap   = make(map[string]bool)
@@ -281,50 +285,33 @@ func dirStatusPersistLoop() {
 	}
 }
 
-// manageWorkers 全局常驻的动态 Worker 线程池调度器
+// manageWorkers 启动 internal/uploader Worker 池，并镜像计数到展示用原子变量
 func manageWorkers() {
-	for {
-		desired := appCfg().Workers
+	appCtx, appCancel = context.WithCancel(context.Background())
+	uploadPool = uploader.NewWorkerPool(taskQueue, func(ctx context.Context, path string) {
+		atomic.AddInt64(&activeWorker, 1)
+		defer atomic.AddInt64(&activeWorker, -1)
+		handleFile(path)
+	}, func() bool {
+		runningMu.RLock()
+		defer runningMu.RUnlock()
+		return !running
+	})
+	uploadPool.Start(appCtx, func() int { return appCfg().Workers })
 
-		current := atomic.LoadInt32(&workerCount)
-		for current < int32(desired) {
-			// 先原子递增并拿到本次新建 Worker 的唯一 ID，再启动 goroutine
-			// 修复 Bug：原先 int(current)+1 依赖循环变量快照，current++ 后 workerID 会跳号
-			newID := int(atomic.AddInt32(&workerCount, 1))
-
-			go func(workerID int) {
-				for path := range globalTaskCh {
-					runningMu.RLock()
-					isRunning := running
-					runningMu.RUnlock()
-
-					// 若系统处于暂停状态，将任务丢弃并抹除内存标记，交由下一次扫描重新拾取
-					if !isRunning {
-						enqueuedFiles.Delete(path)
-						atomic.AddInt64(&queueCount, -1)
-						continue
-					}
-
-					atomic.AddInt64(&queueCount, -1)
-					atomic.AddInt64(&activeWorker, 1)
-
-					start := time.Now()
-					handleFile(path) // 实际的耗时上传操作在这里发生
-
-					log.Printf("[UPLOAD][DONE][W%d] 文件:%s 耗时:%s", workerID, filepath.Base(path), time.Since(start).Truncate(time.Millisecond))
-
-					// 上传结束（无论成功或失败），必须清除防重标记，允许未来复检
-					enqueuedFiles.Delete(path)
-					atomic.AddInt64(&activeWorker, -1)
-				}
-				atomic.AddInt32(&workerCount, -1)
-			}(newID)
-
-			current++
+	// 将队列 pending 同步到 queueCount，兼容现有 status API
+	go func() {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-appCtx.Done():
+				return
+			case <-t.C:
+				atomic.StoreInt64(&queueCount, taskQueue.Pending())
+			}
 		}
-		// 每 2 秒巡检一次 Worker 数量，确保存活
-		time.Sleep(2 * time.Second)
-	}
+	}()
 }
 
 // pauseSystemOnFailure 当网络故障或远端拒绝频繁到达阈值时，触发系统自动保护熔断挂起功能，并通过微信向管理员发起强警告
@@ -425,6 +412,23 @@ func main() {
 	go dirStatusPersistLoop()  // 挂载高性能异步合并落盘守护机制
 	go successLogPersistLoop() // 挂载成功记录批量落盘守护机制（修复 Bug 5）
 	go manageWorkers()         // 挂载全局异步的 Worker 上传线程池
+
+	// SIGINT/SIGTERM：停止接收新任务并取消 Worker 池（在跑的 handleFile 会随 ctx 结束）
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		sig := <-sigCh
+		log.Printf("[SYSTEM] 收到退出信号 %v，正在优雅停机…", sig)
+		runningMu.Lock()
+		running = false
+		runningMu.Unlock()
+		if appCancel != nil {
+			appCancel()
+		}
+		// 短暂等待 Worker 退出后强制结束
+		time.Sleep(2 * time.Second)
+		os.Exit(0)
+	}()
 
 	baseInterval := appCfg().ScanInterval
 	currentDynamicInterval := baseInterval
@@ -681,8 +685,8 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 					ds.Mu.Unlock()
 				}
 
-				// 利用内存锁阻挡已在排队或上一轮尚未处理完成的文件，避免冗余收集
-				if _, loaded := enqueuedFiles.Load(path); !loaded {
+				// 利用队列防重表阻挡已在排队或上一轮尚未处理完成的文件，避免冗余收集
+				if !taskQueue.Contains(path) {
 					collectedMu.Lock()
 					collectedTasks = append(collectedTasks, fileTask{path: path, size: info.Size()})
 					collectedMu.Unlock()
@@ -724,19 +728,11 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 		collectedTasks = append(mixedTasks, largest)
 	}
 
-	// 将排序及混合完成后的任务真正抛入全局异步大容量缓冲通道中
+	// 将排序及混合完成后的任务抛入去重队列
 	for _, t := range collectedTasks {
-		if _, loaded := enqueuedFiles.LoadOrStore(t.path, true); !loaded {
+		if taskQueue.Enqueue(t.path) {
 			atomic.AddInt64(&queueCount, 1)
 			atomic.AddInt32(&newlyAddedFiles, 1)
-
-			select {
-			case globalTaskCh <- t.path:
-			default:
-				enqueuedFiles.Delete(t.path)
-				atomic.AddInt64(&queueCount, -1)
-				atomic.AddInt32(&newlyAddedFiles, -1)
-			}
 		}
 	}
 
