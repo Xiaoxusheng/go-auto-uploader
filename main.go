@@ -26,6 +26,7 @@ import (
 	"upload/internal/naming"
 	"upload/internal/ratelimit"
 	"upload/internal/remote"
+	"upload/internal/scanner"
 	"upload/internal/uploader"
 )
 
@@ -607,102 +608,48 @@ func runOnce(triggerReason string, currentDynamicInterval int) int {
 	}
 
 	var newlyAddedFiles int32 = 0
-	var activeRecordingCount int32 = 0
-	var scanWg sync.WaitGroup
 
-	// 用于大文件排队调度的任务缓冲池与互斥锁
-	var collectedTasks []fileTask
-	var collectedMu sync.Mutex
-
-	// 并发遍历多个目标根目录以加速数据检索和任务投递
-	for _, root := range currentDirs {
-		root = filepath.Clean(strings.TrimSpace(root))
-		if root == "." || root == "" {
-			continue
-		}
-
-		scanWg.Add(1)
-		go func(scanRoot string) {
-			defer scanWg.Done()
-
-			err := filepath.WalkDir(scanRoot, func(path string, d os.DirEntry, err error) error {
-				runningMu.RLock()
-				isRunning := running
-				runningMu.RUnlock()
-
-				if !isRunning {
-					return fmt.Errorf("scan canceled by user")
-				}
-				if err != nil {
-					log.Printf("[SCAN][ERR] 访问路径出错 %s: %v", path, err)
-					return nil
-				}
-				if d.IsDir() {
-					return nil
-				}
-
-				// 跳过转换中间产物，避免半截 MP4 被扫进上传队列
-				lowerName := strings.ToLower(d.Name())
-				if strings.HasSuffix(lowerName, ".part") || strings.HasSuffix(lowerName, ".tmp") {
-					return nil
-				}
-
-				info, err := d.Info()
-				if err != nil {
-					return nil
-				}
-
-				if time.Since(info.ModTime()) < 2*time.Minute {
-					atomic.AddInt32(&activeRecordingCount, 1)
-					return nil
-				}
-
-				// ✨ 核心修复一：在扫描阶段直接拦截并静默销毁 0 字节废弃文件，拔除根源污染
-				if info.Size() == 0 {
-					log.Printf("[SCAN][CLEAN] 检测到遗留的 0 字节无效切片，已自动物理删除: %s", path)
-					os.Remove(path)
-					return nil
-				}
-
-				// ✨ 核心逻辑：如果上传被关闭，只做目录统计和录制状态监测，不加入待处理队列
-				if !enableUpload {
-					if val, exists := dirStatuses.Load(scanRoot); exists {
-						ds := val.(*DirStatus)
-						ds.Mu.Lock()
-						ds.PendingFiles++
-						ds.TotalSize += info.Size()
-						ds.Mu.Unlock()
-					}
-					return nil
-				}
-
-				// 每找到一个合法的磁盘文件，视为当前待处理文件
-				if val, exists := dirStatuses.Load(scanRoot); exists {
-					ds := val.(*DirStatus)
-					ds.Mu.Lock()
-					ds.PendingFiles++
-					ds.TotalSize += info.Size()
-					ds.Mu.Unlock()
-				}
-
-				// 利用队列防重表阻挡已在排队或上一轮尚未处理完成的文件，避免冗余收集
-				if !taskQueue.Contains(path) {
-					collectedMu.Lock()
-					collectedTasks = append(collectedTasks, fileTask{path: path, size: info.Size()})
-					collectedMu.Unlock()
-				}
-				return nil
-			})
-
-			if err != nil && err.Error() != "scan canceled by user" {
+	// 扫描下沉到 internal/scanner：只产出候选，不直接上传
+	// 上传关闭时：仍统计目录，但不产出可入队候选
+	isQueuedFn := func(path string) bool { return taskQueue.Contains(path) }
+	if !enableUpload {
+		isQueuedFn = func(string) bool { return true }
+	}
+	scanRes := scanner.Scan(context.Background(), scanner.Options{
+		Dirs:     currentDirs,
+		IsQueued: isQueuedFn,
+		OnFile: func(root, path string, size int64) {
+			// 目录统计：无论是否入队，合法文件都计入 Pending/TotalSize
+			if val, exists := dirStatuses.Load(root); exists {
+				ds := val.(*DirStatus)
+				ds.Mu.Lock()
+				ds.PendingFiles++
+				ds.TotalSize += size
+				ds.Mu.Unlock()
+			}
+		},
+		OnZeroByte: func(path string) {
+			log.Printf("[SCAN][CLEAN] 检测到遗留的 0 字节无效切片，已自动物理删除: %s", path)
+		},
+		OnError: func(path string, err error) {
+			if err != nil && err != context.Canceled {
+				log.Printf("[SCAN][ERR] 访问路径出错 %s: %v", path, err)
 				SendAlert("warning", "目录扫描异常", "无法访问部分路径: "+err.Error())
 				addLog("error", "文件遍历失败", err.Error())
 			}
-		}(root)
-	}
+		},
+		IsRunning: func() bool {
+			runningMu.RLock()
+			defer runningMu.RUnlock()
+			return running
+		},
+	})
 
-	// 阻塞挂起直至所有平行目录的检索分析下发动作完成
-	scanWg.Wait()
+	activeRecordingCount := scanRes.Active
+	collectedTasks := make([]fileTask, 0, len(scanRes.Candidates))
+	for _, c := range scanRes.Candidates {
+		collectedTasks = append(collectedTasks, fileTask{path: c.Path, size: c.Size})
+	}
 
 	// 智能调度核心-修改版：解决大文件全部扎堆导致通道严重拥堵的问题
 	// 1. 先按大小降序排列
