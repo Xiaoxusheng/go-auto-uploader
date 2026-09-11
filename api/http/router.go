@@ -29,11 +29,15 @@ type Routes struct {
 
 	RecorderStatus, RecorderControl, RecorderLogs http.HandlerFunc
 	WebSocket                                     http.HandlerFunc
+	Vendor                                        http.Handler
 	Extra                                         func(mux *http.ServeMux)
 }
 
 // Register 把路由挂到 mux。
 func Register(mux *http.ServeMux, r Routes) {
+	if r.Vendor != nil {
+		mux.Handle("/vendor/", r.Vendor)
+	}
 	mux.HandleFunc("/api/v1/sec/pubkey", r.PubKey)
 	mux.HandleFunc("/api/v1/sec/exchange", r.Exchange)
 	mux.HandleFunc("/", r.Index)

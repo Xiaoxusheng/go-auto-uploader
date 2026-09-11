@@ -2,21 +2,22 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
+    <!-- 保留缩放能力：禁用 user-scalable 会挡住移动端双指放大（无障碍问题） -->
     <meta name="viewport"
-          content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+          content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 
     <meta name="referrer" content="no-referrer"/>
 
     <title>视频上传与录制系统</title>
-    <link rel="icon" href="data:,"/>
     <link rel="icon"
           href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://unpkg.com/@arco-design/web-vue/dist/arco-vue.min.js"></script>
-    <script src="https://unpkg.com/@arco-design/web-vue/dist/arco-vue-icon.min.js"></script>
-    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
-    <script src="https://unpkg.com/echarts/dist/echarts.min.js"></script>
-    <link href="https://unpkg.com/@arco-design/web-vue/dist/arco.min.css" rel="stylesheet">
+    <!-- 前端依赖自托管（随二进制发布），不走公网 CDN：离线可用、首屏无重定向延迟 -->
+    <script src="/vendor/vue.global.prod.js"></script>
+    <script src="/vendor/arco-vue.min.js"></script>
+    <script src="/vendor/arco-vue-icon.min.js"></script>
+    <script src="/vendor/axios.min.js"></script>
+    <script src="/vendor/echarts.min.js"></script>
+    <link href="/vendor/arco.min.css" rel="stylesheet">
 
     <style>
         html, body {
@@ -596,10 +597,11 @@
                 <span style="font-size: 12px; color: var(--color-text-3); display: flex; align-items: center; gap: 4px; margin-right: 8px;">
                     <icon-dashboard></icon-dashboard> <span class="hidden-xs">Uptime:</span> {{ formatDuration(systemStatus.uptime) }}
                 </span>
-                <a-button type="text" shape="circle" size="small" @click="openGitHub">
+                <a-button type="text" shape="circle" size="small" title="查看 GitHub 仓库" @click="openGitHub">
                     <icon-github style="font-size: 16px; color: var(--color-text-2);"></icon-github>
                 </a-button>
-                <a-button type="text" shape="circle" size="small" @click="toggleTheme">
+                <a-button type="text" shape="circle" size="small"
+                          :title="isDarkMode ? '切换到浅色模式' : '切换到深色模式'" @click="toggleTheme">
                     <icon-sun-fill v-if="!isDarkMode"
                                    style="font-size: 16px; color: var(--color-text-2);"></icon-sun-fill>
                     <icon-moon-fill v-else style="font-size: 16px; color: var(--color-text-2);"></icon-moon-fill>

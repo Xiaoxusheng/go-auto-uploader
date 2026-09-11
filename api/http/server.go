@@ -33,6 +33,8 @@ const (
 // Options 启动注入项。
 type Options struct {
 	IndexHTML string
+	// Vendor 挂载 /vendor/ 前端依赖静态资源（自托管，不走 CDN）
+	Vendor http.Handler
 	// Extra 挂载内置录制等扩展路由
 	Extra func(mux *http.ServeMux)
 }
@@ -40,6 +42,7 @@ type Options struct {
 // Server 控制台服务实例。
 type Server struct {
 	indexHTML string
+	vendor    http.Handler
 	extra     func(mux *http.ServeMux)
 
 	wsUpgrader   websocket.Upgrader
@@ -57,6 +60,7 @@ type Server struct {
 func New(opts Options) *Server {
 	return &Server{
 		indexHTML: opts.IndexHTML,
+		vendor:    opts.Vendor,
 		extra:     opts.Extra,
 		wsUpgrader: websocket.Upgrader{
 			CheckOrigin:     func(r *http.Request) bool { return true },
@@ -123,6 +127,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 		Streamers: s.handleStreamers, ActiveStreamers: s.handleActiveStreamers, Cookies: s.handleCookies,
 		RecorderStatus: s.handleRecorderStatus, RecorderControl: s.handleRecorderControl, RecorderLogs: s.handleRecorderLogs,
 		WebSocket: s.handleWebSocket,
+		Vendor:    s.vendor,
 		Extra:     s.extra,
 	})
 }

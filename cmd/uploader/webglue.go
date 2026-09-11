@@ -18,6 +18,7 @@ func startHTTP(port int) error {
 
 	httpSrv = httpapi.New(httpapi.Options{
 		IndexHTML: web.IndexHTML,
+		Vendor:    web.VendorHandler(),
 		Extra:     func(m *http.ServeMux) { recorder.Init(m) },
 	})
 
