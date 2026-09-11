@@ -1,30 +1,35 @@
-package main
+package httpapi
 
 import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"upload/internal/app"
 	"upload/internal/recorder"
 )
 
-// TestAuthMiddlewareEnforcement 安全审计回归测试：验证全局认证中间件的放行与拦截边界。
-// 公开面（登录/密钥协商/静态资源）必须放行，其余 /api 与 /ws 通道必须强制令牌校验。
+func newTestServer() *Server {
+	return New(Options{IndexHTML: "<html>ok</html>"})
+}
+
 func TestAuthMiddlewareEnforcement(t *testing.T) {
+	s := newTestServer()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/status", handleStatus)
-	mux.HandleFunc("/api/v1/sec/pubkey", handleGetPubKey)
-	mux.HandleFunc("/api/v1/auth/login", handleLogin)
+	mux.HandleFunc("/api/v1/status", s.handleStatus)
+	mux.HandleFunc("/api/v1/sec/pubkey", s.handleGetPubKey)
+	mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 
-	srv := httptest.NewServer(authMiddleware(mux))
+	srv := httptest.NewServer(s.Middleware(mux))
 	defer srv.Close()
 
-	token := issueAuthToken()
+	token := s.IssueToken()
 	if token == "" {
 		t.Fatal("令牌签发失败")
 	}
-	defer authSessions.Revoke(token)
+	defer s.AuthSessions().Revoke(token)
 
 	cases := []struct {
 		name string
@@ -35,10 +40,9 @@ func TestAuthMiddlewareEnforcement(t *testing.T) {
 		{"受保护接口伪造令牌", "/api/v1/status?token=forge", http.StatusUnauthorized},
 		{"受保护接口携带合法令牌", "/api/v1/status?token=" + token, http.StatusOK},
 		{"公开密钥协商放行", "/api/v1/sec/pubkey", http.StatusOK},
-		{"公开登录接口放行", "/api/v1/auth/login", 405}, // GET 被 handler 拒绝而非中间件 401，证明已穿透
+		{"公开登录接口放行", "/api/v1/auth/login", 405},
 		{"静态资源放行", "/index.html", http.StatusOK},
 	}
-
 	for _, tc := range cases {
 		res, err := http.Get(srv.URL + tc.path)
 		if err != nil {
@@ -50,7 +54,6 @@ func TestAuthMiddlewareEnforcement(t *testing.T) {
 		}
 	}
 
-	// Bearer 头方式同样必须有效
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/status", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	res, err := http.DefaultClient.Do(req)
@@ -63,41 +66,38 @@ func TestAuthMiddlewareEnforcement(t *testing.T) {
 	}
 }
 
-// TestLoginBruteForceLockout 安全审计回归测试：验证连续口令失败会触发防爆破锁定。
 func TestLoginBruteForceLockout(t *testing.T) {
-	authSessions.ResetLoginFailures()
-	defer authSessions.ResetLoginFailures()
+	app.DashUser = "admin"
+	app.DashPass = "admin"
+	s := newTestServer()
+	s.authSessions.ResetLoginFailures()
+	defer s.authSessions.ResetLoginFailures()
 
 	reqBody := `{"username":"admin","password":"wrong"}`
 	for i := 0; i < 10; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(reqBody))
 		w := httptest.NewRecorder()
-		handleLogin(w, req)
+		s.handleLogin(w, req)
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("错误口令应返回 401, 获得 %d", w.Code)
 		}
 	}
-
-	// 阈值达成后应被锁定
-	if _, locked := authSessions.CheckLocked(); !locked {
+	if _, locked := s.authSessions.CheckLocked(); !locked {
 		t.Fatal("连续失败达阈值后未触发锁定")
 	}
-
-	// 锁定期间即使口令正确也应拒绝
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login",
 		strings.NewReader(`{"username":"admin","password":"admin"}`))
 	w := httptest.NewRecorder()
-	handleLogin(w, req)
+	s.handleLogin(w, req)
 	if w.Code != http.StatusTooManyRequests {
 		t.Errorf("锁定期间应返回 429, 获得 %d", w.Code)
 	}
 
-	// 重置锁定后正确凭据应签发令牌
-	authSessions.ResetLoginFailures()
+	s.authSessions.ResetLoginFailures()
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login",
 		strings.NewReader(`{"username":"admin","password":"admin"}`))
 	w = httptest.NewRecorder()
-	handleLogin(w, req)
+	s.handleLogin(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("正确凭据登录失败: 预期 200, 获得 %d", w.Code)
 	}
@@ -107,7 +107,6 @@ func TestLoginBruteForceLockout(t *testing.T) {
 	}
 }
 
-// TestProxyImageSSRFGuard 安全审计回归测试：图片代理必须拒绝非 http/https 协议。
 func TestProxyImageSSRFGuard(t *testing.T) {
 	cases := []struct {
 		name string
@@ -117,7 +116,6 @@ func TestProxyImageSSRFGuard(t *testing.T) {
 		{"无协议裸地址", "192.168.5.10"},
 		{"gopher协议", "gopher://127.0.0.1:6379/_INFO"},
 	}
-
 	for _, tc := range cases {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/builtin_recorder/proxy_image?url="+tc.url, nil)
 		w := httptest.NewRecorder()

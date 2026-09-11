@@ -3,8 +3,10 @@ package app
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"upload/internal/config"
 	"upload/internal/hashstore"
@@ -12,6 +14,7 @@ import (
 	"upload/internal/remote"
 	"upload/internal/storage"
 	"upload/internal/uploader"
+	"upload/internal/ws"
 )
 
 const (
@@ -49,6 +52,16 @@ var (
 	HashDB     *hashstore.Store
 	RemoteCli  *remote.OpenListClient
 
+	// HTTPCli 连接池（OpenList / PushPlus）
+	HTTPCli = &http.Client{
+		Timeout: 0,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 20,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+
 	AppCtx    context.Context
 	AppCancel context.CancelFunc
 
@@ -65,7 +78,22 @@ var (
 	Running   bool
 	RunningMu sync.RWMutex
 
-	StartTimeUnix int64
+	StartTime time.Time
+
+	DashUser string
+	DashPass string
+
+	// WSHub 控制台广播
+	WSHub *ws.Hub
+
+	// Pipeline 上传编排
+	Pipeline *uploader.Pipeline
+
+	// BuiltinActiveNamesHook 返回内置引擎当前正在录制的主播名（已清洗，由 main 注入）
+	BuiltinActiveNamesHook func() []string
+
+	// FFmpegPathHook 返回 ffmpeg 可执行文件路径
+	FFmpegPathHook func() string
 )
 
 // AppCfg 配置快照。
@@ -102,6 +130,24 @@ func SetRunning(v bool) {
 	RunningMu.Lock()
 	Running = v
 	RunningMu.Unlock()
+}
+
+// SetStartTime 记录启动时刻。
+func SetStartTime(t time.Time) {
+	RunningMu.Lock()
+	StartTime = t
+	RunningMu.Unlock()
+}
+
+// UptimeSeconds 运行秒数。
+func UptimeSeconds() int64 {
+	RunningMu.RLock()
+	st := StartTime
+	RunningMu.RUnlock()
+	if st.IsZero() {
+		return 0
+	}
+	return int64(time.Since(st).Seconds())
 }
 
 // IncFail 熔断计数 +1。

@@ -1,4 +1,4 @@
-// Package httpapi 注册控制台 HTTP 路由（Handler 仍在 package main，本包只做装配）。
+// Package httpapi 注册并实现控制台 HTTP/WS Handler（状态经 internal/app）。
 package httpapi
 
 import "net/http"

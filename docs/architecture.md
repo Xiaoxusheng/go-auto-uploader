@@ -1,81 +1,81 @@
 # 架构说明
 
-> 基于 `feat/record-screenshot-switches` 重构后的模块边界。
+> 基于 `main` 上完成的 engineering-refactor 收口（2026-09-11）。
 
 ## 分层
 
 ```text
 cmd/main (package main)
-  ├── internal/config        配置单源 Store
-  ├── internal/scanner       目录扫描 → 候选
-  ├── internal/uploader      Queue / WorkerPool / Task
-  ├── internal/remote        OpenList Login/Put
-  ├── internal/convert       TS→MP4
-  ├── internal/hashstore     秒传 SHA-256
-  ├── internal/storage       history / success / dirStatus
-  ├── internal/ratelimit     日夜限速
-  ├── internal/ws            WebSocket Hub
-  ├── internal/notification  Notifier 扇出
-  ├── internal/auth          登录会话 + Middleware
-  ├── internal/cryptox       AES-GCM + RSA 会话密钥
-  ├── internal/logx          日志环形缓冲 + stdout 拦截
-  ├── internal/recorder      Docker 控制 + 名单行/开关纯函数
-  ├── internal/naming        文件名清洗
-  ├── internal/fsutil        原子写
-  └── package main 遗留      webapi Handler / bots / handleFile 编排
-```
-
-内置录制已按域拆分（仍在 `package main`，便于依赖注入后再迁包）：
-
-```text
-builtin_types.go          状态/开关/配置类型
-builtin_status.go         状态更新 + WS 防抖广播
-builtin_init.go           启动/热重载/任务快照
-builtin_txt.go            名单文件读写
-builtin_douyin_crypto.go  短链 + SM3/RC4/a_bogus
-builtin_douyin.go         抖音推流探测
-builtin_kuaishou.go       快手
-builtin_soop.go           Soop
-builtin_proxy.go          封面反代 SSRF 防护
-builtin_ffmpeg.go         抽帧 + 录制/截屏主流程
-builtin_monitor.go        监控协程
-builtin_api.go            Web API
+  ├── main.go              flag + app.Run（≤150 行）
+  ├── webglue.go           httpapi.Server 启动 + recorder hooks
+  ├── compat.go            bots/tests 薄别名
+  ├── telegram_bot.go      TG 机器人（遗留 main）
+  ├── qq_bot.go            QQ 机器人（遗留 main）
+  │
+  ├── api/http             Server + REST/WS Handler（依赖注入 app）
+  │
+  └── internal/
+      ├── app              生命周期单源：Run/Scan/Upload/Report/Streamers/Notify/Hubs
+      ├── config           配置单源 Store
+      ├── scanner          目录扫描 → 候选
+      ├── uploader         Queue / WorkerPool / Pipeline
+      ├── remote           OpenList Login/Put
+      ├── convert          TS→MP4
+      ├── hashstore        秒传 SHA-256
+      ├── storage          history / success / dirStatus
+      ├── ratelimit        日夜限速
+      ├── ws               WebSocket Hub
+      ├── notification     Notifier 扇出
+      ├── auth             登录会话 + Middleware
+      ├── cryptox          AES-GCM + RSA 会话密钥
+      ├── logx             日志环形缓冲 + stdout 拦截
+      ├── recorder         builtin 平台探测/录制 + Docker 控制
+      ├── naming           文件名清洗
+      └── fsutil           原子写
 ```
 
 ## 上传数据流
 
 ```text
-scanner.Scan
-    → []Candidate
-    → taskQueue.Enqueue (去重)
-    → WorkerPool → handleFile
+app.RunOnce → scanner.Scan → TaskQueue.Enqueue
+    → WorkerPool → app.HandleFile (uploader.Pipeline)
          → convert? → hashstore → remote.Put → storage
+```
+
+## HTTP / 控制台
+
+```text
+main.startHTTP
+  → httpapi.New(Options{IndexHTML, Extra})
+  → recorder.SetHooks(...)
+  → Server.Start
+       → Register(Routes) + auth.Middleware
+       → sysStatsCollector / wsBroadcastLoop / logCollector / wsDashboardBroadcaster
 ```
 
 ## 通知
 
 ```text
-sendWeChatNotify → notification.Hub
-                      ├── DynamicPushPlus (微信)
-                      ├── SendTelegramNotification
-                      └── SendQQNotification
+app.SendWeChatNotify → app.NotifyHub
+                         ├── DynamicPushPlus (微信)
+                         ├── telegram (SetNotifyChannel → SendTelegramNotification)
+                         └── qq        (SetNotifyChannel → SendQQNotification)
 ```
 
 ## WebSocket
 
 ```text
-broadcastWS → ws.Hub.Publish → Run → Client.WritePump
+app.BroadcastWS → app.WSHub.PublishTyped → Run → Client.WritePump
 ```
 
 ## 遗留（后续可再拆）
 
-- `builtin_recorder.go`（~2700 行）仍为 package main
-- `webapi.go` 鉴权/加密与 Handler 仍在同一文件
-- `main.go` 上传编排 `handleFile`/`upload` 仍内联
+- `telegram_bot.go` / `qq_bot.go` 仍为 package main，经 `compat.go` 访问 `internal/app`
+- `index.html` embed 仍在 main（`//go:embed` 不能跨包）
 
 ## 兼容承诺
 
 - CLI 参数名不变
 - `config.json` 扁平 JSON 字段不变
 - REST 路径 `/api/v1/*`、`/ws/live` 不变
-- 数据文件：`uploaded_hash.db`、`upload_success.json`、`dir_status.json`
+- 数据文件路径/格式不变

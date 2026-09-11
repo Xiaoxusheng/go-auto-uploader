@@ -59,7 +59,9 @@ recorder / bots → notification, recorder API
 | G | ws Hub | ✅ |
 | H | notification | ✅ |
 | I | recorder(Docker) + 文档 | ✅ |
-| 后续 | builtin_recorder 拆包、auth/logx、api/http、main <150 行 | 待做 |
+| J | builtin 迁 internal/recorder + auth/logx/cryptox | ✅ |
+| K | app 编排 + api/http Handler + main ≤150 行 | ✅ |
+| 遗留 | bots 迁出 package main；`cmd/uploader` 目录形态 | 待做 |
 
 ## 明确不做（本阶段）
 
