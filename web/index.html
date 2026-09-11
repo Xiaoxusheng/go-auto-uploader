@@ -369,6 +369,179 @@
             display: inline-flex;
         }
 
+        /* ========== 内置引擎：工具栏不换行 + 筛选条 + 卡片/表格视图 ========== */
+        .builtin-toolbar {
+            flex-wrap: nowrap !important;
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+
+        .builtin-toolbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .builtin-toolbar .mobile-action-buttons {
+            flex-wrap: nowrap;
+            width: auto;
+            flex: 0 0 auto;
+        }
+
+        .builtin-toolbar .mobile-action-buttons > * {
+            flex: 0 0 auto;
+        }
+
+        .builtin-filter-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+
+        .builtin-filter-bar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .builtin-filter-bar > * {
+            flex: 0 0 auto;
+        }
+
+        .builtin-filter-spacer {
+            flex: 1 1 12px !important;
+            min-width: 0;
+        }
+
+        .builtin-card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+            gap: 12px;
+            min-height: 200px;
+        }
+
+        .builtin-task-card {
+            background: var(--color-bg-2, #fff);
+            border: 1px solid var(--color-border, #e5e6eb);
+            border-radius: 10px;
+            overflow: hidden;
+            transition: box-shadow .2s, transform .2s;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .builtin-task-card:hover {
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+            transform: translateY(-2px);
+        }
+
+        .builtin-card-cover {
+            position: relative;
+            aspect-ratio: 16 / 9;
+            background: var(--color-fill-2, #f2f3f5);
+            cursor: pointer;
+            overflow: hidden;
+        }
+
+        .builtin-card-cover img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .builtin-card-cover-empty {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--color-text-3, #86909c);
+            font-size: 12px;
+        }
+
+        .builtin-card-badge {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            z-index: 5;
+            backdrop-filter: blur(4px);
+        }
+
+        .builtin-card-live {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            z-index: 5;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(0, 0, 0, 0.55);
+            color: #fff;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            backdrop-filter: blur(4px);
+        }
+
+        .builtin-card-cover:hover .cover-download-btn {
+            display: inline-flex;
+        }
+
+        .builtin-card-body {
+            padding: 8px 10px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            flex: 1;
+        }
+
+        .builtin-card-name {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--color-text-1, #1d2129);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .builtin-card-tags {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+
+        .builtin-card-meta {
+            font-size: 11px;
+            color: var(--color-text-3, #86909c);
+        }
+
+        .builtin-card-actions {
+            margin-top: auto;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: nowrap;
+        }
+
+        .builtin-card-actions .builtin-card-room {
+            font-size: 12px;
+            color: #165dff;
+            text-decoration: none;
+            white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+        }
+
+        .builtin-card-empty {
+            grid-column: 1 / -1;
+            padding: 100px 0;
+            color: var(--color-text-3, #86909c);
+            text-align: center;
+        }
+
         @supports (-webkit-touch-callout: none) {
             * {
                 -webkit-tap-highlight-color: transparent;
@@ -1032,8 +1205,8 @@
                     </template>
 
                     <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
-                        <div class="search-control-bar"
-                             style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                        <div class="search-control-bar builtin-toolbar"
+                             style="display: flex; gap: 12px; align-items: center; flex-wrap: nowrap;">
                             <a-input-search
                                     v-model="builtinSearchQuery"
                                     placeholder="搜索主播或链接"
@@ -1102,15 +1275,52 @@
                             </div>
                         </div>
 
-                        <div style="margin-top: 12px; display: flex; gap: 16px; font-size: 13px; color: var(--color-text-3); justify-content: flex-end;">
-                            <span><icon-menu></icon-menu> 总计: <b>{{ builtinTasks.length }}</b></span>
-                            <span style="color: #00B42A"><icon-play-circle></icon-play-circle> 监控: <b>{{ builtinActiveCount }}</b></span>
-                            <span style="color: #F53F3F"><icon-record></icon-record> 录制: <b>{{ builtinRecordingCount }}</b></span>
+                        <div class="builtin-filter-bar">
+                            <a-radio-group v-model="builtinStatusFilter" type="button" size="small">
+                                <a-radio value="all">全部</a-radio>
+                                <a-radio value="live">直播中</a-radio>
+                                <a-radio value="offline">未直播</a-radio>
+                            </a-radio-group>
+
+                            <a-radio-group v-model="builtinPlatformFilter" type="button" size="small">
+                                <a-radio value="all">全部平台</a-radio>
+                                <a-radio value="Douyin">抖音</a-radio>
+                                <a-radio value="Kuaishou">快手</a-radio>
+                                <a-radio value="Bilibili">B站</a-radio>
+                                <a-radio value="Twitch">Twitch</a-radio>
+                                <a-radio value="Soop">SOOP</a-radio>
+                            </a-radio-group>
+
+                            <div class="builtin-filter-spacer"></div>
+
+                            <span style="font-size: 13px; color: var(--color-text-3); white-space: nowrap;">
+                                总计: <b>{{ builtinTasks.length }}</b>
+                            </span>
+                            <span style="font-size: 13px; color: #00B42A; white-space: nowrap;">
+                                监控: <b>{{ builtinActiveCount }}</b>
+                            </span>
+                            <span style="font-size: 13px; color: #F53F3F; white-space: nowrap;">
+                                录制: <b>{{ builtinRecordingCount }}</b>
+                            </span>
+
+                            <a-divider direction="vertical" style="height: 20px; margin: 0;"></a-divider>
+
+                            <a-radio-group v-model="builtinViewMode" type="button" size="small">
+                                <a-radio value="table">
+                                    <icon-table style="vertical-align: -2px;"></icon-table>
+                                    表格
+                                </a-radio>
+                                <a-radio value="card">
+                                    <icon-apps style="vertical-align: -2px;"></icon-apps>
+                                    卡片
+                                </a-radio>
+                            </a-radio-group>
                         </div>
                     </a-card>
 
                     <a-card class="apple-glass hover-effect" bordered>
-                        <a-table row-key="room_id" :data="paginatedBuiltinTasks" :pagination="false" bordered stripe
+                        <a-table v-if="builtinViewMode === 'table'" row-key="room_id" :data="paginatedBuiltinTasks"
+                                 :pagination="false" bordered stripe
                                  hoverable
                                  column-resizable
                                  :scroll="{ x: 740 }"
@@ -1160,6 +1370,15 @@
                                                       :title="record.anchor_name">
                                                   {{ record.anchor_name }}
                                                 </span>
+                                                <div style="display: flex; gap: 4px; margin-top: 4px; flex-wrap: nowrap;">
+                                                    <a-tag :color="builtinPlatformTagColor(record.platform)" size="small"
+                                                           style="margin: 0; flex-shrink: 0;">
+                                                        {{ builtinPlatformLabel(record.platform) }}
+                                                    </a-tag>
+                                                    <a-tag color="arcoblue" size="small" style="margin: 0; flex-shrink: 0;">
+                                                        {{ builtinQualityText(record.quality) }}
+                                                    </a-tag>
+                                                </div>
                                                 <div v-if="record.status === '初始化中' || record.anchor_name === record.room_id"
                                                      style="color: #86909c; font-size: 11px; margin-top: 4px;">
                                                     <icon-loading></icon-loading>
@@ -1232,6 +1451,80 @@
                                 </a-table-column>
                             </template>
                         </a-table>
+
+                        <div v-else class="builtin-card-grid">
+                            <div v-for="record in paginatedBuiltinTasks"
+                                 :key="record.platform + '_' + record.room_id"
+                                 class="builtin-task-card">
+                                <div class="builtin-card-cover" @click="openPreview(record)">
+                                    <img v-if="record.avatar" :src="record.avatar" loading="lazy" alt="直播画面">
+                                    <div v-else class="builtin-card-cover-empty">无画面</div>
+                                    <a-tag :color="builtinPlatformTagColor(record.platform)" size="small"
+                                           class="builtin-card-badge">
+                                        {{ builtinPlatformLabel(record.platform) }}
+                                    </a-tag>
+                                    <span v-if="isBuiltinLiveStatusJS(record.status)" class="builtin-card-live">
+                                        <span class="builtin-status-dot is-recording"
+                                              style="width: 6px; height: 6px;"></span>
+                                        直播中
+                                    </span>
+                                    <a-button v-if="record.avatar" shape="circle" size="mini"
+                                              class="cover-download-btn"
+                                              @click.stop="downloadBuiltinCover(record.avatar, record.anchor_name)"
+                                              title="点击下载封面">
+                                        <icon-download/>
+                                    </a-button>
+                                </div>
+                                <div class="builtin-card-body">
+                                    <div class="builtin-card-name" :title="record.anchor_name">
+                                        {{ record.anchor_name }}
+                                    </div>
+                                    <div class="builtin-card-tags">
+                                        <a-tag color="arcoblue" size="small" style="margin: 0;">
+                                            {{ builtinQualityText(record.quality) }}
+                                        </a-tag>
+                                        <a-tag v-if="isBuiltinLiveStatusJS(record.status)" color="green" size="small"
+                                               style="margin: 0;">
+                                            {{ record.duration }}
+                                        </a-tag>
+                                        <a-tag v-else size="small" style="margin: 0;">
+                                            {{ record.is_paused ? '已暂停' : '未直播' }}
+                                        </a-tag>
+                                    </div>
+                                    <div v-if="isBuiltinLiveStatusJS(record.status)" class="builtin-card-meta">
+                                        <span style="color: #ff7d00;">{{ record.file_size }}</span>
+                                    </div>
+                                    <div class="builtin-card-actions">
+                                        <a :href="getBuiltinLiveUrl(record.platform, record.room_id)" target="_blank"
+                                           class="builtin-card-room">
+                                            房间
+                                            <icon-launch style="font-size: 10px;"></icon-launch>
+                                        </a>
+                                        <a-switch :model-value="record.record !== false" size="small"
+                                                  :loading="record.flagsSwitching"
+                                                  @change="(val) => handleBuiltinFlags(val, null, record)"></a-switch>
+                                        <a-switch :model-value="record.screenshot !== false" size="small"
+                                                  :loading="record.flagsSwitching"
+                                                  @change="(val) => handleBuiltinFlags(null, val, record)"></a-switch>
+                                        <a-switch :model-value="!record.is_paused" size="small"
+                                                  :loading="record.switching"
+                                                  @change="(val) => handleSwitchBuiltin(val, record)"></a-switch>
+                                        <a-popconfirm content="确定要删除吗？" type="error"
+                                                      @ok="handleControlBuiltin('delete', record)">
+                                            <a-button type="text" status="danger" size="mini" style="margin-left: auto;">
+                                                <template #icon>
+                                                    <icon-delete></icon-delete>
+                                                </template>
+                                            </a-button>
+                                        </a-popconfirm>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-if="paginatedBuiltinTasks.length === 0" class="builtin-card-empty">
+                                <icon-video-camera style="font-size: 48px; margin-bottom: 12px; opacity: 0.5;"></icon-video-camera>
+                                <div>暂无符合条件的监控任务</div>
+                            </div>
+                        </div>
 
                         <div style="display: flex; justify-content: flex-end; margin-top: 12px;">
                             <a-pagination
@@ -2457,6 +2750,32 @@
             const builtinSavingCookies = ref(false);
 
             const isBuiltinLiveStatusJS = (s) => s === '录制中' || s === '截屏中';
+
+            // ========== 视图切换与筛选（表格/卡片、直播状态、平台） ==========
+            const builtinViewMode = ref((() => {
+                try {
+                    const saved = localStorage.getItem('builtinViewMode');
+                    return saved === 'card' ? 'card' : 'table';
+                } catch (e) {
+                    return 'table';
+                }
+            })());
+            watch(builtinViewMode, (v) => {
+                try { localStorage.setItem('builtinViewMode', v); } catch (e) {}
+            });
+            const builtinStatusFilter = ref('all');
+            const builtinPlatformFilter = ref('all');
+            watch([builtinStatusFilter, builtinPlatformFilter], () => {
+                builtinCurrentPage.value = 1;
+            });
+
+            const builtinPlatformLabel = (p) =>
+                ({Douyin: '抖音', Kuaishou: '快手', Bilibili: 'B站', Twitch: 'Twitch', Soop: 'SOOP'})[p] || p || '未知';
+            const builtinPlatformTagColor = (p) =>
+                ({Douyin: 'red', Kuaishou: 'orange', Bilibili: 'magenta', Twitch: 'purple', Soop: 'green'})[p] || 'gray';
+            const builtinQualityText = (q) =>
+                ({uhd: '蓝光/超清', hd: '高清', sd: '标清'})[q] || '默认画质';
+
             const sortedBuiltinTasks = computed(() => {
                 try {
                     let list = [...(builtinTasks.value || [])];
@@ -2469,6 +2788,14 @@
                                 return nameMatch || roomMatch;
                             });
                         }
+                    }
+                    if (builtinStatusFilter.value === 'live') {
+                        list = list.filter(t => t && isBuiltinLiveStatusJS(t.status));
+                    } else if (builtinStatusFilter.value === 'offline') {
+                        list = list.filter(t => t && !isBuiltinLiveStatusJS(t.status));
+                    }
+                    if (builtinPlatformFilter.value !== 'all') {
+                        list = list.filter(t => t && t.platform === builtinPlatformFilter.value);
                     }
                     list.sort((a, b) => {
                         const isARecording = (a && isBuiltinLiveStatusJS(a.status)) ? 1 : 0;
@@ -3855,6 +4182,8 @@
                 getElapsedTime, getStatusColor, getLogLevelColor, fetchLiveTasks, formatStatusText,
                 streamerSearchQuery, streamerSearchRef, filteredStreamers, trafficMetrics, statsData,
                 calculateRankPercent, builtinSearchQuery, showBuiltinSettingsModal, showBuiltinBatchModal,
+                builtinViewMode, builtinStatusFilter, builtinPlatformFilter, isBuiltinLiveStatusJS,
+                builtinPlatformLabel, builtinPlatformTagColor, builtinQualityText,
                 builtinCurrentPage, builtinPageSize, sortedBuiltinTasks, paginatedBuiltinTasks, builtinForm,
                 builtinBatchForm, builtinSettings, builtinCookies, builtinTasks, builtinActiveCount,
                 builtinRecordingCount, isAllBuiltinActive, builtinAdding, builtinBatchAdding, builtinSaving,
