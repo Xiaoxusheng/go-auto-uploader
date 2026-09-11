@@ -33,6 +33,16 @@ func NewSuccessStore(path string, max int) *SuccessStore {
 	return &SuccessStore{path: path, cap: max}
 }
 
+// Repath 切换落盘路径（启动时把数据文件重定向到 config.dataDir）。
+// 刻意不重建实例：其它包可能在 init 阶段就捕获了本实例的引用，
+// 直接替换全局指针会让那些引用指向一个永不加载、路径也错的僵尸 store。
+// 必须在 Load 与任何并发访问之前调用。
+func (s *SuccessStore) Repath(path string) {
+	s.mu.Lock()
+	s.path = path
+	s.mu.Unlock()
+}
+
 // Load 从磁盘恢复记录并重建统计。
 func (s *SuccessStore) Load() {
 	data, err := readFileIfExists(s.path)

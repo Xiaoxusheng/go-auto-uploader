@@ -3,15 +3,16 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"upload/internal/config"
-	"upload/internal/hashstore"
 	"upload/internal/logx"
 	"upload/internal/naming"
 	"upload/internal/ratelimit"
@@ -152,10 +153,6 @@ func Run(opts Options) {
 	}
 
 	InitHubs()
-	SuccessStore.Load()
-	HashDB = hashstore.New(HashFile)
-	HashDB.Load()
-	DirStatusStore.Load()
 
 	if err := CfgStore.LoadFromDisk(config.CLI{
 		Dirs:               cli.Dirs,
@@ -172,9 +169,23 @@ func Run(opts Options) {
 	}); err != nil {
 		log.Printf("[CONFIG][ERR] 加载配置失败: %v", err)
 	}
+
+	// 合并历史散落配置文件（builtin_config / builtin_cookies / bilibili_config）到 config.json
+	if migrated, err := CfgStore.MigrateLegacy(); err != nil {
+		log.Printf("[CONFIG][ERR] 合并历史配置文件失败: %v", err)
+	} else if len(migrated) > 0 {
+		log.Printf("[CONFIG] 🔄 已合并历史配置文件到 config.json: %v（原文件已备份为 .bak）", migrated)
+	}
+
 	if cli.Rate > 0 {
 		CfgStore.Update(func(c *config.Config) { c.Rate = cli.Rate })
 	}
+
+	// 运行时数据统一落到 config.dataDir，并迁移启动目录里的历史数据文件
+	ApplyDataDir()
+	SuccessStore.Load()
+	HashDB.Load()
+	DirStatusStore.Load()
 
 	DashUser = "admin"
 	DashPass = "admin"
@@ -343,4 +354,79 @@ func PauseOnFailure(reason string) {
 // DetectRoot 根目录反推。
 func DetectRoot(path string) string {
 	return naming.DetectRoot(path, AppCfg().Dirs)
+}
+
+// ApplyDataDir 解析 dataDir、迁移历史数据文件，并把各持久化 store 重定向过去。
+//
+// 关键：只 Repath，绝不重建实例。internal/bots 在包 init 阶段就捕获了
+// SuccessStore 的引用，若这里替换全局指针，bots 会拿到一个永不加载、
+// 路径也错的僵尸 store（图表/趋势数据全空，且会往错误位置写文件）。
+// 返回生效的数据目录。
+func ApplyDataDir() string {
+	dataDir := setupDataDir()
+	SuccessStore.Repath(filepath.Join(dataDir, successLogName))
+	DirStatusStore.Repath(filepath.Join(dataDir, dirStatusName))
+	HashDB.Repath(filepath.Join(dataDir, hashName))
+	return dataDir
+}
+
+// setupDataDir 解析并创建运行时数据目录（config.dataDir），并把历史散落数据文件搬进去。
+func setupDataDir() string {	dir := AppCfg().DataDirPath()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("[CONFIG] ⚠️ 无法创建数据目录 %s: %v，回退到当前目录", dir, err)
+		return "."
+	}
+	migrateLegacyDataFiles(dir)
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = dir
+	}
+	log.Printf("[CONFIG] 📁 运行时数据目录: %s", abs)
+	return dir
+}
+
+// migrateLegacyDataFiles 把启动目录里的历史数据文件搬进 dataDir（仅当目标不存在且源存在）。
+// 不迁移会导致换目录后 hash 库为空、已上传文件被全部重传。
+func migrateLegacyDataFiles(dataDir string) {
+	if filepath.Clean(dataDir) == "." {
+		return
+	}
+	for _, name := range []string{hashName, successLogName, dirStatusName} {
+		dst := filepath.Join(dataDir, name)
+		if _, err := os.Stat(dst); err == nil {
+			continue // 目标已存在，保留
+		}
+		if _, err := os.Stat(name); err != nil {
+			continue // 源不存在
+		}
+		if err := moveFile(name, dst); err != nil {
+			log.Printf("[CONFIG] ⚠️ 迁移数据文件 %s → %s 失败: %v", name, dst, err)
+			continue
+		}
+		log.Printf("[CONFIG] 🔄 已迁移数据文件 %s → %s", name, dst)
+	}
+}
+
+// moveFile 优先 rename，跨盘时回退为复制+删除。
+func moveFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Remove(src)
 }

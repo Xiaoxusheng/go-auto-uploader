@@ -70,8 +70,9 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 			} else {
 				sTime = oldTask.startTime
 			}
-		} else if statusMsg == "未开播等待中" || statusMsg == "断流缓冲中" || statusMsg == "已暂停" {
-			if isBuiltinLiveStatus(oldTask.Status) {
+		} else if statusMsg == "未开播等待中" || statusMsg == "断流缓冲中" || statusMsg == "已暂停" || statusMsg == "配置重载中" {
+			// 配置热重载（切换视频水印等）导致的中断不是下播，不能误报通知
+			if isBuiltinLiveStatus(oldTask.Status) && !isConfigRestart(key) {
 				// ✨ 防抖判定：防下播通知连发
 				cacheKey := "offline_" + key
 				if last, has := builtinNotifyDebounce.Load(cacheKey); !has || time.Since(last.(time.Time)) > 3*time.Minute {

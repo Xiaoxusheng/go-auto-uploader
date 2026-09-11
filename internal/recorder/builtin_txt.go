@@ -20,8 +20,13 @@ func syncBuiltinAnchorToTxt(action string, platform, roomID string, rawLine stri
 	defer builtinAnchorLinesMutex.Unlock()
 
 	content, err := os.ReadFile("builtin_urls.txt")
+	if err != nil && !os.IsNotExist(err) {
+		// 文件存在但读取失败（被占用/权限异常等）时直接放弃，绝不写盘，
+		// 否则会把整份名单覆盖成空文件，造成不可逆的数据丢失。
+		return
+	}
 	var lines []string
-	if err == nil {
+	if len(content) > 0 {
 		lines = strings.Split(string(content), "\n")
 	}
 

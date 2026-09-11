@@ -13,6 +13,9 @@ import (
 var httpSrv *httpapi.Server
 
 func startHTTP(port int) error {
+	// 内置引擎与主配置共用同一个 config.json，先注入仓库再挂载路由
+	recorder.SetConfigStore(app.CfgStore)
+
 	httpSrv = httpapi.New(httpapi.Options{
 		IndexHTML: web.IndexHTML,
 		Extra:     func(m *http.ServeMux) { recorder.Init(m) },

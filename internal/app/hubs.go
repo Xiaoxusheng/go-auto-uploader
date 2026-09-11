@@ -19,6 +19,19 @@ func InitHubs() {
 		TokenFn: func() string { return AppCfg().WechatToken },
 		Client:  HTTPCli,
 	})
+	// 邮件通道：开播/下播/异常/统计报告统一扇出，配置来自统一 config.json，热更新即时生效
+	NotifyHub.Register(&notification.DynamicEmail{
+		CfgFn: func() notification.EmailConfig {
+			c := AppCfg()
+			return notification.EmailConfig{
+				Host:     c.MailSMTPHost,
+				Port:     c.MailSMTPPort,
+				From:     c.MailFrom,
+				AuthCode: c.MailAuthCode,
+				To:       c.MailTo,
+			}
+		},
+	})
 }
 
 // SetNotifyChannel 注册外部通知通道（Telegram / QQ）。

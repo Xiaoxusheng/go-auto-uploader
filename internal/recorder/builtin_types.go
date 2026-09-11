@@ -6,7 +6,10 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"upload/internal/config"
 )
 
 var builtinFfmpegPath = "ffmpeg"
@@ -108,7 +111,10 @@ func setBuiltinTaskFlags(platform, roomID string, f BuiltinTaskFlags) {
 }
 
 var (
-	builtinConfig      *BuiltinConfig
+	// builtinCfgPtr 内置引擎配置的原子快照指针。
+	// 写方一律「复制-修改-整体发布」，读方只读快照，从根本上消除
+	// HTTP 处理器写入与监控协程读取之间的数据竞争（string 字段撕裂会崩）。
+	builtinCfgPtr      atomic.Pointer[BuiltinConfig]
 	builtinActiveTasks sync.Map
 	builtinStatusMap   sync.Map
 	builtinCookies     *BuiltinCookieConfig
@@ -122,33 +128,23 @@ var (
 	// ✨ 添加全局防抖缓冲池：彻底消除由于网络颠簸引起的 FFmpeg 开播/下播反复横跳现象
 	builtinNotifyDebounce sync.Map
 
+	// 配置热重载标记：key=platform_roomID。
+	// 因切换视频水印等「只在 ffmpeg 启动时生效」的开关而主动中断会话时打标，
+	// 让监控循环知道这是配置重开、不是断流：不报下播、也不走 30 秒退避。
+	builtinConfigRestart sync.Map
+
 	// ✨ 新增：全局广播防抖信号通道
 	builtinBroadcastChan = make(chan struct{}, 1)
 )
 
 var builtinAnchorLinesMutex sync.Mutex
 
-// BuiltinConfig 存储内置录制引擎的所有核心配置参数，新增了字体大小和颜色的动态控制
-type BuiltinConfig struct {
-	Quality              string `json:"quality"`
-	SegmentTime          int    `json:"segment_time"`
-	CheckInterval        int    `json:"check_interval"`
-	SavePath             string `json:"save_path"`
-	WatermarkEnable      bool   `json:"watermark_enable"`       // 截图水印
-	VideoWatermarkEnable bool   `json:"video_watermark_enable"` // 视频烧录水印（需重编码）
-	WatermarkText        string `json:"watermark_text"`
-	WatermarkFormat      string `json:"watermark_format"`
-	WatermarkPosition    string `json:"watermark_position"`
-	WatermarkFontSize    int    `json:"watermark_font_size"`
-	WatermarkFontColor   string `json:"watermark_font_color"`
-}
+// BuiltinConfig 内置录制引擎配置：类型定义已收敛到 internal/config（统一 config.json），
+// 此处用别名保持既有调用点不变。
+type BuiltinConfig = config.BuiltinSettings
 
-// BuiltinCookieConfig 定义了多平台防爬虫所需挂载的鉴权会话
-type BuiltinCookieConfig struct {
-	Douyin   string `json:"douyin"`
-	Kuaishou string `json:"kuaishou"`
-	Soop     string `json:"soop"`
-}
+// BuiltinCookieConfig 多平台鉴权会话别名。
+type BuiltinCookieConfig = config.BuiltinCookies
 
 // BuiltinPlatform 定义平台扩展必须要实现的公共规范接口
 type BuiltinPlatform interface {

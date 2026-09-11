@@ -2428,7 +2428,7 @@
                 save_path: './downloads',
                 watermark_enable: false,
                 video_watermark_enable: false,
-                watermark_text: 'go-auto-uploader',
+                watermark_text: '',
                 watermark_format: '%Y-%m-%d %H:%M:%S',
                 watermark_position: 'bottom-right',
                 watermark_font_size: 38,
@@ -2544,7 +2544,7 @@
 
                         builtinSettings.value.watermark_enable = res1.data.watermark_enable || false;
                         builtinSettings.value.video_watermark_enable = res1.data.video_watermark_enable || false;
-                        builtinSettings.value.watermark_text = res1.data.watermark_text || 'go-auto-uploader';
+                        builtinSettings.value.watermark_text = res1.data.watermark_text || '';
                         builtinSettings.value.watermark_format = res1.data.watermark_format || '%Y-%m-%d %H:%M:%S';
                         builtinSettings.value.watermark_position = res1.data.watermark_position || 'bottom-right';
                         builtinSettings.value.watermark_font_size = res1.data.watermark_font_size || 38;

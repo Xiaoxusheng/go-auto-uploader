@@ -43,8 +43,9 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 			ctx, cancel := context.WithCancel(context.Background())
 			builtinCancels.Store(key, cancel)
 
-			q := builtinConfig.Quality
-			st := builtinConfig.SegmentTime
+			cfgSnap := Config()
+			q := cfgSnap.Quality
+			st := cfgSnap.SegmentTime
 
 			url, name, avatar, err := p.GetStreamURL(roomID, q)
 
@@ -63,7 +64,7 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 				log.Printf("⚠️ [检测出错] %s %s: %v", platformName, roomID, err)
 				updateBuiltinStatus(platformName, roomID, name, avatar, q, "检测异常等待中")
 
-				sleepDur := builtinConfig.CheckInterval
+				sleepDur := Config().CheckInterval
 				if sleepDur < 10 {
 					sleepDur = 10
 				}
@@ -77,11 +78,20 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 				taskFlags := getBuiltinTaskFlags(platformName, roomID)
 				RecordStream(ctx, url, platformName, roomID, name, avatar, q, st, taskFlags)
 
+				// 配置热重载（如视频水印开关切换）导致的中断：立即按新配置重开，
+				// 不走 30 秒断流退避，也不触发下播通知。
+				if clearConfigRestart(key) {
+					log.Printf("🔄 [配置重载] %s %s 已按新配置立即重启录制", platformName, name)
+					builtinCancels.Delete(key)
+					cancel()
+					continue
+				}
+
 				state, _ = builtinTaskStates.Load(key)
 				if state != "deleted" && state != "paused" {
 					// 录屏/截屏全关时仅探测，不进入断流冷却，避免状态横跳
 					if !taskFlags.Record && !taskFlags.Screenshot {
-						sleepDur := builtinConfig.CheckInterval
+						sleepDur := Config().CheckInterval
 						if sleepDur < 10 {
 							sleepDur = 10
 						}
@@ -111,7 +121,7 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 					updateBuiltinStatus(platformName, roomID, name, avatar, q, "监控中")
 				}
 
-				sleepDur := builtinConfig.CheckInterval
+				sleepDur := Config().CheckInterval
 				if sleepDur < 10 {
 					sleepDur = 10
 				}
@@ -127,6 +137,8 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 				}
 			}
 
+			// 休眠期间被配置重载打断时，标记已无意义（下一轮本就是全新会话），就地清理
+			clearConfigRestart(key)
 			builtinCancels.Delete(key)
 			cancel() // 确保释放本轮的局部监听器
 		}

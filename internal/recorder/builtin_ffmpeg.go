@@ -93,8 +93,8 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string)
 	vfFilter := "select='eq(pict_type,I)'"
 
 	// 截图水印：复用 PrepareDrawtextFilter
-	if builtinConfig != nil && builtinConfig.WatermarkEnable {
-		drawtext, textFile, werr := prepareBuiltinDrawtextFilter(anchorName, "shot")
+	if Config().WatermarkEnable {
+		drawtext, textFile, werr := prepareBuiltinDrawtextFilter(anchorName, "shot", false)
 		if werr != nil {
 			log.Printf("[BUILTIN] ⚠️ 截图水印准备失败，跳过水印: %v", werr)
 		} else {
@@ -142,8 +142,8 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string)
 	// TS 尾部可能没有 I 帧导致 select 0 帧退出；去掉 select 再抽一帧兜底
 	if err != nil {
 		vfRetry := "null"
-		if builtinConfig != nil && builtinConfig.WatermarkEnable {
-			if drawtext, textFile, werr := prepareBuiltinDrawtextFilter(anchorName, "shot2"); werr == nil {
+		if Config().WatermarkEnable {
+			if drawtext, textFile, werr := prepareBuiltinDrawtextFilter(anchorName, "shot2", false); werr == nil {
 				defer os.Remove(textFile)
 				vfRetry = drawtext
 			}
@@ -174,7 +174,7 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string)
 
 	// ✨ 核心追踪日志：只要开启了水印，就强行把 FFmpeg 的底层报错池抖出来！
 	// 无论截帧成功与否，只要检测到 "No such filter" 或滤镜相关的错误，立即高亮暴露问题
-	if builtinConfig != nil && builtinConfig.WatermarkEnable {
+	if Config().WatermarkEnable {
 		stderrStr := stderrBuf.String()
 		if strings.Contains(stderrStr, "No such filter") {
 			log.Printf("[BUILTIN-ERROR] 💀 致命错误：你的 FFmpeg 未编译 drawtext 滤镜 (缺少 libfreetype)！请重新安装完整版 FFmpeg！")
@@ -210,45 +210,39 @@ func findBuiltinFontPath() string {
 
 // buildBuiltinWatermarkText 组装「前缀（默认主播名）+ 动态时间」水印文本
 func buildBuiltinWatermarkText(anchorName string) string {
-	if builtinConfig == nil {
-		return strings.TrimSpace(anchorName)
-	}
 	return BuildWatermarkText(watermarkStyleFromConfig(), anchorName)
 }
 
 func watermarkStyleFromConfig() WatermarkStyle {
-	if builtinConfig == nil {
-		return WatermarkStyle{Format: "%Y-%m-%d %H:%M:%S", Position: "bottom-right", FontSize: 38, FontColor: "white@0.95"}
-	}
+	cfg := Config()
 	return StyleFrom(
-		builtinConfig.WatermarkText,
-		builtinConfig.WatermarkFormat,
-		builtinConfig.WatermarkPosition,
-		builtinConfig.WatermarkFontColor,
-		builtinConfig.WatermarkFontSize,
+		cfg.WatermarkText,
+		cfg.WatermarkFormat,
+		cfg.WatermarkPosition,
+		cfg.WatermarkFontColor,
+		cfg.WatermarkFontSize,
 	)
 }
 
 // builtinDrawtextPosStr 根据配置返回九宫格坐标
 func builtinDrawtextPosStr() string {
-	if builtinConfig == nil {
-		return "x=w-tw-20:y=h-th-20"
-	}
-	return DrawtextPos(builtinConfig.WatermarkPosition)
+	return DrawtextPos(Config().WatermarkPosition)
 }
 
 // prepareBuiltinDrawtextFilter 生成 drawtext 滤镜串，并落盘临时 textfile。
-// 返回 filter、临时文件绝对路径（调用方负责 Remove）。
-func prepareBuiltinDrawtextFilter(anchorName, tag string) (filter string, textFile string, err error) {
-	if builtinConfig == nil {
-		return "", "", fmt.Errorf("builtinConfig 未初始化")
-	}
-	return PrepareDrawtextFilter(watermarkStyleFromConfig(), anchorName, tag)
+// live=true：视频烧录，时间每帧更新；false：截图，静态时刻。
+func prepareBuiltinDrawtextFilter(anchorName, tag string, live bool) (filter string, textFile string, err error) {
+	return PrepareDrawtextFilter(watermarkStyleFromConfig(), anchorName, tag, live)
 }
 
 // BuiltinRecordStream 调动底层 FFmpeg 进程并将推流直通本地文件，增加了高度强化的上下文状态管控防止僵尸进程
 // flags 控制本任务是否落盘录像 / 是否旁路截屏。
 func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorName, avatar, quality string, segmentTime int, flags BuiltinTaskFlags) {
+	// 配置热重载可能已在进入前取消上下文，此时不要空转拉起 ffmpeg
+	if ctx.Err() != nil {
+		return
+	}
+
 	if !flags.Record && !flags.Screenshot {
 		log.Printf("⚪ [空转模式] %s | %s 录屏与截屏均已关闭，仅保持开播探测", platformName, anchorName)
 		updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "监控中")
@@ -313,16 +307,24 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 	}
 
 	// 视频烧录水印：开启时必须重编码（libx264），关闭则零拷贝 copy
-	useVideoWM := flags.Record && builtinConfig != nil && builtinConfig.VideoWatermarkEnable
+	useVideoWM := flags.Record && Config().VideoWatermarkEnable
 	var videoCodecArgs []string
 	if useVideoWM {
-		vf, textFile, werr := prepareBuiltinDrawtextFilter(anchorName, "vid")
+		vf, textFile, werr := prepareBuiltinDrawtextFilter(anchorName, "vid", true)
 		if werr != nil {
 			log.Printf("[BUILTIN] ⚠️ 视频水印准备失败，回退为无水印 copy 录制: %v", werr)
 			videoCodecArgs = []string{"-c:v", "copy"}
 		} else {
 			defer os.Remove(textFile)
-			videoCodecArgs = []string{"-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23"}
+			// ultrafast + 限线程：直播烧录实时性优先，单路可从 ~300% 降到 ~100–150%
+			videoCodecArgs = []string{
+				"-vf", vf,
+				"-c:v", "libx264",
+				"-preset", "ultrafast",
+				"-tune", "zerolatency",
+				"-crf", "26",
+				"-threads", "2",
+			}
 			log.Printf("   🎬 视频画面烧录水印已启用（%s）", WatermarkWallClockNote)
 		}
 	} else {
@@ -481,7 +483,11 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 		os.Remove(coverPath)
 	}
 
-	updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "未开播等待中")
+	if isConfigRestart(platformName + "_" + roomID) {
+		updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "配置重载中")
+	} else {
+		updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "未开播等待中")
+	}
 }
 
 // cleanupScreenshotTempSegments 删除仅截屏模式下的临时 TS。

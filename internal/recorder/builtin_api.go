@@ -2,7 +2,6 @@ package recorder
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -18,33 +17,49 @@ func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if c.Quality != "" {
-			builtinConfig.Quality = c.Quality
-		}
-		builtinConfig.SegmentTime = c.SegmentTime
-		if c.SavePath != "" {
-			builtinConfig.SavePath = c.SavePath
+		prev := Config()
+		// 视频水印决定 ffmpeg 是否重编码，只在进程启动时生效
+		wmEnableChanged := prev.VideoWatermarkEnable != c.VideoWatermarkEnable
+
+		// 复制-修改-原子发布：避免与监控协程的并发读产生数据竞争
+		UpdateConfig(func(b *BuiltinConfig) {
+			if c.Quality != "" {
+				b.Quality = c.Quality
+			}
+			b.SegmentTime = c.SegmentTime
+			if c.SavePath != "" {
+				b.SavePath = c.SavePath
+			}
+			b.WatermarkEnable = c.WatermarkEnable
+			b.VideoWatermarkEnable = c.VideoWatermarkEnable
+			b.WatermarkText = c.WatermarkText
+			b.WatermarkFormat = c.WatermarkFormat
+			b.WatermarkPosition = c.WatermarkPosition
+			if c.WatermarkFontSize > 0 {
+				b.WatermarkFontSize = c.WatermarkFontSize
+			}
+			if c.WatermarkFontColor != "" {
+				b.WatermarkFontColor = c.WatermarkFontColor
+			}
+		})
+
+		if err := PersistConfig(); err != nil {
+			log.Printf("[BUILTIN] ⚠️ 内置配置落盘失败: %v", err)
 		}
 
-		// ✨ 更新前端传来的水印参数
-		builtinConfig.WatermarkEnable = c.WatermarkEnable
-		builtinConfig.VideoWatermarkEnable = c.VideoWatermarkEnable
-		builtinConfig.WatermarkText = c.WatermarkText
-		builtinConfig.WatermarkFormat = c.WatermarkFormat
-		builtinConfig.WatermarkPosition = c.WatermarkPosition
-		if c.WatermarkFontSize > 0 {
-			builtinConfig.WatermarkFontSize = c.WatermarkFontSize
-		}
-		if c.WatermarkFontColor != "" {
-			builtinConfig.WatermarkFontColor = c.WatermarkFontColor
+		// 开关变化时取消正在录的会话，监控循环按新配置重开（无需 systemctl restart）。
+		if wmEnableChanged {
+			log.Printf("[BUILTIN] 🎬 视频水印开关已切换为 %v，正在按新配置重开录制会话…", c.VideoWatermarkEnable)
+			RestartActiveRecordings()
 		}
 
-		data, _ := json.MarshalIndent(builtinConfig, "", "    ")
-		os.WriteFile("builtin_config.json", data, 0644)
 		hookJSONOK(w, r, nil)
 		return
 	}
-	hookJSONOK(w, r, builtinConfig)
+	// 设置面板不下发 Cookie，避免鉴权串外泄
+	resp := *Config()
+	resp.Cookies = BuiltinCookieConfig{}
+	hookJSONOK(w, r, resp)
 }
 
 // apiRecorderCookies 处理内置引擎应对各大平台反制而提供的 Cookie 更新，已强制兼容加密格式接收
@@ -57,18 +72,29 @@ func apiRecorderCookies(w http.ResponseWriter, r *http.Request) {
 		}
 
 		builtinCookieMutex.Lock()
+		if builtinCookies == nil {
+			builtinCookies = &BuiltinCookieConfig{}
+		}
 		builtinCookies.Douyin = c.Douyin
 		builtinCookies.Kuaishou = c.Kuaishou
 		builtinCookies.Soop = c.Soop
+		ck := *builtinCookies
 		builtinCookieMutex.Unlock()
-		data, _ := json.MarshalIndent(builtinCookies, "", "    ")
-		os.WriteFile("builtin_cookies.json", data, 0644)
+
+		UpdateConfig(func(b *BuiltinConfig) { b.Cookies = ck })
+		if err := PersistConfig(); err != nil {
+			log.Printf("[BUILTIN] ⚠️ Cookie 落盘失败: %v", err)
+		}
 		hookJSONOK(w, r, nil)
 		return
 	}
 	builtinCookieMutex.RLock()
-	hookJSONOK(w, r, builtinCookies)
+	ck := BuiltinCookieConfig{}
+	if builtinCookies != nil {
+		ck = *builtinCookies
+	}
 	builtinCookieMutex.RUnlock()
+	hookJSONOK(w, r, ck)
 }
 
 // apiRecorderAdd 提供将前端通过面板添加的单条或批量直播间转录成录制指令池内的待处理任务功能
@@ -177,9 +203,9 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 		}
 		if isP {
 			builtinTaskStates.Store(key, "paused")
-			updateBuiltinStatus(platformName, roomID, displayName, "", builtinConfig.Quality, "已暂停")
+			updateBuiltinStatus(platformName, roomID, displayName, "", Config().Quality, "已暂停")
 		} else {
-			updateBuiltinStatus(platformName, roomID, displayName, "", builtinConfig.Quality, "初始化中")
+			updateBuiltinStatus(platformName, roomID, displayName, "", Config().Quality, "初始化中")
 			wrapperStartMonitorIfNotRunning(p, roomID)
 		}
 		addedCount++

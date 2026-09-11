@@ -110,23 +110,40 @@ func strftimeToGo(format string) string {
 	return r.Replace(format)
 }
 
-// BuildWatermarkText 组装「前缀（默认主播名）+ 固定时间戳」。
-// 时间在 Go 侧展开写入 textfile，避免旧版 FFmpeg（3.4）把
-// %{localtime:%Y-%m-%d %H:%M:%S} 里的冒号当成多参数导致水印失败。
-func BuildWatermarkText(style WatermarkStyle, anchorName string) string {
-	formatStr := strings.ReplaceAll(style.Format, "'", "")
+func watermarkPrefix(style WatermarkStyle, anchorName string) string {
 	textStr := strings.ReplaceAll(style.Text, "'", "")
 	if strings.TrimSpace(textStr) == "" {
 		textStr = strings.ReplaceAll(anchorName, "'", "")
 	}
+	return strings.TrimSpace(textStr)
+}
+
+// BuildWatermarkText 组装静态时间戳（截图用，抽帧时刻固定）。
+func BuildWatermarkText(style WatermarkStyle, anchorName string) string {
+	formatStr := strings.ReplaceAll(style.Format, "'", "")
 	if formatStr == "" {
 		formatStr = "%Y-%m-%d %H:%M:%S"
 	}
-	fullText := strings.TrimSpace(textStr)
+	fullText := watermarkPrefix(style, anchorName)
 	if fullText != "" {
 		fullText += " "
 	}
 	return fullText + time.Now().Format(strftimeToGo(formatStr))
+}
+
+// BuildWatermarkTextLive 组装视频烧录用文本。
+// 配合 drawtext 的 expansion=strftime：整段文本按 strftime 每帧展开，
+// 兼容 FFmpeg 3.4（它不会可靠地展开 %{localtime:fmt}）。
+func BuildWatermarkTextLive(style WatermarkStyle, anchorName string) string {
+	formatStr := strings.ReplaceAll(style.Format, "'", "")
+	if formatStr == "" {
+		formatStr = "%Y-%m-%d %H:%M:%S"
+	}
+	fullText := watermarkPrefix(style, anchorName)
+	if fullText != "" {
+		fullText += " "
+	}
+	return fullText + formatStr
 }
 
 // DrawtextPos 九宫格坐标。
@@ -143,13 +160,27 @@ func DrawtextPos(position string) string {
 	}
 }
 
+// escapeFilterPath 将文件路径转为 FFmpeg filtergraph 可安全解析的形式。
+// Windows 盘符（D:\...）里的冒号是 filtergraph 的参数分隔符，必须转义为 `\:`，
+// 且反斜杠统一为 `/`，否则整条 drawtext 滤镜会被 FFmpeg 判定为语法错误而失败。
+func escapeFilterPath(p string) string {
+	p = filepath.ToSlash(p)
+	return strings.ReplaceAll(p, ":", `\:`)
+}
+
 // PrepareDrawtextFilter 生成 drawtext 滤镜并落盘临时 textfile；调用方负责删除 textFile。
-func PrepareDrawtextFilter(style WatermarkStyle, anchorName, tag string) (filter string, textFile string, err error) {
+// live=true：expansion=strftime，时间每帧刷新；false：静态时刻。
+func PrepareDrawtextFilter(style WatermarkStyle, anchorName, tag string, live bool) (filter string, textFile string, err error) {
 	fontPath := FindFontPath()
 	if fontPath == "" {
 		return "", "", fmt.Errorf("未找到可用中文字体 (font.ttf)")
 	}
-	fullText := BuildWatermarkText(style, anchorName)
+	var fullText string
+	if live {
+		fullText = BuildWatermarkTextLive(style, anchorName)
+	} else {
+		fullText = BuildWatermarkText(style, anchorName)
+	}
 	textFileName := fmt.Sprintf("wm_%s_%d.txt", tag, time.Now().UnixNano())
 	absTextFile, _ := filepath.Abs(textFileName)
 	if werr := os.WriteFile(absTextFile, []byte(fullText), 0644); werr != nil {
@@ -159,9 +190,13 @@ func PrepareDrawtextFilter(style WatermarkStyle, anchorName, tag string) (filter
 	if fontSize <= 0 {
 		fontSize = 38
 	}
+	expansion := "none"
+	if live {
+		expansion = "strftime"
+	}
 	filter = fmt.Sprintf(
-		"drawtext=fontfile='%s':textfile='%s':fontcolor=%s:fontsize=%d:borderw=2:bordercolor=black@0.75:shadowcolor=black@0.5:shadowx=3:shadowy=3:%s",
-		fontPath, absTextFile, NormalizeFontColor(style.FontColor), fontSize, DrawtextPos(style.Position),
+		"drawtext=fontfile='%s':textfile='%s':expansion=%s:fontcolor=%s:fontsize=%d:borderw=2:bordercolor=black@0.75:shadowcolor=black@0.5:shadowx=3:shadowy=3:%s",
+		escapeFilterPath(fontPath), escapeFilterPath(absTextFile), expansion, NormalizeFontColor(style.FontColor), fontSize, DrawtextPos(style.Position),
 	)
 	return filter, absTextFile, nil
 }

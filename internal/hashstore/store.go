@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -22,6 +23,14 @@ type Store struct {
 // New 创建指向 path 的哈希库（不自动加载，需调用 Load）。
 func New(path string) *Store {
 	return &Store{path: path}
+}
+
+// Repath 切换落盘路径（启动时重定向到 config.dataDir）。
+// 保持实例标识不变，避免外部提前捕获的引用失效。须在 Load 之前调用。
+func (s *Store) Repath(path string) {
+	s.mu.Lock()
+	s.path = path
+	s.mu.Unlock()
 }
 
 // FileHash 计算文件 SHA-256 十六进制串；失败返回空串。
@@ -76,6 +85,13 @@ func (s *Store) Save(hash string) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// 父目录不存在时先补建，避免静默丢失秒传记录
+	if dir := filepath.Dir(s.path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			log.Printf("[HASH][ERR] 创建哈希库目录失败 %s: %v", dir, err)
+			return
+		}
+	}
 	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Printf("[HASH][ERR] 打开哈希库文件失败: %v", err)

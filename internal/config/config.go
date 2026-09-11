@@ -13,6 +13,8 @@ import (
 )
 
 // Config 是扁平的应用配置（与线上 config.json 一一对应）。
+// 原本散落的 builtin_config.json / builtin_cookies.json / bilibili_config.json
+// 已合并为 builtin / bilibili 两个子对象，统一落在同一个 config.json 内。
 type Config struct {
 	ScanInterval       int      `json:"scanInterval"`
 	Workers            int      `json:"workers"`
@@ -35,6 +37,8 @@ type Config struct {
 	MailFrom           string   `json:"mailFrom"`
 	MailAuthCode       string   `json:"mailAuthCode"`
 	MailTo             string   `json:"mailTo"`
+	MailSMTPHost       string   `json:"mailSmtpHost"`
+	MailSMTPPort       int      `json:"mailSmtpPort"`
 	EnableEncryption   bool     `json:"enableEncryption"`
 	EnableUpload       bool     `json:"enableUpload"`
 	ConvertMP4         bool     `json:"convertMP4"`
@@ -46,6 +50,52 @@ type Config struct {
 	QQAdminID          int64    `json:"qqAdminId"`
 	DashboardUser      string   `json:"dashboardUser"`
 	DashboardPass      string   `json:"dashboardPass"`
+
+	// DataDir 运行时数据目录（hash 库 / 成功日志 / 目录状态），默认 ./data
+	DataDir string `json:"dataDir"`
+
+	// Builtin 内置录制引擎配置（原 builtin_config.json + builtin_cookies.json）
+	Builtin BuiltinSettings `json:"builtin"`
+
+	// Bilibili 预留：原 bilibili_config.json（当前代码未消费，仅保留数据不丢）
+	Bilibili BilibiliSettings `json:"bilibili"`
+}
+
+// BuiltinSettings 内置录制引擎参数（字段名与原 builtin_config.json 完全兼容）。
+type BuiltinSettings struct {
+	Quality              string `json:"quality"`
+	SegmentTime          int    `json:"segment_time"`
+	CheckInterval        int    `json:"check_interval"`
+	SavePath             string `json:"save_path"`
+	WatermarkEnable      bool   `json:"watermark_enable"`       // 截图水印
+	VideoWatermarkEnable bool   `json:"video_watermark_enable"` // 视频烧录水印（需重编码）
+	WatermarkText        string `json:"watermark_text"`
+	WatermarkFormat      string `json:"watermark_format"`
+	WatermarkPosition    string `json:"watermark_position"`
+	WatermarkFontSize    int    `json:"watermark_font_size"`
+	WatermarkFontColor   string `json:"watermark_font_color"`
+
+	// Cookies 原 builtin_cookies.json
+	Cookies BuiltinCookies `json:"cookies"`
+}
+
+// BuiltinCookies 多平台防爬虫鉴权会话（字段名与原 builtin_cookies.json 兼容）。
+type BuiltinCookies struct {
+	Douyin   string `json:"douyin"`
+	Kuaishou string `json:"kuaishou"`
+	Soop     string `json:"soop"`
+}
+
+// BilibiliSettings 原 bilibili_config.json 的完整字段（保持兼容，暂未消费）。
+type BilibiliSettings struct {
+	Enable        bool   `json:"enable"`
+	SessData      string `json:"sessdata"`
+	BiliJct       string `json:"bili_jct"`
+	DedeUserID    string `json:"dedeuserid"`
+	Tid           int    `json:"tid"`
+	Tag           string `json:"tag"`
+	TitleTemplate string `json:"titleTemplate"`
+	Desc          string `json:"desc"`
 }
 
 // CLI 是启动参数快照，仅在 config.json 不存在时用于生成默认配置。
@@ -127,6 +177,49 @@ func (c *Config) applyDefaults() {
 	if c.RemoteServer == "" {
 		c.RemoteServer = "http://127.0.0.1:5244"
 	}
+	if c.DataDir == "" {
+		c.DataDir = "./data"
+	}
+	if c.MailSMTPHost == "" {
+		c.MailSMTPHost = "smtp.qq.com"
+	}
+	if c.MailSMTPPort <= 0 {
+		c.MailSMTPPort = 587
+	}
+	c.Builtin.ApplyDefaults()
+}
+
+// ApplyDefaults 补足内置引擎配置缺省值（兼容旧文件缺失字段）。
+func (b *BuiltinSettings) ApplyDefaults() {
+	if b.Quality == "" {
+		b.Quality = "uhd"
+	}
+	if b.CheckInterval == 0 {
+		b.CheckInterval = 30
+	}
+	if b.SavePath == "" {
+		b.SavePath = "./downloads"
+	}
+	if b.WatermarkFormat == "" {
+		b.WatermarkFormat = "%Y-%m-%d %H:%M:%S"
+	}
+	if b.WatermarkPosition == "" {
+		b.WatermarkPosition = "bottom-right"
+	}
+	if b.WatermarkFontSize == 0 {
+		b.WatermarkFontSize = 38
+	}
+	if b.WatermarkFontColor == "" {
+		b.WatermarkFontColor = "white@0.95"
+	}
+}
+
+// DataDirPath 返回生效的数据目录（已补默认值）。
+func (c Config) DataDirPath() string {
+	if c.DataDir == "" {
+		return "./data"
+	}
+	return c.DataDir
 }
 
 // Validate 基本合法性检查。
@@ -202,4 +295,60 @@ func (s *Store) LoadFromDisk(cli CLI) error {
 	}
 	s.Replace(c)
 	return s.Save()
+}
+
+// MigrateLegacy 把历史散落配置文件合并进当前配置并落盘，返回被迁移的文件名。
+// 仅当历史文件存在且能被正确解析时才合并并改名 .bak，解析失败时原文件保持不动。
+func (s *Store) MigrateLegacy() ([]string, error) {
+	s.mu.Lock()
+	migrated := s.cfg.MigrateLegacy()
+	s.mu.Unlock()
+	if len(migrated) == 0 {
+		return nil, nil
+	}
+	return migrated, s.Save()
+}
+
+// MigrateLegacy 就地合并历史配置文件（builtin_config / builtin_cookies / bilibili_config）。
+func (c *Config) MigrateLegacy() []string {
+	var migrated []string
+
+	if data, err := os.ReadFile("builtin_config.json"); err == nil {
+		var b BuiltinSettings
+		if json.Unmarshal(data, &b) == nil {
+			// 保留已合并进来的 cookies，避免被覆盖成空
+			prevCookies := c.Builtin.Cookies
+			c.Builtin = b
+			c.Builtin.Cookies = prevCookies
+			migrated = append(migrated, "builtin_config.json")
+			backupLegacy("builtin_config.json")
+		}
+	}
+
+	if data, err := os.ReadFile("builtin_cookies.json"); err == nil {
+		var ck BuiltinCookies
+		if json.Unmarshal(data, &ck) == nil {
+			c.Builtin.Cookies = ck
+			migrated = append(migrated, "builtin_cookies.json")
+			backupLegacy("builtin_cookies.json")
+		}
+	}
+
+	if data, err := os.ReadFile("bilibili_config.json"); err == nil {
+		var bi BilibiliSettings
+		if json.Unmarshal(data, &bi) == nil {
+			c.Bilibili = bi
+			migrated = append(migrated, "bilibili_config.json")
+			backupLegacy("bilibili_config.json")
+		}
+	}
+
+	c.applyDefaults()
+	return migrated
+}
+
+// backupLegacy 将已合并的历史文件改名为 .bak（覆盖旧备份）。
+func backupLegacy(path string) {
+	_ = os.Remove(path + ".bak")
+	_ = os.Rename(path, path+".bak")
 }

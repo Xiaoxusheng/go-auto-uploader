@@ -20,12 +20,11 @@ import (
 const (
 	// SafeBaseDir 远端安全前缀
 	SafeBaseDir = "/home/_safe_uploads"
-	// SuccessLogFile 成功日志
-	SuccessLogFile = "upload_success.json"
-	// DirStatusFile 目录状态
-	DirStatusFile = "dir_status.json"
-	// HashFile 秒传哈希库
-	HashFile = "uploaded_hash.db"
+
+	// 运行时数据文件的基名（实际落盘位置 = config.dataDir 目录下）
+	successLogName = "upload_success.json"
+	dirStatusName  = "dir_status.json"
+	hashName       = "uploaded_hash.db"
 )
 
 var (
@@ -44,13 +43,15 @@ var (
 	QueueRetryingCount  int64
 
 	HistoryStore   = storage.NewHistoryStore(1000)
-	SuccessStore   = storage.NewSuccessStore(SuccessLogFile, 500000)
-	DirStatusStore = storage.NewDirStatusStore(DirStatusFile)
+	SuccessStore   = storage.NewSuccessStore(successLogName, 500000)
+	DirStatusStore = storage.NewDirStatusStore(dirStatusName)
 
 	TaskQueue  = uploader.NewQueue(100000)
 	UploadPool *uploader.WorkerPool
-	HashDB     *hashstore.Store
-	RemoteCli  *remote.OpenListClient
+	// HashDB 秒传哈希库。这里就创建实例（Run 只 Repath 不重建），
+	// 以免其它包 init 阶段捕获到 nil 或失效引用。
+	HashDB    = hashstore.New(hashName)
+	RemoteCli *remote.OpenListClient
 
 	// HTTPCli 连接池（OpenList / PushPlus）
 	HTTPCli = &http.Client{

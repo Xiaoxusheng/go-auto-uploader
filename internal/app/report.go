@@ -1,18 +1,23 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log"
-	"net/smtp"
 	"strings"
 	"time"
 
+	"upload/internal/notification"
 	"upload/internal/storage"
 )
 
 // reportLoop 邮件报告定时循环。
 func reportLoop() {
 	intervalMinutes := AppCfg().EmailInterval
+	if intervalMinutes <= 0 {
+		// 防御：0 会让 nextReportTime 永远落在过去，形成死循环狂发
+		intervalMinutes = 360
+	}
 	nextReportTime := time.Now().Add(time.Duration(intervalMinutes) * time.Minute)
 
 	for {
@@ -20,6 +25,9 @@ func reportLoop() {
 		if sleepDuration <= 0 {
 			sendReport()
 			intervalMinutes = AppCfg().EmailInterval
+			if intervalMinutes <= 0 {
+				intervalMinutes = 360
+			}
 			nextReportTime = time.Now().Add(time.Duration(intervalMinutes) * time.Minute)
 			continue
 		}
@@ -105,22 +113,23 @@ func sendReport() {
 
 func sendQQMail(subject, body string) {
 	cfg := AppCfg()
-	mailFrom, mailAuthCode, mailTo := cfg.MailFrom, cfg.MailAuthCode, cfg.MailTo
-	if mailFrom == "" || mailAuthCode == "" || mailTo == "" {
-		log.Printf("[REPORT][MAIL] ⚠️ 邮件参数未配置或不完整，自动跳过邮件发送")
+	mailCfg := notification.EmailConfig{
+		Host:     cfg.MailSMTPHost,
+		Port:     cfg.MailSMTPPort,
+		From:     cfg.MailFrom,
+		AuthCode: cfg.MailAuthCode,
+		To:       cfg.MailTo,
+	}
+	if !mailCfg.Ready() {
+		log.Printf("[REPORT][MAIL] ⚠️ 邮件参数未配置或仍是占位符（mailFrom/mailAuthCode/mailTo），自动跳过邮件发送")
 		return
 	}
 
-	msg := []byte(
-		"To: " + mailTo + "\r\n" +
-			"From: " + mailFrom + "\r\n" +
-			"Subject: " + subject + "\r\n" +
-			"MIME-Version: 1.0\r\n" +
-			"Content-Type: text/html; charset=UTF-8\r\n\r\n" +
-			body,
-	)
-	auth := smtp.PlainAuth("", mailFrom, mailAuthCode, "smtp.qq.com")
-	if err := smtp.SendMail("smtp.qq.com:587", auth, mailFrom, []string{mailTo}, msg); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := notification.SendEmail(ctx, mailCfg, subject, body); err != nil {
 		log.Printf("[REPORT][MAIL][ERR] 邮件发送失败: %v", err)
+		return
 	}
+	log.Printf("[REPORT][MAIL] ✅ 统计邮件已发送至 %s", cfg.MailTo)
 }

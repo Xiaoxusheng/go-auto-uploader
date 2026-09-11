@@ -3,7 +3,6 @@ package recorder
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestSanitizeName(t *testing.T) {
@@ -34,24 +33,38 @@ func TestBuildWatermarkTextAndPos(t *testing.T) {
 		t.Fatalf("prefix: %q", got)
 	}
 	if strings.Contains(got, "%{localtime") {
-		t.Fatalf("must not emit FFmpeg localtime macro, got %q", got)
-	}
-	want := "主播 " + time.Now().Format("2006-01-02 15:04:05")
-	// 允许跨秒
-	if got != want {
-		got2 := BuildWatermarkText(st, "主播")
-		if !strings.HasPrefix(got2, "主播 20") {
-			t.Fatalf("got %q want like %q", got2, want)
-		}
+		t.Fatalf("static text must not emit localtime macro, got %q", got)
 	}
 	if DrawtextPos("top-left") != "x=20:y=20" {
 		t.Fatal("pos")
 	}
 }
 
+func TestBuildWatermarkTextLive(t *testing.T) {
+	st := StyleFrom("", "%Y-%m-%d %H:%M:%S", "bottom-right", "#FFFFFF", 38)
+	got := BuildWatermarkTextLive(st, "主播")
+	// expansion=strftime：文本直接是 strftime 格式，不要 %{localtime} 宏
+	if !strings.Contains(got, "%Y-%m-%d %H:%M:%S") {
+		t.Fatalf("live text should keep strftime format, got %q", got)
+	}
+	if strings.Contains(got, "%{localtime") {
+		t.Fatalf("live text must not use localtime macro, got %q", got)
+	}
+}
+
 func TestStrftimeToGo(t *testing.T) {
 	if strftimeToGo("%Y-%m-%d %H:%M:%S") != "2006-01-02 15:04:05" {
 		t.Fatal(strftimeToGo("%Y-%m-%d %H:%M:%S"))
+	}
+}
+
+// Windows 盘符里的冒号是 filtergraph 的参数分隔符，必须转义，否则整条滤镜被 FFmpeg 拒绝。
+func TestEscapeFilterPath(t *testing.T) {
+	if got := escapeFilterPath(`D:\upload\font.ttf`); got != `D\:/upload/font.ttf` {
+		t.Fatalf("windows path: %q", got)
+	}
+	if got := escapeFilterPath("/home/upload/font.ttf"); got != "/home/upload/font.ttf" {
+		t.Fatalf("linux path should be unchanged: %q", got)
 	}
 }
 

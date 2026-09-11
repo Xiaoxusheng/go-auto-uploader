@@ -35,6 +35,10 @@ func NewDirStatusStore(path string) *DirStatusStore {
 	return &DirStatusStore{path: path}
 }
 
+// Repath 切换落盘路径（启动时重定向到 config.dataDir）。
+// 保持实例标识不变，避免外部提前捕获的引用失效。须在 Load 之前调用。
+func (s *DirStatusStore) Repath(path string) { s.path = path }
+
 // Load 从磁盘恢复。
 func (s *DirStatusStore) Load() {
 	data, err := readFileIfExists(s.path)

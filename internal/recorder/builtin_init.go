@@ -2,7 +2,6 @@ package recorder
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -76,9 +75,9 @@ func builtinHotReloadLoop() {
 
 					if isPaused {
 						builtinTaskStates.Store(key, "paused")
-						updateBuiltinStatus(platformName, roomID, displayName, "", builtinConfig.Quality, "已暂停")
+						updateBuiltinStatus(platformName, roomID, displayName, "", Config().Quality, "已暂停")
 					} else {
-						updateBuiltinStatus(platformName, roomID, displayName, "", builtinConfig.Quality, "初始化中")
+						updateBuiltinStatus(platformName, roomID, displayName, "", Config().Quality, "初始化中")
 						if p != nil {
 							wrapperStartMonitorIfNotRunning(p, roomID)
 						}
@@ -147,61 +146,29 @@ func builtinHotReloadLoop() {
 	}
 }
 
-// InitBuiltinRecorder 初始化内置录制引擎模块，挂载相关 API 路由并启动系统常驻协程，默认注入高级字幕配置
+// InitBuiltinRecorder 初始化内置录制引擎模块，挂载相关 API 路由并启动系统常驻协程。
+// 内置引擎参数统一存放于 config.json 的 builtin 区块（旧文件由 internal/config 启动时迁移）。
 func InitBuiltinRecorder(mux *http.ServeMux) {
 	checkFFmpegBuiltin()
 
-	if _, err := os.Stat("builtin_config.json"); os.IsNotExist(err) {
-		builtinConfig = &BuiltinConfig{
-			Quality:            "uhd",
-			CheckInterval:      30,
-			SavePath:           "./downloads",
-			WatermarkEnable:    false,
-			WatermarkText:      "go-auto-uploader",
-			WatermarkFormat:    "%Y-%m-%d %H:%M:%S",
-			WatermarkPosition:  "bottom-right",
-			WatermarkFontSize:  38,           // ✨ 初始化：默认字号为精美的 38px
-			WatermarkFontColor: "white@0.95", // ✨ 初始化：默认颜色为 95% 偏磨砂质感的白色
-		}
-		data, _ := json.MarshalIndent(builtinConfig, "", "    ")
-		os.WriteFile("builtin_config.json", data, 0644)
-	} else {
-		d, _ := os.ReadFile("builtin_config.json")
-		builtinConfig = &BuiltinConfig{}
-		json.Unmarshal(d, builtinConfig)
-
-		// 补足旧版本配置文件可能缺少的参数
-		if builtinConfig.WatermarkFormat == "" {
-			builtinConfig.WatermarkFormat = "%Y-%m-%d %H:%M:%S"
-		}
-		if builtinConfig.WatermarkPosition == "" {
-			builtinConfig.WatermarkPosition = "bottom-right"
-		}
-		if builtinConfig.WatermarkFontSize == 0 {
-			builtinConfig.WatermarkFontSize = 38
-		}
-		if builtinConfig.WatermarkFontColor == "" {
-			builtinConfig.WatermarkFontColor = "white@0.95"
-		}
+	// 从统一配置仓库加载内置引擎参数
+	bs := BuiltinConfig{Quality: "uhd", CheckInterval: 30, SavePath: "./downloads"}
+	if cfgStore != nil {
+		bs = cfgStore.Get().Builtin
 	}
+	SetConfig(&bs)
 
-	if builtinConfig.CheckInterval == 0 {
-		builtinConfig.CheckInterval = 30
+	// 平台 Cookie 独立可变，保存时回写进统一配置
+	builtinCookieMutex.Lock()
+	snap := Config()
+	builtinCookies = &BuiltinCookieConfig{
+		Douyin:   snap.Cookies.Douyin,
+		Kuaishou: snap.Cookies.Kuaishou,
+		Soop:     snap.Cookies.Soop,
 	}
-	if builtinConfig.SavePath == "" {
-		builtinConfig.SavePath = "./downloads"
-	}
+	builtinCookieMutex.Unlock()
 
-	if _, err := os.Stat("builtin_cookies.json"); os.IsNotExist(err) {
-		builtinCookies = &BuiltinCookieConfig{}
-		data, _ := json.MarshalIndent(builtinCookies, "", "    ")
-		os.WriteFile("builtin_cookies.json", data, 0644)
-	} else {
-		d, _ := os.ReadFile("builtin_cookies.json")
-		builtinCookies = &BuiltinCookieConfig{}
-		json.Unmarshal(d, builtinCookies)
-	}
-
+	// builtin_urls.txt 为用户手编名单，保持独立文件并支持热重载
 	if _, err := os.Stat("builtin_urls.txt"); os.IsNotExist(err) {
 		os.WriteFile("builtin_urls.txt", []byte(""), 0644)
 	} else {
@@ -235,13 +202,13 @@ func InitBuiltinRecorder(mux *http.ServeMux) {
 				if displayName == "" {
 					displayName = roomID
 				}
-				updateBuiltinStatus(platform, roomID, displayName, "", builtinConfig.Quality, "已暂停")
+				updateBuiltinStatus(platform, roomID, displayName, "", Config().Quality, "已暂停")
 			} else {
 				displayName := customName
 				if displayName == "" {
 					displayName = roomID
 				}
-				updateBuiltinStatus(platform, roomID, displayName, "", builtinConfig.Quality, "初始化中")
+				updateBuiltinStatus(platform, roomID, displayName, "", Config().Quality, "初始化中")
 				wrapperStartMonitorIfNotRunning(p, roomID)
 			}
 		}
@@ -306,8 +273,8 @@ func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 // getBuiltinSavePath 安全获取录制落盘根目录。
 // 引擎初始化完成前（或测试环境下）全局配置指针可能为空，直接解引用会触发空指针崩溃
 func getBuiltinSavePath() string {
-	if builtinConfig != nil && builtinConfig.SavePath != "" {
-		return builtinConfig.SavePath
+	if p := Config(); p.SavePath != "" {
+		return p.SavePath
 	}
 	return "./downloads"
 }
