@@ -3,7 +3,7 @@ feature: bots-cmd-layout
 status: delivered
 updated: 2026-09-11
 branch: main
-commits: 13a4e71..HEAD
+commits: 13a4e71..e3e6b6f
 ---
 
 # bots 迁包 + cmd/uploader + -rate 接线
@@ -12,7 +12,7 @@ commits: 13a4e71..HEAD
 
 **What was built** — 将 Telegram/QQ 机器人迁入 `internal/bots`（状态宽表经 `StatusFn`/`QueueFn` 注入，避免依赖 `api/http`）；入口收为 `cmd/uploader/{main,webglue}.go`；控制台页面改由 `web` 包 `//go:embed index.html` 提供；CLI `-rate` 接入 `config.Rate` 与 `app.CurrentRate`（`>0` 时覆盖日夜限速）。根目录不再保留 `package main` 业务文件。构建入口统一为 `go build ./cmd/uploader`。
 
-**Verification** — `go build ./...`、`go build -o uploader.exe ./cmd/uploader`、`go test ./... -count=1`、`go vet ./...` 均 PASS；`internal/app` 新增 `CurrentRate` 手动覆盖/日夜回落单测。
+**Verification** — `go build ./...`、`go build -o uploader.exe ./cmd/uploader`、`go test ./... -count=1`、`go vet ./...` 均 PASS；`internal/app` 新增 `CurrentRate` 手动覆盖/日夜回落单测。线上 `systemctl` active，`:8888` HTTP 200。
 
 **Journey log** —
 1. `go:embed` 不能跨包引用 `../index.html`，故单独建 `web` 包承载 embed。
@@ -71,4 +71,4 @@ internal/bots/           telegram + qq（经 app/recorder/status 注入）
 - [x] T3: cmd/uploader 入口 + 删除根 main/compat/webglue — acceptance: `go build ./cmd/uploader` PASS；根目录无 package main 业务文件 (covers: S2)
 - [x] T4: config/app 接线 -rate — acceptance: Rate>0 时 CurrentRate 返回该值；单测覆盖 (covers: S2)
 - [x] T5: 全量 build/test/vet + 更新 build 脚本与文档 — acceptance: 三命令 PASS；build 脚本指向 ./cmd/uploader (covers: S2)
-- [ ] T6: 交叉编译部署 192.168.5.10 — acceptance: 服务 active；:8888 200 (covers: S2)
+- [x] T6: 交叉编译部署 192.168.5.10 — acceptance: 服务 active；:8888 200 (covers: S2)
