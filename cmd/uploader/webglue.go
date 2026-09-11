@@ -23,7 +23,6 @@ func startHTTP(port int) error {
 
 	bots.SetDeps(httpSrv.BuildStatusData, httpapi.BuildQueueData)
 	app.SetNotifyChannel("telegram", bots.SendTelegramNotification)
-	app.SetNotifyChannel("qq", bots.SendQQNotification)
 
 	recorder.SetHooks(recorder.Hooks{
 		Broadcast:             app.BroadcastWS,

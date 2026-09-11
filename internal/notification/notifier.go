@@ -19,7 +19,7 @@ type Notifier interface {
 	Name() string
 }
 
-// FuncNotifier 将函数适配为 Notifier（便于注入 SendTelegram/SendQQ 等）。
+// FuncNotifier 将函数适配为 Notifier（便于注入 SendTelegramNotification 等）。
 type FuncNotifier struct {
 	Label string
 	Fn    func(ctx context.Context, msg Message) error

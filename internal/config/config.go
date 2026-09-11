@@ -45,9 +45,6 @@ type Config struct {
 	WechatToken        string   `json:"wechatToken"`
 	TelegramToken      string   `json:"telegramToken"`
 	TelegramChatID     int64    `json:"telegramChatID"`
-	QQBotWSURL         string   `json:"qqBotWsUrl"`
-	QQBotToken         string   `json:"qqBotToken"`
-	QQAdminID          int64    `json:"qqAdminId"`
 	DashboardUser      string   `json:"dashboardUser"`
 	DashboardPass      string   `json:"dashboardPass"`
 

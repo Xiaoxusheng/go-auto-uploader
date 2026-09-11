@@ -67,7 +67,6 @@ func main() {
 
 func initBots() {
 	go bots.InitTelegram()
-	go bots.InitQQ()
 }
 
 func startWebServer(port int) {
