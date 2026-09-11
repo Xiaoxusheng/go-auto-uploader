@@ -118,6 +118,24 @@ func clearConfigRestart(key string) bool {
 // StartMonitor 启动/复用监控协程。
 func StartMonitor(p BuiltinPlatform, roomID string) { wrapperStartMonitorIfNotRunning(p, roomID) }
 
+// NewBuiltinPlatform 按平台名构造平台实现，未知平台返回 nil。
+// 新增平台时在此登记，替换散落在各入口的 switch 注册。
+func NewBuiltinPlatform(name string) BuiltinPlatform {
+	switch name {
+	case "Douyin":
+		return &DouyinBuiltinPlatform{}
+	case "Kuaishou":
+		return &KuaishouBuiltinPlatform{}
+	case "Soop":
+		return &SoopBuiltinPlatform{}
+	case "Bilibili":
+		return &BilibiliBuiltinPlatform{}
+	case "Twitch":
+		return &TwitchBuiltinPlatform{}
+	}
+	return nil
+}
+
 // DouyinPlatform 抖音平台实现。
 func DouyinPlatform() BuiltinPlatform { return &DouyinBuiltinPlatform{} }
 
@@ -126,6 +144,12 @@ func KuaishouPlatform() BuiltinPlatform { return &KuaishouBuiltinPlatform{} }
 
 // SoopPlatform Soop 平台实现。
 func SoopPlatform() BuiltinPlatform { return &SoopBuiltinPlatform{} }
+
+// BilibiliPlatform B 站平台实现。
+func BilibiliPlatform() BuiltinPlatform { return &BilibiliBuiltinPlatform{} }
+
+// TwitchPlatform Twitch 平台实现。
+func TwitchPlatform() BuiltinPlatform { return &TwitchBuiltinPlatform{} }
 
 // UpdateStatus 更新任务状态并通知。
 func UpdateStatus(platform, roomID, anchorName, avatar, quality, statusMsg string) {

@@ -121,6 +121,10 @@ func ParseLine(line string) (isPaused bool, platform string, roomID string, cust
 		platform = "Kuaishou"
 	} else if strings.Contains(rawURL, "sooplive.co.kr") || strings.Contains(rawURL, "afreecatv.com") || strings.Contains(rawURL, "sooplive.com") {
 		platform = "Soop"
+	} else if strings.Contains(rawURL, "bilibili.com") || strings.Contains(rawURL, "b23.tv") {
+		platform = "Bilibili"
+	} else if strings.Contains(rawURL, "twitch.tv") {
+		platform = "Twitch"
 	}
 
 	roomID = ExtractRoomID(rawURL)

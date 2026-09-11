@@ -749,15 +749,7 @@ func tgExecutePreciseControl(action, key string) string {
 		recorder.StatusMap().Store(key, task)
 
 		var p BuiltinPlatform
-		switch targetPlatform {
-		case "Douyin":
-			p = recorder.DouyinPlatform()
-		case "Kuaishou":
-			p = recorder.KuaishouPlatform()
-		case "Soop":
-			p = recorder.SoopPlatform()
-		}
-		if p != nil {
+		if p = recorder.NewBuiltinPlatform(targetPlatform); p != nil {
 			recorder.StartMonitor(p, targetRoom)
 		}
 		recorder.TriggerBroadcast()
@@ -1076,7 +1068,7 @@ func tgHandleHelp(chatID int64, messageID int) {
 <code>/help</code> - 显示此操作说明
 
 💡 <b>智能无指令交互</b>
-🔗 <b>快速添加主播</b>：无需任何繁琐指令，直接将 <code>抖音</code>、<code>快手</code> 或 <code>Soop</code> 的直播间长/短链接发送给机器人，引擎将自动嗅探、解析并将其添加入监控队列。
+🔗 <b>快速添加主播</b>：无需任何繁琐指令，直接将 <code>抖音</code>、<code>快手</code>、<code>Soop</code>、<code>B站</code> 或 <code>Twitch</code> 的直播间长/短链接发送给机器人，引擎将自动嗅探、解析并将其添加入监控队列。
 🔄 <b>OTA 热更新</b>：直接将新版编译好的核心引擎二进制文件发送给机器人，并在文本说明(Caption)处填写 <code>/update</code>，即可无缝触发底层逃逸与原子替换重启。
 
 🎛️ <b>控制台功能指引</b>
@@ -1353,14 +1345,7 @@ func tgHandleAdd(rawArgs string) string {
 		}
 
 		var p BuiltinPlatform
-		switch platformName {
-		case "Douyin":
-			p = recorder.DouyinPlatform()
-		case "Kuaishou":
-			p = recorder.KuaishouPlatform()
-		case "Soop":
-			p = recorder.SoopPlatform()
-		default:
+		if p = recorder.NewBuiltinPlatform(platformName); p == nil {
 			continue
 		}
 

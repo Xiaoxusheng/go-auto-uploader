@@ -78,6 +78,8 @@ func apiRecorderCookies(w http.ResponseWriter, r *http.Request) {
 		builtinCookies.Douyin = c.Douyin
 		builtinCookies.Kuaishou = c.Kuaishou
 		builtinCookies.Soop = c.Soop
+		builtinCookies.Bilibili = c.Bilibili
+		builtinCookies.Twitch = c.Twitch
 		ck := *builtinCookies
 		builtinCookieMutex.Unlock()
 
@@ -154,6 +156,18 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		b23URLRe := regexp.MustCompile(`https?://b23\.tv/[a-zA-Z0-9]+/?`)
+		if b23URLRe.MatchString(line) {
+			log.Printf("[BUILTIN] 检测到B站短链接，正在解析: %s", line)
+			realURL, err := ExtractBuiltinBilibiliShortURL(line)
+			if err == nil && realURL != "" {
+				log.Printf("[BUILTIN] ✅ 最终解析成功: %s", realURL)
+				line = realURL
+			} else {
+				log.Printf("[BUILTIN] ❌ B站短链接解析失败: %v", err)
+			}
+		}
+
 		if idx := strings.Index(line, "?"); idx != -1 {
 			line = line[:idx]
 		}
@@ -183,15 +197,8 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		var p BuiltinPlatform
-		switch platformName {
-		case "Douyin":
-			p = &DouyinBuiltinPlatform{}
-		case "Kuaishou":
-			p = &KuaishouBuiltinPlatform{}
-		case "Soop":
-			p = &SoopBuiltinPlatform{}
-		default:
+		p := NewBuiltinPlatform(platformName)
+		if p == nil {
 			continue
 		}
 
@@ -287,16 +294,7 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 			task.Status = "监控中"
 			builtinStatusMap.Store(key, &task)
 		}
-		var p BuiltinPlatform
-		switch req.Platform {
-		case "Douyin":
-			p = &DouyinBuiltinPlatform{}
-		case "Kuaishou":
-			p = &KuaishouBuiltinPlatform{}
-		case "Soop":
-			p = &SoopBuiltinPlatform{}
-		}
-		if p != nil {
+		if p := NewBuiltinPlatform(req.Platform); p != nil {
 			wrapperStartMonitorIfNotRunning(p, req.RoomID)
 		}
 	case "delete":
@@ -376,16 +374,7 @@ func apiRecorderControlAll(w http.ResponseWriter, r *http.Request) {
 			taskVal.IsPaused = false
 			taskVal.Status = "监控中"
 			builtinStatusMap.Store(key, &taskVal)
-			var p BuiltinPlatform
-			switch platform {
-			case "Douyin":
-				p = &DouyinBuiltinPlatform{}
-			case "Kuaishou":
-				p = &KuaishouBuiltinPlatform{}
-			case "Soop":
-				p = &SoopBuiltinPlatform{}
-			}
-			if p != nil {
+			if p := NewBuiltinPlatform(platform); p != nil {
 				wrapperStartMonitorIfNotRunning(p, roomID)
 			}
 		}

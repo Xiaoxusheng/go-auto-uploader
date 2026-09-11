@@ -58,15 +58,7 @@ func builtinHotReloadLoop() {
 
 				if !exists {
 					stateChanged = true
-					var p BuiltinPlatform
-					switch platformName {
-					case "Douyin":
-						p = &DouyinBuiltinPlatform{}
-					case "Kuaishou":
-						p = &KuaishouBuiltinPlatform{}
-					case "Soop":
-						p = &SoopBuiltinPlatform{}
-					}
+					p := NewBuiltinPlatform(platformName)
 
 					displayName := customName
 					if displayName == "" {
@@ -106,16 +98,7 @@ func builtinHotReloadLoop() {
 							task.Status = "监控中"
 							builtinStatusMap.Store(key, &task)
 						}
-						var p BuiltinPlatform
-						switch platformName {
-						case "Douyin":
-							p = &DouyinBuiltinPlatform{}
-						case "Kuaishou":
-							p = &KuaishouBuiltinPlatform{}
-						case "Soop":
-							p = &SoopBuiltinPlatform{}
-						}
-						if p != nil {
+						if p := NewBuiltinPlatform(platformName); p != nil {
 							wrapperStartMonitorIfNotRunning(p, roomID)
 						}
 					}
@@ -165,6 +148,8 @@ func InitBuiltinRecorder(mux *http.ServeMux) {
 		Douyin:   snap.Cookies.Douyin,
 		Kuaishou: snap.Cookies.Kuaishou,
 		Soop:     snap.Cookies.Soop,
+		Bilibili: snap.Cookies.Bilibili,
+		Twitch:   snap.Cookies.Twitch,
 	}
 	builtinCookieMutex.Unlock()
 
@@ -184,15 +169,8 @@ func InitBuiltinRecorder(mux *http.ServeMux) {
 			if customName != "" {
 				builtinCustomNames.Store(key, customName)
 			}
-			var p BuiltinPlatform
-			switch platform {
-			case "Douyin":
-				p = &DouyinBuiltinPlatform{}
-			case "Kuaishou":
-				p = &KuaishouBuiltinPlatform{}
-			case "Soop":
-				p = &SoopBuiltinPlatform{}
-			default:
+			p := NewBuiltinPlatform(platform)
+			if p == nil {
 				continue
 			}
 

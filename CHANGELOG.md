@@ -1,5 +1,13 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
 
+### [v2.5.2] - 2026-09-12 (Bilibili & Twitch Support)
+#### 🌟 核心特性 (New Features)
+* **新增 B 站直播录制 (Bilibili Recorder)**：接入 `xlive getRoomPlayInfo v2` 接口，自动拼装 FLV 直链（host + base_url + extra），按 `accept_qn` 就近匹配画质档位；主播名与头像走 `live_user Master/info`，头像经内置图片代理回显。支持 `b23.tv` 分享短链自动跳转解析（添加入口 + 监控循环双保险），短号房间自动映射真实房间号。配置 SESSDATA Cookie 可解锁原画等登录档位。
+* **新增 Twitch 直播录制 (Twitch Recorder)**：走 GQL 公开接口查询开播状态（原生 query + PlaybackAccessToken 持久化查询，与 streamlink 同款哈希），usher 签发主 m3u8 后按带宽挑选 h264 分档（uhd/hd/sd 三档就近映射），AV1/HEVC 频道自动回退可用编码。GQL 请求遵守标准 `HTTPS_PROXY` 环境变量，ffmpeg 拉流同步透传 `-http_proxy`，国内部署经代理即可录制；配置 OAuth Token 可录制受限/成人频道。
+* **平台工厂收敛 (Platform Registry)**：新增 `NewBuiltinPlatform` 统一平台构造工厂，替换散落在 Web API、配置热重载、启动加载与 Telegram Bot 中的 8 处 switch 注册，后续扩展新平台只需实现接口 + 工厂登记一行。
+* **前端与 Bot 全量适配**：Web 控制台单条/批量添加下拉、Cookie 设置面板新增 B 站与 Twitch 项；Telegram Bot 快速添加帮助文案同步更新。
+
+---
 ### [v2.5.1] - 2026-08-30 (Security Audit & Stability Hotfix)
 #### 🔐 安全审计修复 (Security Audit)
 * **全站 API/WS 强制登录鉴权 (Mandatory Authentication)**：修复了登录令牌签发后从未被任何接口校验、整个控制台处于无鉴权裸奔状态的严重漏洞。现全站挂载 `authMiddleware` 强制认证中间件，所有 `/api/` 与 `/ws/` 通道必须持有合法令牌，公开面仅保留登录接口、密钥协商接口与静态资源。令牌升级为 `crypto/rand` 256 位高熵随机值，24 小时 TTL 自动吊销，注销即时失效；WebSocket 握手改为 `?token=` 传参，前端 401 自动登出回登录页。

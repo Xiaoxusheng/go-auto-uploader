@@ -1052,6 +1052,8 @@
                                           placeholder="选择平台">
                                     <a-option value="Douyin">抖音 (Douyin)</a-option>
                                     <a-option value="Kuaishou">快手 (Kuaishou)</a-option>
+                                    <a-option value="Bilibili">B站 (Bilibili)</a-option>
+                                    <a-option value="Twitch">Twitch</a-option>
                                     <a-option value="Soop">Soop</a-option>
                                 </a-select>
                                 <a-input v-model="builtinForm.url" placeholder="直播间链接" allow-clear size="medium"
@@ -2013,6 +2015,14 @@
                             <a-textarea v-model="builtinCookies.soop" placeholder="抓取 Soop 网页版 Cookie" allow-clear
                                         auto-size></a-textarea>
                         </a-form-item>
+                        <a-form-item label="B站 (Bilibili) Cookie">
+                            <a-textarea v-model="builtinCookies.bilibili" placeholder="抓取 B 站直播页 Cookie（含 SESSDATA，选填）"
+                                        allow-clear auto-size></a-textarea>
+                        </a-form-item>
+                        <a-form-item label="Twitch OAuth Token（选填）">
+                            <a-textarea v-model="builtinCookies.twitch" placeholder="Twitch auth-token，用于受限/成人频道取流"
+                                        allow-clear auto-size></a-textarea>
+                        </a-form-item>
                         <a-button type="primary" status="warning" long @click="saveBuiltinCookies"
                                   :loading="builtinSavingCookies">热更新 Cookie
                         </a-button>
@@ -2027,12 +2037,14 @@
                 <a-select v-model="builtinBatchForm.platform" placeholder="请选择统一的平台">
                     <a-option value="Douyin">抖音 (Douyin)</a-option>
                     <a-option value="Kuaishou">快手 (Kuaishou)</a-option>
+                    <a-option value="Bilibili">B站 (Bilibili)</a-option>
+                    <a-option value="Twitch">Twitch</a-option>
                     <a-option value="Soop">Soop (AfreecaTV)</a-option>
                 </a-select>
             </div>
             <a-textarea
                     v-model="builtinBatchForm.urls"
-                    placeholder="请输入直播间链接，确保【一行一个】&#10;示例：&#10;https://live.douyin.com/123456"
+                    placeholder="请输入直播间链接，确保【一行一个】&#10;示例：&#10;https://live.douyin.com/123456&#10;https://live.bilibili.com/23058&#10;https://www.twitch.tv/channelname"
                     :auto-size="{minRows: 6, maxRows: 12}">
             </a-textarea>
         </a-modal>
@@ -2436,7 +2448,7 @@
                 watermark_font_size: 38,
                 watermark_font_color: '#FFFFFFE6'
             });
-            const builtinCookies = ref({douyin: '', kuaishou: '', soop: ''});
+            const builtinCookies = ref({douyin: '', kuaishou: '', soop: '', bilibili: '', twitch: ''});
             const builtinTasks = ref([]);
 
             const builtinAdding = ref(false);
@@ -2507,6 +2519,8 @@
                 if (platform === 'Douyin') return `https://live.douyin.com/${roomId}`;
                 if (platform === 'Kuaishou') return `https://live.kuaishou.com/u/${roomId}`;
                 if (platform === 'Soop') return `https://play.sooplive.co.kr/${roomId}`;
+                if (platform === 'Bilibili') return `https://live.bilibili.com/${roomId}`;
+                if (platform === 'Twitch') return `https://www.twitch.tv/${roomId}`;
                 return roomId;
             };
 

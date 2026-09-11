@@ -81,6 +81,8 @@ type BuiltinCookies struct {
 	Douyin   string `json:"douyin"`
 	Kuaishou string `json:"kuaishou"`
 	Soop     string `json:"soop"`
+	Bilibili string `json:"bilibili"`
+	Twitch   string `json:"twitch"`
 }
 
 // BilibiliSettings 原 bilibili_config.json 的完整字段（保持兼容，暂未消费）。
