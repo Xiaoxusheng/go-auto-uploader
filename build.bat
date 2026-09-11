@@ -35,7 +35,7 @@ echo [2/3] 正在全速编译 Windows (amd64) 平台...
 set GOOS=windows
 set GOARCH=amd64
 set CGO_ENABLED=0
-go build -trimpath -ldflags="-s -w" -o release/uploader.exe .
+go build -trimpath -ldflags="-s -w" -o release/uploader.exe ./cmd/uploader
 if %errorlevel% neq 0 (
     echo [错误] Windows 平台编译失败！
     goto :error
@@ -51,7 +51,7 @@ echo [3/3] 正在全速编译 Linux (amd64) 平台...
 set GOOS=linux
 set GOARCH=amd64
 set CGO_ENABLED=0
-go build -trimpath -ldflags="-s -w" -o release/uploader .
+go build -trimpath -ldflags="-s -w" -o release/uploader ./cmd/uploader
 if %errorlevel% neq 0 (
     echo [错误] Linux 平台编译失败！
     goto :error

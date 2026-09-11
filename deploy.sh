@@ -51,7 +51,7 @@ function build_project() {
     log_info "开始使用极致优化方案编译 Go 核心程序..."
 
     # 核心优化：-ldflags="-s -w" 用于剔除 DWARF 调试信息与符号表，有效减少体积并加速系统内存装载
-    go build -ldflags="-s -w" -o uploader .
+    go build -ldflags="-s -w" -o uploader ./cmd/uploader
 
     # 赋予二进制文件可执行权限
     chmod +x uploader

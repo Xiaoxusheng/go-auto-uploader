@@ -3,14 +3,10 @@ set -e
 
 APP_NAME="uploader"
 
-echo "🚀 Building binary..."
+echo "Building binary..."
 
-# 当前系统编译
-CGO_ENABLED=0 go build -o "$APP_NAME"  -ldflags "-w -s"
+CGO_ENABLED=0 go build -o "$APP_NAME" -ldflags "-w -s" ./cmd/uploader
 
-echo "✅ Build success!"
-echo "📦 Binary: ./$APP_NAME"
-echo "📏 Size:"
+echo "Build success!"
+echo "Binary: ./$APP_NAME"
 ls -lh "./$APP_NAME"
-du -h "./$APP_NAME"
-

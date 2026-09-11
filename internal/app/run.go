@@ -75,9 +75,12 @@ func Login() error {
 	return RemoteCli.Login(ctx)
 }
 
-// CurrentRate 当前限速。
+// CurrentRate 当前限速：手动 Rate>0 时覆盖日夜表。
 func CurrentRate() int {
 	cfg := AppCfg()
+	if cfg.Rate > 0 {
+		return cfg.Rate
+	}
 	return ratelimit.Select(cfg.DayRate, cfg.NightRate, time.Now())
 }
 
@@ -158,6 +161,7 @@ func Run(opts Options) {
 		Dirs:               cli.Dirs,
 		Server:             cli.Server,
 		Workers:            cli.Workers,
+		Rate:               cli.Rate,
 		DayRate:            cli.DayRate,
 		NightRate:          cli.NightRate,
 		ScanInterval:       cli.ScanInterval,
@@ -167,6 +171,9 @@ func Run(opts Options) {
 		RecorderConfigPath: cli.RecorderConfigPath,
 	}); err != nil {
 		log.Printf("[CONFIG][ERR] 加载配置失败: %v", err)
+	}
+	if cli.Rate > 0 {
+		CfgStore.Update(func(c *config.Config) { c.Rate = cli.Rate })
 	}
 
 	DashUser = "admin"

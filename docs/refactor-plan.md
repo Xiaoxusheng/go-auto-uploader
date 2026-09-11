@@ -6,7 +6,8 @@
 upload/
 ├── cmd/uploader/main.go          # 仅 flag + app.Run + signal
 ├── internal/
-│   ├── app/                      # 生命周期编排（Phase 末）
+│   ├── app/                      # 生命周期编排
+│   ├── bots/                     # Telegram / QQ
 │   ├── config/                   # Config 类型 + Load/Save/Validate/Apply
 │   ├── fsutil/                   # AtomicWrite / SafeJSON
 │   ├── hashstore/                # Hash 缓存与落盘
@@ -23,7 +24,7 @@ upload/
 │   ├── ws/                       # Hub
 │   └── logx/                     # 分级日志 + 前端投递
 ├── api/http/                     # thin handlers
-├── web/ 或 embed index.html      # 前端暂不大改
+├── web/                          # embed index.html
 ├── docs/
 ├── deployments/
 └── scripts/
@@ -35,7 +36,7 @@ upload/
 cmd → app → {config, scanner, uploader, remote, storage, api}
 uploader → {remote, storage, convert, ratelimit, hashstore, notification?}
 api/http → services (uploader/scanner/auth/ws)  — 不直接摸全局
-recorder / bots → notification, recorder API
+bots → {app, recorder} + 注入 StatusFn/QueueFn
 ```
 
 ## 迁移原则
@@ -61,7 +62,7 @@ recorder / bots → notification, recorder API
 | I | recorder(Docker) + 文档 | ✅ |
 | J | builtin 迁 internal/recorder + auth/logx/cryptox | ✅ |
 | K | app 编排 + api/http Handler + main ≤150 行 | ✅ |
-| 遗留 | bots 迁出 package main；`cmd/uploader` 目录形态 | 待做 |
+| L | bots 迁 internal/bots + cmd/uploader + -rate | ✅ |
 
 ## 明确不做（本阶段）
 

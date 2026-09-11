@@ -1,4 +1,4 @@
-package main
+package bots
 
 import (
 	"crypto/sha256"
@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+
 	"upload/internal/recorder"
 
 	"github.com/gorilla/websocket"
@@ -179,7 +180,8 @@ type QQAction struct {
 	Echo   string      `json:"echo,omitempty"`
 }
 
-func InitQQBot() {
+// InitQQ 初始化 QQ 机器人引擎。
+func InitQQ() {
 	log.Println("[QQ-BOT] 🚀 开始初始化 QQ 机器人引擎 (兼容 NapCat)...")
 	_cfgSnap := appCfg()
 	wsURL := _cfgSnap.QQBotWSURL

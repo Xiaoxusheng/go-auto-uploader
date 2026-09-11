@@ -9,6 +9,7 @@
 
 ```bash
 go build ./...
+go build -o uploader ./cmd/uploader
 go test ./...
 go vet ./...
 gofmt -w .
@@ -31,8 +32,10 @@ CGO_ENABLED=1 go test -race ./...
 | 通知通道 | `internal/notification` |
 | WS 消息 | `internal/ws` |
 | 目录扫描规则 | `internal/scanner` |
+| Telegram/QQ 机器人 | `internal/bots` |
+| HTTP Handler | `api/http` |
 
-**不要**继续往 `main.go` 堆全局变量；状态放进 Store/Service。
+**不要**继续往 `cmd/uploader` 堆业务；状态放进 Store/Service。
 
 ## 测试
 

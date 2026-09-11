@@ -1,10 +1,10 @@
-package main
+package bots
 
 import (
 	"bytes"
 	"context"
 	"crypto/md5"
-	"encoding/json" // ✨ 新增：用于将 Telegram 修改的水印配置持久化写入本地
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
 	"upload/internal/recorder"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -35,9 +36,8 @@ var (
 	tgEnabled bool
 )
 
-// InitTelegramBot 初始化 Telegram 机器人引擎。
-// 职责：注入防假死网络客户端，读取全局配置，建立长连接。增加独立守护协程与指数退避重连机制，彻底解决系统启动时断网导致的失效问题。
-func InitTelegramBot() {
+// InitTelegram 初始化 Telegram 机器人引擎。
+func InitTelegram() {
 	log.Println("[TG-BOT] 🚀 开始初始化 Telegram 引擎...")
 	token := appCfg().TelegramToken
 

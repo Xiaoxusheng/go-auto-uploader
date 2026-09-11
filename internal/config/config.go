@@ -16,6 +16,7 @@ import (
 type Config struct {
 	ScanInterval       int      `json:"scanInterval"`
 	Workers            int      `json:"workers"`
+	Rate               int      `json:"rate"`
 	DayRate            int      `json:"dayRate"`
 	NightRate          int      `json:"nightRate"`
 	EmailInterval      int      `json:"emailInterval"`
@@ -83,6 +84,7 @@ func Default(cli CLI) Config {
 	return Config{
 		ScanInterval:       cli.ScanInterval,
 		Workers:            cli.Workers,
+		Rate:               cli.Rate,
 		DayRate:            cli.DayRate,
 		NightRate:          cli.NightRate,
 		EmailInterval:      cli.ReportMinutes,

@@ -30,7 +30,7 @@ WantedBy=multi-user.target
 
 ```bash
 # 交叉编译
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-w -s" -o uploader .
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-w -s" -o uploader ./cmd/uploader
 
 systemctl stop uploader
 cp uploader /home/upload/uploader

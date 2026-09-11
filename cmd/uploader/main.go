@@ -1,17 +1,14 @@
 package main
 
 import (
-	_ "embed"
 	"flag"
 	"log"
 	"strings"
 
 	"upload/internal/app"
+	"upload/internal/bots"
 	"upload/internal/recorder"
 )
-
-//go:embed index.html
-var indexHTML string
 
 func builtinActiveNames() []string {
 	var names []string
@@ -44,12 +41,11 @@ func builtinActiveNames() []string {
 
 func main() {
 	var cli app.CLI
-	var rateMB int
 
 	flag.StringVar(&cli.Dirs, "dirs", "", "扫描目录(逗号分隔)")
 	flag.StringVar(&cli.Server, "server", "http://127.0.0.1:5244", "服务器")
 	flag.IntVar(&cli.Workers, "workers", 3, "并发")
-	flag.IntVar(&rateMB, "rate", 0, "手动限速 MB/s")
+	flag.IntVar(&cli.Rate, "rate", 0, "手动限速 MB/s（>0 时覆盖日夜限速）")
 	flag.IntVar(&cli.DayRate, "day-rate", 20, "白天限速 MB/s")
 	flag.IntVar(&cli.NightRate, "night-rate", 80, "夜晚限速 MB/s")
 	flag.IntVar(&cli.ScanInterval, "scan-interval", 30, "默认30min扫描一次")
@@ -70,8 +66,8 @@ func main() {
 }
 
 func initBots() {
-	go InitTelegramBot()
-	go InitQQBot()
+	go bots.InitTelegram()
+	go bots.InitQQ()
 }
 
 func startWebServer(port int) {
