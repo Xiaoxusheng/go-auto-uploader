@@ -284,6 +284,8 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 		args = append(args, "-headers", "Referer: https://live.douyin.com/\r\n")
 	} else if platformName == "Soop" {
 		args = append(args, "-headers", "Referer: https://play.sooplive.co.kr/\r\nOrigin: https://play.sooplive.co.kr\r\n")
+	} else if platformName == "Kuaishou" {
+		args = append(args, "-headers", "Referer: https://live.kuaishou.com/\r\n")
 	}
 
 	// 抖音 FLV 节点抖动常见：放宽读超时到 60s，并开启 HTTP 断线重连
