@@ -1,33 +1,43 @@
 ---
 feature: engineering-refactor
-status: in-progress
+status: delivered
 updated: 2026-09-11
 branch: main
-commits: e1f42e8..HEAD
+commits: e1f42e8..99763cc
 ---
 
 # 工程化重构（分阶段抽包）
 
 ## Report
 
-（交付时填写）
+**What was built** — 在不改对外 CLI/REST/配置 JSON 字段的前提下，将巨型 `package main` 拆为 16+ 个 `internal/*` 领域包，并在本轮收口：`main.go` 收为 flag + `app.Run`（72 行）；上传/报告/主播探测/通知/Hub 生命周期迁入 `internal/app`；全部 REST/WS Handler 迁入 `api/http.Server`（依赖经方法访问 app 状态）；`webapi.go`/`builtin_shim.go`/`handlefile_pipeline.go` 删除。Telegram/QQ bots 仍留 package main，经 `compat.go` 薄别名访问 app。SIGINT/SIGTERM 可优雅停 Worker；已交叉编译部署至 192.168.5.10。
+
+**Verification** — `go build ./...` PASS；`go test ./... -count=1` PASS（含 `upload`、`upload/api/http` 与全部 internal 包）；`go vet ./...` PASS。线上 `systemctl` active，`:8888` HTTP 200。
+
+**Journey log** —
+1. `.gitignore` 裸 `uploader` 会忽略 `internal/uploader`，改为 `/uploader`。
+2. `safeBaseDir` 变更导致 `DetectStreamer` 取错段，抽包时顺手修复。
+3. `TrendSnapshot` 曾拷贝 `sync.Mutex`，改 DTO。
+4. RSA 从 `StartWebServer` 抽走后测试空指针，改为 `ensureRSAKeyPair` 懒加载。
+5. `git checkout -- internal/` 误还原未提交的 `state.go` 导出符号，需整文件重建。
+6. bots 依赖 `buildStatusData`/`Task` 等，用 `compat.go` 别名保持编译，避免一次迁两个大文件。
 
 ## [S1] Problem
 
-功能正确但工程结构难维护：全局变量地狱、无 context 生命周期、Handler 内嵌业务、持久化不统一、难测。Phase 1–I 已抽出 16 个 `internal/*` 包，但 `main.go` 仍持有扫描/上传/报告编排（~1200 行），`webapi.go` 承载全部 HTTP Handler（~1500 行），未达 `main <150 行` 与 `api/http thin handlers` 目标。
+功能正确但工程结构难维护：全局变量地狱、无 context 生命周期、Handler 内嵌业务、持久化不统一、难测。Phase A–I 已抽出领域包，但 `main.go` 仍持有扫描/上传/报告编排（~1200 行），`webapi.go` 承载全部 HTTP Handler（~1500 行），未达 `main ≤150 行` 与 `api/http` thin handlers 目标。
 
 ## [S2] Design
 
 见 `docs/architecture.md` 与 `docs/refactor-plan.md`。依赖方向：cmd → app → 领域包；api/http 不直接摸 main 全局。
 
-本轮收口设计：
+收口设计：
 
 ```text
 cmd/main.go          仅 flag + app.Run + bots/web 注入（≤150 行）
 compat.go            bots/tests 薄别名 → app / recorder
 webglue.go           httpapi.Server 启动 + recorder hooks 装配
 internal/app/        生命周期单源：state/run/scan/upload/report/streamers/notify/hubs
-api/http/            Server + 全部 REST/WS Handler，依赖经方法注入 app 状态
+api/http/            Server + 全部 REST/WS Handler
 telegram_bot.go      仍留 package main（经 compat 访问 app）
 qq_bot.go            仍留 package main（经 compat 访问 app）
 ```
@@ -65,4 +75,4 @@ qq_bot.go            仍留 package main（经 compat 访问 app）
 - [x] T11: main 编排迁入 internal/app（upload/report/streamers/notify/hubs） — acceptance: main.go ≤150 行且 `go test ./...` PASS (covers: S2)
 - [x] T12: webapi Handler 拆到 api/http 并注入依赖 — acceptance: webapi.go 删除；REST/WS 测试迁至 api/http 且 PASS (covers: S2)
 - [x] T13: 全量验证 + 交叉编译部署 192.168.5.10 — acceptance: build/test/vet PASS；服务 active；:8888 HTTP 200 (covers: S2)
-- [ ] T14: 同步 architecture.md / refactor-plan.md 遗留状态 — acceptance: 文档不再声称 webapi/main 内联编排 (covers: S2)
+- [x] T14: 同步 architecture.md / refactor-plan.md 遗留状态 — acceptance: 文档不再声称 webapi/main 内联编排 (covers: S2)
