@@ -86,3 +86,14 @@ func (h *Hub) Len() int {
 	defer h.mu.RUnlock()
 	return len(h.notifiers)
 }
+
+// Names 已注册通道名列表（诊断/测试用）。
+func (h *Hub) Names() []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make([]string, 0, len(h.notifiers))
+	for _, n := range h.notifiers {
+		out = append(out, n.Name())
+	}
+	return out
+}

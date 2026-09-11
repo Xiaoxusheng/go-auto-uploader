@@ -177,7 +177,9 @@ func wrapBase64(s string) string {
 	return b.String()
 }
 
-// DynamicEmail 配置可热更新的邮件通道。
+// DynamicEmail 配置可热更新的邮件通道（可复用组件）。
+// 注意：当前推送中枢刻意不注册它——实时推送只走微信/TG，邮件仅用于
+// 定时统计报告（internal/app/report.go 直接调 SendEmail）。
 type DynamicEmail struct {
 	CfgFn func() EmailConfig
 }

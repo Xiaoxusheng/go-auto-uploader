@@ -19,19 +19,9 @@ func InitHubs() {
 		TokenFn: func() string { return AppCfg().WechatToken },
 		Client:  HTTPCli,
 	})
-	// 邮件通道：开播/下播/异常/统计报告统一扇出，配置来自统一 config.json，热更新即时生效
-	NotifyHub.Register(&notification.DynamicEmail{
-		CfgFn: func() notification.EmailConfig {
-			c := AppCfg()
-			return notification.EmailConfig{
-				Host:     c.MailSMTPHost,
-				Port:     c.MailSMTPPort,
-				From:     c.MailFrom,
-				AuthCode: c.MailAuthCode,
-				To:       c.MailTo,
-			}
-		},
-	})
+	// 注意：实时推送（开播/下播/异常）只走微信 PushPlus / Telegram，刻意不接邮件通道——
+	// 邮件仅用于 reportLoop 的定时统计报告（见 app/report.go 的 sendQQMail），
+	// 避免高频推送刷爆邮箱。如需恢复推送邮件，在此处注册 DynamicEmail 即可。
 }
 
 // SetNotifyChannel 注册外部通知通道（Telegram / QQ）。
