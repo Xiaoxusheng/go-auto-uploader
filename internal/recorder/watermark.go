@@ -93,9 +93,26 @@ func FindFontPath() string {
 	return ""
 }
 
-// BuildWatermarkText 组装「前缀（默认主播名）+ 动态时间」。
-// 用于 textfile= 时，内容按字面读入后再做宏展开，**不要**对冒号做 filter 语法转义，
-// 否则旧版 FFmpeg 会显示字面 %{localtime:...} 或出现 \: 杂质。
+// strftimeToGo 将常见 strftime 令牌映射为 Go time layout。
+func strftimeToGo(format string) string {
+	r := strings.NewReplacer(
+		"%Y", "2006",
+		"%y", "06",
+		"%m", "01",
+		"%d", "02",
+		"%H", "15",
+		"%M", "04",
+		"%S", "05",
+		"%b", "Jan",
+		"%B", "January",
+		"%p", "PM",
+	)
+	return r.Replace(format)
+}
+
+// BuildWatermarkText 组装「前缀（默认主播名）+ 固定时间戳」。
+// 时间在 Go 侧展开写入 textfile，避免旧版 FFmpeg（3.4）把
+// %{localtime:%Y-%m-%d %H:%M:%S} 里的冒号当成多参数导致水印失败。
 func BuildWatermarkText(style WatermarkStyle, anchorName string) string {
 	formatStr := strings.ReplaceAll(style.Format, "'", "")
 	textStr := strings.ReplaceAll(style.Text, "'", "")
@@ -109,7 +126,7 @@ func BuildWatermarkText(style WatermarkStyle, anchorName string) string {
 	if fullText != "" {
 		fullText += " "
 	}
-	return fullText + "%{localtime:" + formatStr + "}"
+	return fullText + time.Now().Format(strftimeToGo(formatStr))
 }
 
 // DrawtextPos 九宫格坐标。

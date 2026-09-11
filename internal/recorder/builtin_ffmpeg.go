@@ -92,7 +92,7 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string)
 	// 基础视频滤镜：精准抓取第一个关键帧 (I-frame)，避免花屏和解码黑屏
 	vfFilter := "select='eq(pict_type,I)'"
 
-	// 截图水印：复用 PrepareDrawtextFilter（textfile 内不转义冒号，保证 %{localtime} 正确展开）
+	// 截图水印：复用 PrepareDrawtextFilter
 	if builtinConfig != nil && builtinConfig.WatermarkEnable {
 		drawtext, textFile, werr := prepareBuiltinDrawtextFilter(anchorName, "shot")
 		if werr != nil {
@@ -104,8 +104,10 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string)
 	}
 
 	// 构建 FFmpeg 执行指令，通过 pipe:0 读取内存流，直接输出 png 图片
+	// +genpts/igndts：TS 尾部切片时间戳常不连续，避免 exit 69
 	cmd := exec.Command(builtinFfmpegPath,
 		"-y",
+		"-fflags", "+genpts+igndts",
 		"-i", "pipe:0",
 		"-vf", vfFilter,
 		"-frames:v", "1",
@@ -136,6 +138,39 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string)
 
 	// 等待底层图像渲染和编码结束
 	err = cmd.Wait()
+
+	// TS 尾部可能没有 I 帧导致 select 0 帧退出；去掉 select 再抽一帧兜底
+	if err != nil {
+		vfRetry := "null"
+		if builtinConfig != nil && builtinConfig.WatermarkEnable {
+			if drawtext, textFile, werr := prepareBuiltinDrawtextFilter(anchorName, "shot2"); werr == nil {
+				defer os.Remove(textFile)
+				vfRetry = drawtext
+			}
+		}
+		retry := exec.Command(builtinFfmpegPath,
+			"-y",
+			"-fflags", "+genpts+igndts",
+			"-i", "pipe:0",
+			"-vf", vfRetry,
+			"-frames:v", "1",
+			"-c:v", "png",
+			"-f", "image2",
+			coverPath,
+		)
+		var retryErr bytes.Buffer
+		retry.Stderr = &retryErr
+		stdin2, pipeErr := retry.StdinPipe()
+		if pipeErr == nil {
+			if startErr := retry.Start(); startErr == nil {
+				stdin2.Write(buf)
+				stdin2.Close()
+				if retry.Wait() == nil {
+					return true
+				}
+			}
+		}
+	}
 
 	// ✨ 核心追踪日志：只要开启了水印，就强行把 FFmpeg 的底层报错池抖出来！
 	// 无论截帧成功与否，只要检测到 "No such filter" 或滤镜相关的错误，立即高亮暴露问题
@@ -257,7 +292,16 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 		args = append(args, "-headers", "Referer: https://play.sooplive.co.kr/\r\nOrigin: https://play.sooplive.co.kr\r\n")
 	}
 
-	args = append(args, "-rw_timeout", "15000000", "-analyzeduration", "5000000", "-probesize", "5000000", "-i", streamURL)
+	// 抖音 FLV 节点抖动常见：放宽读超时到 60s，并开启 HTTP 断线重连
+	args = append(args,
+		"-rw_timeout", "60000000",
+		"-reconnect", "1",
+		"-reconnect_streamed", "1",
+		"-reconnect_delay_max", "30",
+		"-analyzeduration", "5000000",
+		"-probesize", "5000000",
+		"-i", streamURL,
+	)
 	args = append(args, "-map", "0:v?", "-map", "0:a?", "-ignore_unknown")
 
 	// 仅截屏：强制短分片，抽帧后删片，磁盘不长期保留视频

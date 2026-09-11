@@ -93,10 +93,12 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 						case <-t.C:
 						}
 					} else {
-						log.Printf("⏳ [断流等待] %s %s 进入15秒冷却...", platformName, name)
+						// 断流后退避：避免 CDN 抖动时 15s 紧循环重拉把 CPU 打满
+						backoff := 30 * time.Second
+						log.Printf("⏳ [断流等待] %s %s 进入30秒冷却...", platformName, name)
 						updateBuiltinStatus(platformName, roomID, name, avatar, q, "断流缓冲中")
 
-						t := time.NewTimer(15 * time.Second)
+						t := time.NewTimer(backoff)
 						select {
 						case <-ctx.Done():
 							t.Stop()
