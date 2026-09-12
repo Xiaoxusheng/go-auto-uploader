@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,6 +32,21 @@ type Task struct {
 	CreatedAt  time.Time
 	EndTime    time.Time
 	Error      string
+}
+
+// isRemoteNameConflict 判断远端拒绝原因是否为「同名文件已存在」。
+// OpenList/alist 系返回 500 + 中文文案，个别驱动返回英文，做宽松匹配。
+func isRemoteNameConflict(msg string) bool {
+	if msg == "" {
+		return false
+	}
+	lower := strings.ToLower(msg)
+	return strings.Contains(msg, "文件名冲突") ||
+		strings.Contains(msg, "已存在同名文件") ||
+		strings.Contains(msg, "同名文件") ||
+		strings.Contains(lower, "file name conflict") ||
+		strings.Contains(lower, "filename conflict") ||
+		strings.Contains(lower, "already exists")
 }
 
 // ProgressReader 带限速与进度上报的 Reader。
@@ -230,7 +246,13 @@ func Upload(local, remotePath string, size int64) bool {
 		return false
 	}
 
-	if putRes.OK() {
+	if putRes.OK() || isRemoteNameConflict(putRes.Message) {
+		if !putRes.OK() {
+			// 远端已存在同名文件：本系统文件名为录制会话时间戳，同名即同内容
+			// （典型场景：上传中途服务重启，远端实际已落盘而本地指纹未记录）。
+			// 视为上传成功并记录指纹，避免反复重传与失败告警堆积。
+			log.Printf("[UPLOAD][REMOTE][SKIP] 远端已存在同名文件，视为上传成功: %s", filepath.Base(local))
+		}
 		if val, exists := LiveTasks.Load(taskID); exists {
 			task := val.(*Task)
 			task.Mu.Lock()
@@ -246,7 +268,11 @@ func Upload(local, remotePath string, size int64) bool {
 		QueueSuccess.Store(taskID, struct{}{})
 		atomic.AddInt64(&QueueSuccessCount, 1)
 
-		AddHistory(local, remotePath, size, "success", time.Since(startTime).Seconds(), "")
+		historyErr := ""
+		if !putRes.OK() {
+			historyErr = "远端已存在同名文件，跳过重复上传"
+		}
+		AddHistory(local, remotePath, size, "success", time.Since(startTime).Seconds(), historyErr)
 		BroadcastWS("taskDone", map[string]interface{}{
 			"id": taskID, "status": "success", "progress": 100, "size": size,
 		})
