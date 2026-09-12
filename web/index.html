@@ -8,7 +8,7 @@
 
     <meta name="referrer" content="no-referrer"/>
 
-    <title>视频上传与录制系统</title>
+    <title>直播录制管理系统</title>
     <link rel="icon"
           href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
     <!-- 前端依赖自托管（随二进制发布），不走公网 CDN：离线可用、首屏无重定向延迟 -->
@@ -29,7 +29,7 @@
         :root {
             --bg-base: #f0f2f5;
             --glass-bg: rgba(255, 255, 255, 0.75);
-            --nav-glass-bg: rgba(255, 255, 255, 0.90);
+            --nav-glass-bg: #ffffff;
             --glass-border: rgba(0, 0, 0, 0.06);
             --hover-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
         }
@@ -37,7 +37,7 @@
         body[arco-theme='dark'] {
             --bg-base: #000000;
             --glass-bg: rgba(35, 35, 36, 0.65);
-            --nav-glass-bg: rgba(20, 20, 20, 0.85);
+            --nav-glass-bg: #17171a;
             --glass-border: rgba(255, 255, 255, 0.12);
             --hover-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
         }
@@ -61,9 +61,7 @@
 
         .nav-glass {
             background-color: var(--nav-glass-bg) !important;
-            backdrop-filter: saturate(180%) blur(20px);
-            -webkit-backdrop-filter: saturate(180%) blur(20px);
-            border-bottom: 1px solid var(--glass-border);
+            border-bottom: 1px solid var(--color-border, #e5e6eb);
             position: sticky;
             top: 0;
             z-index: 1000;
@@ -553,6 +551,114 @@
             text-align: center;
         }
 
+        /* ========== Pro Dashboard 风格（录制任务页） ========== */
+        .pro-card.arco-card {
+            background: var(--color-bg-2, #fff) !important;
+            border: 1px solid var(--color-border, #e5e6eb) !important;
+            border-radius: 8px !important;
+            box-shadow: none !important;
+        }
+
+        .pro-page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .pro-page-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--color-text-1, #1d2129);
+            line-height: 28px;
+            margin: 0;
+        }
+
+        .pro-page-desc {
+            font-size: 13px;
+            color: var(--color-text-3, #86909c);
+            margin: 4px 0 0;
+            line-height: 20px;
+        }
+
+        .pro-stat-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .pro-stat-card {
+            background: var(--color-bg-2, #fff);
+            border: 1px solid var(--color-border, #e5e6eb);
+            border-radius: 8px;
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .pro-stat-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 19px;
+            flex-shrink: 0;
+        }
+
+        .pro-stat-value {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--color-text-1, #1d2129);
+            line-height: 28px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .pro-stat-label {
+            font-size: 12px;
+            color: var(--color-text-3, #86909c);
+            line-height: 18px;
+        }
+
+        .pro-toolbar {
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+
+        .pro-table-card .arco-table-th {
+            background: var(--color-fill-1, #f7f8fa);
+            font-weight: 500;
+        }
+
+        @media (max-width: 768px) {
+            .pro-stat-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+            }
+
+            .pro-stat-card {
+                padding: 12px 14px;
+            }
+
+            .pro-stat-value {
+                font-size: 18px;
+            }
+
+            .pro-page-header {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+
         /* ========== 移动端适配 ========== */
         @media (max-width: 768px) {
             .builtin-card-grid {
@@ -794,7 +900,7 @@
             <div class="nav-title"
                  style="font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 8px;">
                 <span style="display:flex; align-items:center; gap:6px;">
-                    <icon-cloud style="color: var(--color-primary-light-4); font-size: 20px;"></icon-cloud>分布式文件上传与录制系统
+                    <icon-record style="color: #165DFF; font-size: 20px;"></icon-record>直播录制管理系统
                 </span>
 
                 <a-tag :color="systemStatus.running ? 'green' : 'red'" size="small" style="border-radius: 4px;">
@@ -1244,22 +1350,84 @@
                         内置<span class="hidden-xs">轻量</span>引擎
                     </template>
 
-                    <a-card class="apple-glass hover-effect" bordered style="margin-bottom: 16px;">
-                        <div class="search-control-bar builtin-toolbar"
-                             style="display: flex; gap: 12px; align-items: center; flex-wrap: nowrap;">
-                            <a-input-search
-                                    v-model="builtinSearchQuery"
-                                    placeholder="搜索主播或链接"
-                                    style="width: 220px;"
-                                    size="medium"
-                                    allow-clear>
-                                <template #prefix>
-                                    <icon-search></icon-search>
+                    <!-- 页头：标题 + 主操作 -->
+                    <div class="pro-page-header">
+                        <div>
+                            <h3 class="pro-page-title">录制任务</h3>
+                            <p class="pro-page-desc">内置轻量录制引擎 · 开播自动录制，切片自动归档上传</p>
+                        </div>
+                        <a-space size="small" wrap>
+                            <div style="display:flex;align-items:center;gap:8px;background:var(--color-fill-2, #f2f3f5);padding:5px 12px;border-radius:6px;height:32px;box-sizing:border-box;">
+                                <span style="font-size:13px;font-weight:500;color:var(--color-text-2);">全局监控</span>
+                                <a-switch
+                                        :model-value="isAllBuiltinActive"
+                                        @change="handleMasterSwitchBuiltin"
+                                        :disabled="builtinTasks.length === 0"
+                                        size="small"
+                                        checked-color="#00b42a"
+                                        unchecked-color="#f53f3f">
+                                    <template #checked>ON</template>
+                                    <template #unchecked>OFF</template>
+                                </a-switch>
+                            </div>
+                            <a-button size="medium" @click="showBuiltinBatchModal = true">
+                                <template #icon>
+                                    <icon-copy></icon-copy>
                                 </template>
-                            </a-input-search>
+                                批量添加
+                            </a-button>
+                            <a-button size="medium" @click="openBuiltinSettingsModal">
+                                <template #icon>
+                                    <icon-settings></icon-settings>
+                                </template>
+                                引擎设置
+                            </a-button>
+                        </a-space>
+                    </div>
 
-                            <a-divider direction="vertical" style="height: 24px; margin: 0;"></a-divider>
+                    <!-- 统计卡 -->
+                    <div class="pro-stat-grid">
+                        <div class="pro-stat-card">
+                            <div class="pro-stat-icon" style="background: #E8F3FF; color: #165DFF;">
+                                <icon-list></icon-list>
+                            </div>
+                            <div>
+                                <div class="pro-stat-value">{{ builtinTasks.length }}</div>
+                                <div class="pro-stat-label">总任务</div>
+                            </div>
+                        </div>
+                        <div class="pro-stat-card">
+                            <div class="pro-stat-icon" style="background: #E8FFEA; color: #00B42A;">
+                                <icon-eye></icon-eye>
+                            </div>
+                            <div>
+                                <div class="pro-stat-value">{{ builtinActiveCount }}</div>
+                                <div class="pro-stat-label">监控中</div>
+                            </div>
+                        </div>
+                        <div class="pro-stat-card">
+                            <div class="pro-stat-icon" style="background: #FFECE8; color: #F53F3F;">
+                                <icon-record></icon-record>
+                            </div>
+                            <div>
+                                <div class="pro-stat-value">{{ builtinRecordingCount }}</div>
+                                <div class="pro-stat-label">直播录制中</div>
+                            </div>
+                        </div>
+                        <div class="pro-stat-card">
+                            <div class="pro-stat-icon" style="background: #FFF7E8; color: #FF7D00;">
+                                <icon-pause-circle></icon-pause-circle>
+                            </div>
+                            <div>
+                                <div class="pro-stat-value">{{ builtinPausedCount }}</div>
+                                <div class="pro-stat-label">已暂停</div>
+                            </div>
+                        </div>
+                    </div>
 
+                    <!-- 工具栏：快速添加 + 搜索/筛选/视图 -->
+                    <div class="pro-card" style="padding: 14px 16px; margin-bottom: 16px;">
+                        <div class="builtin-toolbar" style="display: flex; gap: 12px; align-items: center; flex-wrap: nowrap;">
                             <a-input-group style="flex: 1; min-width: 300px;">
                                 <a-select v-model="builtinForm.platform" style="width: 140px;" size="medium"
                                           placeholder="选择平台">
@@ -1269,60 +1437,41 @@
                                     <a-option value="Twitch">Twitch</a-option>
                                     <a-option value="Soop">Soop</a-option>
                                 </a-select>
-                                <a-input v-model="builtinForm.url" placeholder="直播间链接" allow-clear size="medium"
+                                <a-input v-model="builtinForm.url" placeholder="粘贴直播间链接，回车快速添加"
+                                         allow-clear size="medium"
                                          @press-enter="handleAddBuiltin"></a-input>
                             </a-input-group>
-
-                            <div class="mobile-action-buttons">
-                                <a-button type="primary" status="success" size="medium" @click="handleAddBuiltin"
-                                          :loading="builtinAdding">
-                                    <template #icon>
-                                        <icon-plus></icon-plus>
-                                    </template>
-                                    <span class="hidden-xs">添加监控</span><span v-if="isMobile">添加</span>
-                                </a-button>
-
-                                <a-button type="primary" status="warning" size="medium"
-                                          @click="showBuiltinBatchModal = true">
-                                    <template #icon>
-                                        <icon-copy></icon-copy>
-                                    </template>
-                                    <span class="hidden-xs">批量添加</span><span v-if="isMobile">批量</span>
-                                </a-button>
-                            </div>
-
-                            <div class="mobile-action-buttons" style="align-items: center;">
-                                <div style="display: flex; align-items: center; justify-content: center; gap: 8px; background-color: rgba(242, 243, 245, 0.5); padding: 4px 12px; border-radius: 4px; height: 32px; flex: 1;">
-                                    <span style="font-size: 13px; font-weight: bold; color: #4e5969;">全局</span>
-                                    <a-switch
-                                            :model-value="isAllBuiltinActive"
-                                            @change="handleMasterSwitchBuiltin"
-                                            :disabled="builtinTasks.length === 0"
-                                            checked-color="#00b42a"
-                                            unchecked-color="#f53f3f">
-                                        <template #checked>ON</template>
-                                        <template #unchecked>OFF</template>
-                                    </a-switch>
-                                </div>
-
-                                <a-button type="outline" size="medium" @click="openBuiltinSettingsModal"
-                                          style="flex: 1;">
-                                    <template #icon>
-                                        <icon-settings></icon-settings>
-                                    </template>
-                                    引擎设置
-                                </a-button>
-                            </div>
+                            <a-button type="primary" size="medium" @click="handleAddBuiltin" :loading="builtinAdding"
+                                      style="flex-shrink: 0;">
+                                <template #icon>
+                                    <icon-plus></icon-plus>
+                                </template>
+                                添加监控
+                            </a-button>
                         </div>
 
-                        <div class="builtin-filter-bar">
-                            <a-radio-group v-model="builtinStatusFilter" type="button" size="small">
+                        <a-divider style="margin: 12px 0;"></a-divider>
+
+                        <div class="builtin-toolbar" style="display: flex; align-items: center; gap: 12px; flex-wrap: nowrap;">
+                            <a-input-search
+                                    v-model="builtinSearchQuery"
+                                    placeholder="搜索主播或链接"
+                                    style="width: 200px; flex-shrink: 0;"
+                                    allow-clear>
+                                <template #prefix>
+                                    <icon-search></icon-search>
+                                </template>
+                            </a-input-search>
+
+                            <a-divider direction="vertical" style="height: 24px; margin: 0; flex-shrink: 0;"></a-divider>
+
+                            <a-radio-group v-model="builtinStatusFilter" type="button" size="small" style="flex-shrink: 0;">
                                 <a-radio value="all">全部</a-radio>
                                 <a-radio value="live">直播中</a-radio>
                                 <a-radio value="offline">未直播</a-radio>
                             </a-radio-group>
 
-                            <a-radio-group v-model="builtinPlatformFilter" type="button" size="small">
+                            <a-radio-group v-model="builtinPlatformFilter" type="button" size="small" style="flex-shrink: 0;">
                                 <a-radio value="all">全部平台</a-radio>
                                 <a-radio value="Douyin">抖音</a-radio>
                                 <a-radio value="Kuaishou">快手</a-radio>
@@ -1333,19 +1482,7 @@
 
                             <div class="builtin-filter-spacer"></div>
 
-                            <span class="builtin-filter-stats" style="font-size: 13px; color: var(--color-text-3); white-space: nowrap;">
-                                总计: <b>{{ builtinTasks.length }}</b>
-                            </span>
-                            <span class="builtin-filter-stats" style="font-size: 13px; color: #00B42A; white-space: nowrap;">
-                                监控: <b>{{ builtinActiveCount }}</b>
-                            </span>
-                            <span class="builtin-filter-stats" style="font-size: 13px; color: #F53F3F; white-space: nowrap;">
-                                录制: <b>{{ builtinRecordingCount }}</b>
-                            </span>
-
-                            <a-divider direction="vertical" style="height: 20px; margin: 0;"></a-divider>
-
-                            <a-radio-group v-model="builtinViewMode" type="button" size="small">
+                            <a-radio-group v-model="builtinViewMode" type="button" size="small" style="flex-shrink: 0;">
                                 <a-radio value="table">
                                     <icon-table style="vertical-align: -2px;"></icon-table>
                                     表格
@@ -1356,11 +1493,13 @@
                                 </a-radio>
                             </a-radio-group>
                         </div>
-                    </a-card>
+                    </div>
 
-                    <a-card class="apple-glass hover-effect" bordered>
+                    <a-card class="pro-card pro-table-card" bordered>
                         <a-table v-if="builtinViewMode === 'table'" row-key="room_id" :data="paginatedBuiltinTasks"
-                                 :pagination="false" bordered stripe
+                                 :pagination="false"
+                                 :bordered="false"
+                                 :stripe="false"
                                  hoverable
                                  column-resizable
                                  :scroll="{ x: 740 }"
@@ -2883,6 +3022,7 @@
 
             const builtinActiveCount = computed(() => builtinTasks.value.filter(t => !t.is_paused).length);
             const builtinRecordingCount = computed(() => builtinTasks.value.filter(t => isBuiltinLiveStatusJS(t.status)).length);
+            const builtinPausedCount = computed(() => builtinTasks.value.filter(t => t.is_paused).length);
             const isAllBuiltinActive = computed(() => builtinTasks.value.length > 0 && builtinTasks.value.some(t => !t.is_paused));
 
             /**
@@ -4251,7 +4391,7 @@
                 builtinQualityText, builtinLiveTagIcon, builtinLiveTagStyle,
                 builtinCurrentPage, builtinPageSize, sortedBuiltinTasks, paginatedBuiltinTasks, builtinForm,
                 builtinBatchForm, builtinSettings, builtinCookies, builtinTasks, builtinActiveCount,
-                builtinRecordingCount, isAllBuiltinActive, builtinAdding, builtinBatchAdding, builtinSaving,
+                builtinRecordingCount, builtinPausedCount, isAllBuiltinActive, builtinAdding, builtinBatchAdding, builtinSaving,
                 builtinSavingCookies, getBuiltinLiveUrl, fetchBuiltinConfig, saveBuiltinConfig, saveBuiltinCookies,
                 handleAddBuiltin, handleBatchAddBuiltin, handleControlBuiltin, handleSwitchBuiltin,
                 handleBuiltinFlags, handleMasterSwitchBuiltin, openBuiltinSettingsModal, downloadBuiltinCover, globalPreview, openPreview
