@@ -293,10 +293,8 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 		if proxy := twitchProxyFromEnv(); proxy != "" {
 			args = append(args, "-http_proxy", proxy)
 		}
-		// Twitch HLS：广告插入/CDN 轮换导致分片 4xx 时让 ffmpeg 在流内部自动重连，
-		// 减少整段录制中断； playlist 轮换后仍失败则交由上层快速重开
-		args = append(args, "-reconnect_on_http_error", "4xx,5xx")
-		args = append(args, "-reconnect_delay_max", "5")
+		// 注意：服务器 ffmpeg 可能是 3.4 老版本，勿使用 4.4+ 才有的
+		// -reconnect_on_http_error 等新选项；断流韧性依赖上层快速重开
 	}
 
 	// 抖音 FLV 节点抖动常见：放宽读超时到 60s，并开启 HTTP 断线重连

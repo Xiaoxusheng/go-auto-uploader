@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -144,7 +145,7 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 			line = foundURL
 		}
 
-		shortURLRe := regexp.MustCompile(`https?://v\.douyin\.com/[a-zA-Z0-9]+/?`)
+		shortURLRe := regexp.MustCompile(`https?://v\.douyin\.com/[a-zA-Z0-9\-_]+/?`)
 		if shortURLRe.MatchString(line) {
 			log.Printf("[BUILTIN] 检测到抖音短链接，正在解析: %s", line)
 			realURL, err := ExtractBuiltinDouyinLiveURL(line)
@@ -156,7 +157,7 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		b23URLRe := regexp.MustCompile(`https?://b23\.tv/[a-zA-Z0-9]+/?`)
+		b23URLRe := regexp.MustCompile(`https?://b23\.tv/[a-zA-Z0-9\-_/]+`)
 		if b23URLRe.MatchString(line) {
 			log.Printf("[BUILTIN] 检测到B站短链接，正在解析: %s", line)
 			realURL, err := ExtractBuiltinBilibiliShortURL(line)
@@ -164,7 +165,11 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[BUILTIN] ✅ 最终解析成功: %s", realURL)
 				line = realURL
 			} else {
+				// B站短链解不出房间号即无法监控（视频/主页链接不存在“开播后再换算”），
+				// 明确拒绝入库，避免存下永远探测不到的垃圾任务
 				log.Printf("[BUILTIN] ❌ B站短链接解析失败: %v", err)
+				hookJSONErr(w, r, http.StatusBadRequest, fmt.Sprintf("B站短链接解析失败: %v", err))
+				return
 			}
 		}
 
@@ -172,6 +177,15 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 			line = line[:idx]
 		}
 		line = strings.TrimSuffix(line, "/")
+
+		// 抖音房间号归一：解析引擎产出的 room_id / 各链接形态统一换算成标准 web_rid 再入库，
+		// 名单里落干净的 live.douyin.com/<web_rid> 行，探测层不再需要反复兜底换算
+		if strings.Contains(line, "douyin") {
+			if webRid := resolveDouyinWebRid(line); webRid != line && isAllDigits(webRid) {
+				log.Printf("[BUILTIN] 📥 添加归一: %s → https://live.douyin.com/%s", line, webRid)
+				line = "https://live.douyin.com/" + webRid
+			}
+		}
 
 		fullLineToSave := line
 		if customNameFromSuffix != "" {

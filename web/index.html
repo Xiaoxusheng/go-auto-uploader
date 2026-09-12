@@ -1654,8 +1654,8 @@
                                  :key="record.platform + '_' + record.room_id"
                                  class="builtin-task-card">
                                 <div class="builtin-card-cover" @click="openPreview(record)">
-                                    <img v-if="record.avatar && !record.coverFail" :src="record.avatar"
-                                         loading="lazy" alt="直播画面" @error="record.coverFail = true">
+                                    <img v-if="record.avatar && record.coverFail !== record.avatar" :src="record.avatar"
+                                         loading="lazy" alt="直播画面" @error="record.coverFail = record.avatar">
                                     <div v-else class="builtin-card-cover-empty">无画面</div>
                                     <a-tag size="small" class="builtin-card-badge builtin-solid-tag"
                                            :style="builtinPlatformTagStyle(record.platform)">
@@ -3167,7 +3167,8 @@
                 if (!builtinForm.value.url.trim()) return Message.warning("请填写直播间地址或ID");
                 builtinAdding.value = true;
                 try {
-                    await api.post('/builtin_recorder/add', builtinForm.value);
+                    // 添加接口需等后台解析短链（Chrome/HTTP 兜底），放宽到 30s 避免前端先超时
+                    await api.post('/builtin_recorder/add', builtinForm.value, {timeout: 30000});
                     Message.success("任务添加成功");
                     builtinForm.value.url = '';
                 } catch (e) {
@@ -3191,7 +3192,7 @@
                 let success = 0, fail = 0;
                 for (const url of lines) {
                     try {
-                        await api.post('/builtin_recorder/add', {platform: builtinBatchForm.value.platform, url: url});
+                        await api.post('/builtin_recorder/add', {platform: builtinBatchForm.value.platform, url: url}, {timeout: 30000});
                         success++;
                     } catch (e) {
                         fail++;

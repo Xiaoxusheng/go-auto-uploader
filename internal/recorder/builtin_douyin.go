@@ -4,19 +4,156 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 )
 
 type DouyinBuiltinPlatform struct{}
+
+// 手机端分享短链只携带 room_id，enter 接口只认 web_rid（错误码 4001038），
+// 必须先经 reflow 页把 room_id 换算成 webRid 才能进标准探测流程。
+var douyinWebRidCache sync.Map // 名单原始 roomID -> douyinRidEntry（含失败占位，避免每次轮询都重试）
+
+type douyinRidEntry struct {
+	webRid     string
+	resolvedAt time.Time
+}
+
+const douyinWebRidRefreshInterval = 10 * time.Minute
+
+var (
+	douyinLiveURLRe  = regexp.MustCompile(`live\.douyin\.com/(\d+)`)
+	douyinRootLiveRe = regexp.MustCompile(`douyin\.com/(?:root/)?live/(\d+)`)
+	douyinReflowRe   = regexp.MustCompile(`(?:reflow|room_id(?:_str)?)/(\d+)`)
+	douyinWebRidRe   = regexp.MustCompile(`webRid\\?":\\?"(\d+)`)
+	douyinPageURLRe  = regexp.MustCompile(`(?:v\.douyin\.com|amemv\.com)`)
+)
+
+// isDouyinRoomIDCandidate 超长纯数字（>=15 位）一般是 room_id 而非 web_rid。
+func isDouyinRoomIDCandidate(s string) bool {
+	if len(s) < 15 {
+		return false
+	}
+	return isAllDigits(s)
+}
+
+// resolveDouyinWebRid 把名单里的短链 / room_id 换算成 enter 接口可用的 web_rid。
+// 标准格式（live.douyin.com/<web_rid> 的纯数字段）原样返回，不进换算流程。
+func resolveDouyinWebRid(roomID string) string {
+	rid := strings.TrimSpace(roomID)
+	if rid == "" {
+		return rid
+	}
+	if e, ok := douyinWebRidCache.Load(rid); ok {
+		if w := e.(douyinRidEntry).webRid; w != "" {
+			return w
+		}
+		return rid
+	}
+	if !douyinPageURLRe.MatchString(rid) && !douyinLiveURLRe.MatchString(rid) &&
+		!douyinRootLiveRe.MatchString(rid) && !isDouyinRoomIDCandidate(rid) {
+		return rid
+	}
+	webRid := resolveDouyinWebRidUncached(rid)
+	douyinWebRidCache.Store(rid, douyinRidEntry{webRid: webRid, resolvedAt: time.Now()})
+	if webRid == "" {
+		log.Printf("[BUILTIN] 🔁 房间换算失败（10分钟后重试）: %s", rid)
+		return rid
+	}
+	log.Printf("[BUILTIN] 🔁 房间换算: %s → web_rid %s", rid, webRid)
+	return webRid
+}
+
+// resolveDouyinWebRidUncached 跟随短链重定向定位 room_id，再从 reflow 页提取 webRid。
+// 支持三种输入：裸 room_id（上游解析引擎只解出数字）、live.douyin.com 数字链接、
+// v.douyin.com/amemv 短链（跟随重定向）。
+func resolveDouyinWebRidUncached(link string) string {
+	roomID := ""
+	switch {
+	case isDouyinRoomIDCandidate(strings.TrimSpace(link)):
+		roomID = strings.TrimSpace(link)
+	case douyinLiveURLRe.MatchString(link), douyinRootLiveRe.MatchString(link):
+		m := douyinLiveURLRe.FindStringSubmatch(link)
+		if m == nil {
+			m = douyinRootLiveRe.FindStringSubmatch(link)
+		}
+		if !isDouyinRoomIDCandidate(m[1]) {
+			return m[1]
+		}
+		roomID = m[1]
+	default:
+		finalURL, body, err := douyinFetchBody(link)
+		if err != nil {
+			return ""
+		}
+		if m := douyinLiveURLRe.FindStringSubmatch(finalURL); m != nil {
+			return m[1]
+		}
+		// 优先信任重定向后的 URL；短链不走重定向时兜底扫响应体
+		if m := douyinReflowRe.FindStringSubmatch(finalURL); m != nil {
+			roomID = m[1]
+		} else if m := douyinReflowRe.FindStringSubmatch(string(body)); m != nil {
+			roomID = m[1]
+		}
+	}
+	if roomID == "" {
+		return ""
+	}
+	_, page, err := douyinFetchBody("https://webcast.amemv.com/douyin/webcast/reflow/" + roomID)
+	if err != nil {
+		return ""
+	}
+	if m := douyinWebRidRe.FindStringSubmatch(string(page)); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// shouldRefreshDouyinWebRid 换算结果会随开播会话轮换而失效，
+// 失效后按固定间隔允许重算一次；未换算过的超长纯数字视作 room_id 直接尝试。
+func shouldRefreshDouyinWebRid(origRoomID, currentRid string) bool {
+	if e, ok := douyinWebRidCache.Load(origRoomID); ok {
+		return time.Since(e.(douyinRidEntry).resolvedAt) > douyinWebRidRefreshInterval
+	}
+	return currentRid == origRoomID && isDouyinRoomIDCandidate(origRoomID)
+}
+
+// douyinFetchBody 带 UA 拉取页面，返回最终重定向 URL 与响应体。
+func douyinFetchBody(rawURL string) (string, []byte, error) {
+	req, err := http.NewRequest("GET", rawURL, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	resp, err := builtinHTTPClient.Do(req)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, err
+	}
+	finalURL := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	return finalURL, body, nil
+}
 
 // GetPlatformName 提供用于逻辑判断及配置索引的抖音平台名标识
 func (d *DouyinBuiltinPlatform) GetPlatformName() string { return "Douyin" }
 
 // GetStreamURL 动态调用抖音 API 探测目标房间号，获得推流地址及封面和信息
 func (d *DouyinBuiltinPlatform) GetStreamURL(roomID string, quality string) (string, string, string, error) {
+	origRoomID := roomID
+	roomID = resolveDouyinWebRid(roomID)
+
 	params := url.Values{}
 	params.Set("aid", "6383")
 	params.Set("app_name", "douyin_web")
@@ -102,6 +239,14 @@ func (d *DouyinBuiltinPlatform) GetStreamURL(roomID string, quality string) (str
 	}
 
 	if len(data.Data.Data) == 0 {
+		// 查不到房间：短链换算结果可能已过期（webRid 轮换），超长纯数字可能是从未换算的 room_id，
+		// 按间隔重算一次并重试；仍查不到则按未开播处理
+		if shouldRefreshDouyinWebRid(origRoomID, roomID) {
+			douyinWebRidCache.Delete(origRoomID)
+			if again := resolveDouyinWebRid(origRoomID); again != roomID && again != origRoomID {
+				return d.GetStreamURL(again, quality)
+			}
+		}
 		return "", anchorName, avatar, nil
 	}
 

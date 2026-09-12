@@ -13,7 +13,7 @@ import (
 )
 
 func ExtractBuiltinDouyinLiveURL(text string) (string, error) {
-	re := regexp.MustCompile(`https?://v\.douyin\.com/[a-zA-Z0-9]+/?`)
+	re := regexp.MustCompile(`https?://v\.douyin\.com/[a-zA-Z0-9\-_]+/?`)
 	shortURL := re.FindString(text)
 
 	if shortURL == "" {
@@ -21,6 +21,19 @@ func ExtractBuiltinDouyinLiveURL(text string) (string, error) {
 	}
 	log.Printf("\n🔍 [解析引擎] 提取到纯净短链接: %s\n", shortURL)
 
+	// 先走秒级 HTTP 重定向拦截；「未开播」是确定结论直接返回，
+	// 其余失败/结论不明确时才升级无头 Chrome 深度穿透，避免每次添加白等十几秒
+	result, err := resolveBuiltinDouyinByHTTP(shortURL)
+	if err == nil || strings.Contains(err.Error(), "未开播") {
+		return result, err
+	}
+	log.Printf("⚠️ [解析引擎] HTTP 拦截未拿到房间号（%v），升级无头 Chrome 深度穿透...", err)
+
+	return resolveBuiltinDouyinByChrome(shortURL)
+}
+
+// resolveBuiltinDouyinByChrome 启动无头 Chrome 穿透反爬页，从最终 URL/页面数据里提取房间号。
+func resolveBuiltinDouyinByChrome(shortURL string) (string, error) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-blink-features", "AutomationControlled"),
@@ -68,33 +81,40 @@ func ExtractBuiltinDouyinLiveURL(text string) (string, error) {
 		}
 	} else {
 		log.Printf("err: %v", err)
-		log.Printf("⚠️ [解析引擎] 无头浏览器超时或未安装，触发底层 HTTP 拦截器保底...")
+		log.Printf("⚠️ [解析引擎] 无头浏览器超时或未安装...")
 	}
 
+	return "", fmt.Errorf("双重解析方案均未拿到有效房间号，可能是网络受限或滑块拦截")
+}
+
+// resolveBuiltinDouyinByHTTP 轻量解析：跟随分享短链重定向，从最终 URL 提取房间号。
+// 重定向到个人主页 = 主播未开播的确定结论；拿不到有效房间号时返回错误交由 Chrome 兜底。
+func resolveBuiltinDouyinByHTTP(shortURL string) (string, error) {
 	fallbackClient := &http.Client{
 		Timeout: 10 * time.Second,
 	}
 	req, _ := http.NewRequest("GET", shortURL, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-	resp, fallbackErr := fallbackClient.Do(req)
-	if fallbackErr == nil {
-		defer resp.Body.Close()
-		resolvedURL := resp.Request.URL.String()
+	resp, err := fallbackClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("HTTP 拦截失败: %v", err)
+	}
+	defer resp.Body.Close()
+	resolvedURL := resp.Request.URL.String()
 
-		if strings.Contains(resolvedURL, "douyin.com/user/") {
-			return "", fmt.Errorf("解析失败: 该主播当前未开播 (重定向至个人主页)")
-		}
-
-		longIDRe := regexp.MustCompile(`\d{18,20}`)
-		longID := longIDRe.FindString(resolvedURL)
-		if longID != "" {
-			return fmt.Sprintf("https://live.douyin.com/%s", longID), nil
-		}
-		return strings.Split(resolvedURL, "?")[0], nil
+	if strings.Contains(resolvedURL, "douyin.com/user/") {
+		return "", fmt.Errorf("解析失败: 该主播当前未开播 (重定向至个人主页)")
 	}
 
-	return "", fmt.Errorf("双重解析方案均未拿到有效房间号，可能是网络受限或滑块拦截")
+	longIDRe := regexp.MustCompile(`\d{18,20}`)
+	if longID := longIDRe.FindString(resolvedURL); longID != "" {
+		return fmt.Sprintf("https://live.douyin.com/%s", longID), nil
+	}
+	if m := regexp.MustCompile(`live\.douyin\.com/(\d+)`).FindStringSubmatch(resolvedURL); m != nil {
+		return fmt.Sprintf("https://live.douyin.com/%s", m[1]), nil
+	}
+	return "", fmt.Errorf("重定向未落在直播间页: %s", strings.Split(resolvedURL, "?")[0])
 }
 
 // extractBuiltinWebRid 使用正则暴力在返回的 HTML 数据中筛查包含真实房间号的配置段落

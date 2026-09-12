@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -224,9 +225,15 @@ func isAllDigits(s string) bool {
 	return true
 }
 
-// resolveBilibiliShortCode 跟随 b23.tv 分享码跳转，从落地页 URL 提取房间号
+// resolveBilibiliShortCode 跟随 b23.tv 短链（裸短码或完整 URL）跳转，从落地页提取直播间房间号。
+// b23.tv 有两类直播落地：分享码 302 到 live.bilibili.com/<房间号>；
+// b23.tv/live/<房间号> 直接 200 返回页面。视频/主页等非直播落地一律报错，防止 BV 号被误当房间号。
 func resolveBilibiliShortCode(code string) (string, error) {
-	req, err := http.NewRequest("GET", "https://b23.tv/"+url.PathEscape(code), nil)
+	target := code
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		target = "https://b23.tv/" + url.PathEscape(code)
+	}
+	req, err := http.NewRequest("GET", target, nil)
 	if err != nil {
 		return "", err
 	}
@@ -248,30 +255,39 @@ func resolveBilibiliShortCode(code string) (string, error) {
 	}
 
 	u, err := url.Parse(final)
-	if err != nil || !strings.Contains(u.Host, "bilibili.com") {
-		return "", fmt.Errorf("b23.tv 落地链接非 B 站直播页: %s", final)
+	if err != nil {
+		return "", fmt.Errorf("b23.tv 落地链接解析失败: %s", final)
 	}
 	segments := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(segments) == 0 || segments[len(segments)-1] == "" {
-		return "", errors.New("b23.tv 落地链接未包含房间号")
+	last := ""
+	if len(segments) > 0 {
+		last = segments[len(segments)-1]
 	}
-	return segments[len(segments)-1], nil
+	onLivePage := strings.Contains(u.Host, "live.bilibili.com") ||
+		strings.Contains(strings.Trim(u.Path, "/"), "live/")
+	if !onLivePage {
+		return "", fmt.Errorf("b23.tv 落地非直播间（视频/主页链接不支持）: %s", final)
+	}
+	if !isAllDigits(last) {
+		return "", fmt.Errorf("b23.tv 落地链接未包含有效房间号: %s", final)
+	}
+	return last, nil
 }
 
-// ExtractBuiltinBilibiliShortURL 供添加入口解析 b23.tv 分享短链为直播间长链
+// ExtractBuiltinBilibiliShortURL 供添加入口解析 b23.tv 分享短链为直播间长链。
+// 从整段分享文案里提取完整短链（含 /live/ 路径形态），也兼容裸短码输入。
 func ExtractBuiltinBilibiliShortURL(line string) (string, error) {
-	code := line
-	if idx := strings.Index(code, "b23.tv/"); idx != -1 {
-		code = code[idx+len("b23.tv/"):]
-	}
-	if idx := strings.IndexAny(code, "?#/ \t"); idx != -1 {
-		code = code[:idx]
-	}
-	if code == "" {
-		return "", errors.New("未找到 b23.tv 分享码")
+	re := regexp.MustCompile(`https?://b23\.tv/[^\s,，。#?]+`)
+	shortURL := re.FindString(line)
+	if shortURL == "" {
+		code := strings.TrimSpace(line)
+		if code == "" || strings.ContainsAny(code, "/ ") {
+			return "", errors.New("未找到 b23.tv 分享链接")
+		}
+		shortURL = "https://b23.tv/" + code
 	}
 
-	roomID, err := resolveBilibiliShortCode(code)
+	roomID, err := resolveBilibiliShortCode(shortURL)
 	if err != nil {
 		return "", err
 	}
