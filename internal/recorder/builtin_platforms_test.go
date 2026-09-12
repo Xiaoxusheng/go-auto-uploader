@@ -1,6 +1,9 @@
 package recorder
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestParseLineBilibili(t *testing.T) {
 	isP, platform, room, _, _, fl := ParseLine("https://live.bilibili.com/23058,主播:某主播,录屏:1,截屏:1")
@@ -91,6 +94,30 @@ func TestBilibiliNormalizeRoomID(t *testing.T) {
 	}
 	if got := bilibiliNormalizeRoomID("23058"); got != "23058" {
 		t.Fatalf("normalize plain=%q", got)
+	}
+}
+
+func TestTwitchStreamMetaUnmarshal(t *testing.T) {
+	// GQL 响应带 data 包装层，缺层会把 user 解析成 nil 而误报「频道不存在」
+	body := `{"data":{"user":{"login":"seoi1016","displayName":"정서이_","profileImageURL":"https://cdn.example/a.jpeg","stream":{"id":"1","type":"live","title":"t","viewersCount":755}}},"extensions":{}}`
+
+	var meta twitchStreamMeta
+	if err := json.Unmarshal([]byte(body), &meta); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if meta.Data.User == nil {
+		t.Fatal("user 解析为 nil")
+	}
+	if meta.Data.User.DisplayName != "정서이_" || meta.Data.User.Stream == nil || meta.Data.User.Stream.Type != "live" {
+		t.Fatalf("字段解析错误: %+v", meta.Data.User)
+	}
+
+	// 离线频道：user 存在但 stream 为 null
+	offline := `{"data":{"user":{"login":"a","displayName":"A","stream":null}}}`
+	var m2 twitchStreamMeta
+	json.Unmarshal([]byte(offline), &m2)
+	if m2.Data.User == nil || m2.Data.User.Stream != nil {
+		t.Fatalf("离线频道解析错误: %+v", m2.Data.User)
 	}
 }
 

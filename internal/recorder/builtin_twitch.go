@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -61,15 +62,15 @@ func (t *TwitchBuiltinPlatform) GetStreamURL(roomID string, quality string) (str
 		return "", login, "", err
 	}
 
-	if meta.User == nil {
+	if meta.Data.User == nil {
 		return "", login, "", fmt.Errorf("Twitch 频道不存在: %s", login)
 	}
-	avatar := meta.User.ProfileImageURL
-	anchorName := meta.User.DisplayName
+	avatar := meta.Data.User.ProfileImageURL
+	anchorName := meta.Data.User.DisplayName
 	if anchorName == "" {
 		anchorName = login
 	}
-	if meta.User.Stream == nil || meta.User.Stream.Type != "live" {
+	if meta.Data.User.Stream == nil || meta.Data.User.Stream.Type != "live" {
 		return "", anchorName, avatar, nil
 	}
 
@@ -97,24 +98,26 @@ func (t *TwitchBuiltinPlatform) GetStreamURL(roomID string, quality string) (str
 // ---------------- GQL 查询 ----------------
 
 type twitchStreamMeta struct {
-	User *struct {
-		Login           string `json:"login"`
-		DisplayName     string `json:"displayName"`
-		ProfileImageURL string `json:"profileImageURL"`
-		Stream          *struct {
-			ID      string `json:"id"`
-			Type    string `json:"type"`
-			Title   string `json:"title"`
-			Viewers int    `json:"viewersCount"`
-		} `json:"stream"`
-	} `json:"user"`
+	Data struct {
+		User *struct {
+			Login           string `json:"login"`
+			DisplayName     string `json:"displayName"`
+			ProfileImageURL string `json:"profileImageURL"`
+			Stream          *struct {
+				ID      string `json:"id"`
+				Type    string `json:"type"`
+				Title   string `json:"title"`
+				Viewers int    `json:"viewersCount"`
+			} `json:"stream"`
+		} `json:"user"`
+	} `json:"data"`
 }
 
 type twitchPlaybackToken struct {
 	Data struct {
 		StreamPlaybackAccessToken *struct {
-			Value string `json:"value"`
-			Sig   string `json:"sig"`
+			Value     string `json:"value"`
+			Signature string `json:"signature"`
 		} `json:"streamPlaybackAccessToken"`
 	} `json:"data"`
 	Errors []struct {
@@ -163,6 +166,9 @@ func (t *TwitchBuiltinPlatform) gqlRequest(payload interface{}, authToken string
 	if err != nil {
 		return nil, err
 	}
+	if twitchDebugEnabled() {
+		log.Printf("[TWITCH-DEBUG] auth=%v status=%d resp=%.300s", authToken != "", resp.StatusCode, string(body))
+	}
 	if resp.StatusCode == http.StatusForbidden {
 		return nil, errors.New("GQL 请求被拒绝(403)，可能需要更新 OAuth Token")
 	}
@@ -173,6 +179,11 @@ func (t *TwitchBuiltinPlatform) gqlRequest(payload interface{}, authToken string
 		return nil, fmt.Errorf("GQL HTTP %d", resp.StatusCode)
 	}
 	return body, nil
+}
+
+// twitchDebugEnabled 环境变量 TWITCH_DEBUG=1 时输出 GQL 调试日志
+func twitchDebugEnabled() bool {
+	return os.Getenv("TWITCH_DEBUG") == "1"
 }
 
 // fetchStreamMeta 原生 query 查频道与直播状态（匿名可用）
@@ -217,17 +228,26 @@ func (t *TwitchBuiltinPlatform) fetchPlaybackToken(login string) (string, string
 		return "", "", fmt.Errorf("申请播放凭证失败: %w", err)
 	}
 
-	var token twitchPlaybackToken
-	if err := json.Unmarshal(body, &token); err != nil {
-		return "", "", fmt.Errorf("解析播放凭证失败: %w", err)
+	// 批量操作形态下 Twitch 返回 JSON 数组；兼容单对象响应
+	var tokens []twitchPlaybackToken
+	if err := json.Unmarshal(body, &tokens); err != nil {
+		var single twitchPlaybackToken
+		if err2 := json.Unmarshal(body, &single); err2 != nil {
+			return "", "", fmt.Errorf("解析播放凭证失败: %w", err)
+		}
+		tokens = []twitchPlaybackToken{single}
 	}
+	if len(tokens) == 0 {
+		return "", "", errors.New("播放凭证响应为空")
+	}
+	token := tokens[0]
 	if len(token.Errors) > 0 {
 		return "", "", fmt.Errorf("播放凭证查询报错: %s", token.Errors[0].Message)
 	}
 	if token.Data.StreamPlaybackAccessToken == nil {
 		return "", "", errors.New("未取到播放凭证（限制级频道需配置 OAuth Token）")
 	}
-	return token.Data.StreamPlaybackAccessToken.Value, token.Data.StreamPlaybackAccessToken.Sig, nil
+	return token.Data.StreamPlaybackAccessToken.Value, token.Data.StreamPlaybackAccessToken.Signature, nil
 }
 
 // fetchMasterPlaylist 请求 usher 签发主 m3u8；404 视为已下播
