@@ -93,3 +93,35 @@ func TestBilibiliNormalizeRoomID(t *testing.T) {
 		t.Fatalf("normalize plain=%q", got)
 	}
 }
+
+func TestTwitchAuthTokenExtraction(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"   ", ""},
+		// 裸 OAuth Token
+		{"95j2opi8z9ho69m1nglwt2z6b00s3o", "95j2opi8z9ho69m1nglwt2z6b00s3o"},
+		// 整串 Cookie：自动提取 auth-token
+		{
+			"server_session_id=675bbbb6cc2b4f1d9a5525495f2781c8;auth-token=95j2opi8z9ho69m1nglwt2z6b00s3o;api_token=twilight.d4d8ec21e50147c09837d9ba0489ac04;unique_id=qJsm3Sgn4CZxywg2QSpCdbgOB4JmTg2B",
+			"95j2opi8z9ho69m1nglwt2z6b00s3o",
+		},
+		// twilight-user JSON 里是 authToken（无连字符），不得误截
+		{
+			"twilight-user={%22authToken%22:%22aaabbb%22};auth-token=cccddd",
+			"cccddd",
+		},
+		// k=v 形态但没有 auth-token：放弃登录态
+		{"server_session_id=abc;experiment_overrides={}", ""},
+	}
+
+	for _, c := range cases {
+		builtinCookies = &BuiltinCookieConfig{Twitch: c.in}
+		if got := twitchAuthToken(); got != c.want {
+			t.Fatalf("twitchAuthToken(%q)=%q want %q", c.in, got, c.want)
+		}
+	}
+	builtinCookies = nil
+}

@@ -122,8 +122,22 @@ type twitchPlaybackToken struct {
 	} `json:"errors"`
 }
 
-// twitchGQLPost 发送 GQL 请求；配置了 OAuth Token 时附带登录态
+// twitchGQLPost 发送 GQL 请求；配置了登录态时附带 OAuth Authorization，
+// 登录态失效（401）时自动降级匿名重试，公开频道不因过期 Token 中断监控
 func (t *TwitchBuiltinPlatform) twitchGQLPost(payload interface{}) ([]byte, error) {
+	auth := twitchAuthToken()
+	body, err := t.gqlRequest(payload, auth)
+	if err == nil {
+		return body, nil
+	}
+	if auth != "" && strings.Contains(err.Error(), "GQL HTTP 401") {
+		return t.gqlRequest(payload, "")
+	}
+	return nil, err
+}
+
+// gqlRequest 按给定登录态发送一次 GQL 请求
+func (t *TwitchBuiltinPlatform) gqlRequest(payload interface{}, authToken string) ([]byte, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -136,7 +150,7 @@ func (t *TwitchBuiltinPlatform) twitchGQLPost(payload interface{}) ([]byte, erro
 	req.Header.Set("Client-ID", twitchGQLClientID)
 	req.Header.Set("User-Agent", twitchUserAgent)
 	req.Header.Set("X-Device-Id", twitchDeviceID())
-	if authToken := twitchAuthToken(); authToken != "" {
+	if authToken != "" {
 		req.Header.Set("Authorization", "OAuth "+authToken)
 	}
 
@@ -151,6 +165,9 @@ func (t *TwitchBuiltinPlatform) twitchGQLPost(payload interface{}) ([]byte, erro
 	}
 	if resp.StatusCode == http.StatusForbidden {
 		return nil, errors.New("GQL 请求被拒绝(403)，可能需要更新 OAuth Token")
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, errors.New("GQL HTTP 401（登录态无效或已过期）")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GQL HTTP %d", resp.StatusCode)
@@ -357,14 +374,42 @@ func pickTwitchVariant(variants []twitchVariant, quality string) string {
 
 // ---------------- 鉴权与随机数 ----------------
 
-// twitchAuthToken 读取用户配置的 OAuth Token（mature/受限频道匿名取流会被拒）
+// twitchAuthToken 读取用户配置的 Twitch 凭证，兼容三种填写方式：
+// 整串浏览器 Cookie（自动提取 auth-token 字段）、裸 OAuth Token、
+// 无效内容（返回空串走匿名，公开频道不受影响）。
 func twitchAuthToken() string {
 	builtinCookieMutex.RLock()
-	defer builtinCookieMutex.RUnlock()
+	var raw string
 	if builtinCookies != nil {
-		return builtinCookies.Twitch
+		raw = builtinCookies.Twitch
 	}
-	return ""
+	builtinCookieMutex.RUnlock()
+
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	// 整串 Cookie：提取 auth-token 字段（GQL Authorization 用的就是它）
+	if idx := strings.Index(raw, "auth-token="); idx != -1 {
+		rest := raw[idx+len("auth-token="):]
+		if end := strings.IndexByte(rest, ';'); end != -1 {
+			rest = rest[:end]
+		}
+		rest = strings.TrimSpace(rest)
+		if dec, err := url.QueryUnescape(rest); err == nil {
+			rest = dec
+		}
+		return rest
+	}
+
+	// 仍是 k=v;... 形态但没有 auth-token：无法提取登录态，宁缺毋滥走匿名
+	if strings.Contains(raw, ";") || strings.Contains(raw, "=") {
+		return ""
+	}
+
+	// 裸 OAuth Token
+	return raw
 }
 
 // twitchProxyFromEnv 读取标准代理环境变量（HTTPS_PROXY → ALL_PROXY），

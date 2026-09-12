@@ -2312,8 +2312,8 @@
                             <a-textarea v-model="builtinCookies.bilibili" placeholder="抓取 B 站直播页 Cookie（含 SESSDATA，选填）"
                                         allow-clear auto-size></a-textarea>
                         </a-form-item>
-                        <a-form-item label="Twitch OAuth Token（选填）">
-                            <a-textarea v-model="builtinCookies.twitch" placeholder="Twitch auth-token，用于受限/成人频道取流"
+                        <a-form-item label="Twitch Cookie / OAuth Token（选填）">
+                            <a-textarea v-model="builtinCookies.twitch" placeholder="可粘贴 Twitch 整串 Cookie（自动提取 auth-token），或仅填 auth-token 值；用于受限/成人频道取流"
                                         allow-clear auto-size></a-textarea>
                         </a-form-item>
                         <a-button type="primary" status="warning" long @click="saveBuiltinCookies"
