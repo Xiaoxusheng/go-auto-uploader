@@ -535,11 +535,51 @@
             gap: 2px;
         }
 
+        .builtin-solid-tag.arco-tag {
+            color: #fff !important;
+            border: none !important;
+        }
+
+        .builtin-solid-tag .arco-icon {
+            color: #fff;
+            vertical-align: -0.13em;
+            margin-right: 2px;
+        }
+
         .builtin-card-empty {
             grid-column: 1 / -1;
             padding: 100px 0;
             color: var(--color-text-3, #86909c);
             text-align: center;
+        }
+
+        /* ========== 移动端适配 ========== */
+        @media (max-width: 768px) {
+            .builtin-card-grid {
+                grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+                gap: 10px;
+            }
+
+            .builtin-toolbar {
+                gap: 8px;
+            }
+
+            .builtin-filter-bar {
+                gap: 6px;
+                margin-top: 10px;
+            }
+
+            .builtin-filter-bar .builtin-filter-stats {
+                display: none;
+            }
+
+            .builtin-task-card:hover {
+                transform: none;
+            }
+
+            .builtin-card-body {
+                padding: 6px 8px 8px;
+            }
         }
 
         @supports (-webkit-touch-callout: none) {
@@ -1293,13 +1333,13 @@
 
                             <div class="builtin-filter-spacer"></div>
 
-                            <span style="font-size: 13px; color: var(--color-text-3); white-space: nowrap;">
+                            <span class="builtin-filter-stats" style="font-size: 13px; color: var(--color-text-3); white-space: nowrap;">
                                 总计: <b>{{ builtinTasks.length }}</b>
                             </span>
-                            <span style="font-size: 13px; color: #00B42A; white-space: nowrap;">
+                            <span class="builtin-filter-stats" style="font-size: 13px; color: #00B42A; white-space: nowrap;">
                                 监控: <b>{{ builtinActiveCount }}</b>
                             </span>
-                            <span style="font-size: 13px; color: #F53F3F; white-space: nowrap;">
+                            <span class="builtin-filter-stats" style="font-size: 13px; color: #F53F3F; white-space: nowrap;">
                                 录制: <b>{{ builtinRecordingCount }}</b>
                             </span>
 
@@ -1371,11 +1411,18 @@
                                                   {{ record.anchor_name }}
                                                 </span>
                                                 <div style="display: flex; gap: 4px; margin-top: 4px; flex-wrap: nowrap;">
-                                                    <a-tag :color="builtinPlatformTagColor(record.platform)" size="small"
-                                                           style="margin: 0; flex-shrink: 0;">
+                                                    <a-tag size="small" class="builtin-solid-tag"
+                                                           :style="builtinPlatformTagStyle(record.platform)">
+                                                        <template #icon>
+                                                            <component :is="builtinPlatformIcon(record.platform)"></component>
+                                                        </template>
                                                         {{ builtinPlatformLabel(record.platform) }}
                                                     </a-tag>
-                                                    <a-tag color="arcoblue" size="small" style="margin: 0; flex-shrink: 0;">
+                                                    <a-tag size="small" class="builtin-solid-tag"
+                                                           style="background: #165DFF;">
+                                                        <template #icon>
+                                                            <icon-thunderbolt></icon-thunderbolt>
+                                                        </template>
                                                         {{ builtinQualityText(record.quality) }}
                                                     </a-tag>
                                                 </div>
@@ -1457,10 +1504,14 @@
                                  :key="record.platform + '_' + record.room_id"
                                  class="builtin-task-card">
                                 <div class="builtin-card-cover" @click="openPreview(record)">
-                                    <img v-if="record.avatar" :src="record.avatar" loading="lazy" alt="直播画面">
+                                    <img v-if="record.avatar && !record.coverFail" :src="record.avatar"
+                                         loading="lazy" alt="直播画面" @error="record.coverFail = true">
                                     <div v-else class="builtin-card-cover-empty">无画面</div>
-                                    <a-tag :color="builtinPlatformTagColor(record.platform)" size="small"
-                                           class="builtin-card-badge">
+                                    <a-tag size="small" class="builtin-card-badge builtin-solid-tag"
+                                           :style="builtinPlatformTagStyle(record.platform)">
+                                        <template #icon>
+                                            <component :is="builtinPlatformIcon(record.platform)"></component>
+                                        </template>
                                         {{ builtinPlatformLabel(record.platform) }}
                                     </a-tag>
                                     <span v-if="isBuiltinLiveStatusJS(record.status)" class="builtin-card-live">
@@ -1480,15 +1531,18 @@
                                         {{ record.anchor_name }}
                                     </div>
                                     <div class="builtin-card-tags">
-                                        <a-tag color="arcoblue" size="small" style="margin: 0;">
+                                        <a-tag size="small" class="builtin-solid-tag" style="background: #165DFF;">
+                                            <template #icon>
+                                                <icon-thunderbolt></icon-thunderbolt>
+                                            </template>
                                             {{ builtinQualityText(record.quality) }}
                                         </a-tag>
-                                        <a-tag v-if="isBuiltinLiveStatusJS(record.status)" color="green" size="small"
-                                               style="margin: 0;">
-                                            {{ record.duration }}
-                                        </a-tag>
-                                        <a-tag v-else size="small" style="margin: 0;">
-                                            {{ record.is_paused ? '已暂停' : '未直播' }}
+                                        <a-tag size="small" class="builtin-solid-tag"
+                                               :style="builtinLiveTagStyle(record)">
+                                            <template #icon>
+                                                <component :is="builtinLiveTagIcon(record)"></component>
+                                            </template>
+                                            {{ isBuiltinLiveStatusJS(record.status) ? record.duration : (record.is_paused ? '已暂停' : '未直播') }}
                                         </a-tag>
                                     </div>
                                     <div v-if="isBuiltinLiveStatusJS(record.status)" class="builtin-card-meta">
@@ -2771,10 +2825,20 @@
 
             const builtinPlatformLabel = (p) =>
                 ({Douyin: '抖音', Kuaishou: '快手', Bilibili: 'B站', Twitch: 'Twitch', Soop: 'SOOP'})[p] || p || '未知';
-            const builtinPlatformTagColor = (p) =>
-                ({Douyin: 'red', Kuaishou: 'orange', Bilibili: 'magenta', Twitch: 'purple', Soop: 'green'})[p] || 'gray';
+            const builtinPlatformIcon = (p) =>
+                ({Douyin: 'icon-music', Kuaishou: 'icon-video-camera', Bilibili: 'icon-tv', Twitch: 'icon-play-circle', Soop: 'icon-globe'})[p] || 'icon-tag';
+            const builtinPlatformTagStyle = (p) => {
+                const c = {Douyin: '#FE2C55', Kuaishou: '#FF7D00', Bilibili: '#FB7299', Twitch: '#9146FF', Soop: '#00B42A'}[p] || '#86909C';
+                return {background: c, color: '#fff', border: 'none'};
+            };
             const builtinQualityText = (q) =>
                 ({uhd: '蓝光/超清', hd: '高清', sd: '标清'})[q] || '默认画质';
+            const builtinLiveTagIcon = (t) =>
+                isBuiltinLiveStatusJS(t.status) ? 'icon-play-circle-fill' : 'icon-pause-circle';
+            const builtinLiveTagStyle = (t) => {
+                const c = isBuiltinLiveStatusJS(t.status) ? '#00B42A' : (t.is_paused ? '#FF7D00' : '#4E5969');
+                return {background: c, color: '#fff', border: 'none'};
+            };
 
             const sortedBuiltinTasks = computed(() => {
                 try {
@@ -4183,7 +4247,8 @@
                 streamerSearchQuery, streamerSearchRef, filteredStreamers, trafficMetrics, statsData,
                 calculateRankPercent, builtinSearchQuery, showBuiltinSettingsModal, showBuiltinBatchModal,
                 builtinViewMode, builtinStatusFilter, builtinPlatformFilter, isBuiltinLiveStatusJS,
-                builtinPlatformLabel, builtinPlatformTagColor, builtinQualityText,
+                builtinPlatformLabel, builtinPlatformIcon, builtinPlatformTagStyle,
+                builtinQualityText, builtinLiveTagIcon, builtinLiveTagStyle,
                 builtinCurrentPage, builtinPageSize, sortedBuiltinTasks, paginatedBuiltinTasks, builtinForm,
                 builtinBatchForm, builtinSettings, builtinCookies, builtinTasks, builtinActiveCount,
                 builtinRecordingCount, isAllBuiltinActive, builtinAdding, builtinBatchAdding, builtinSaving,
