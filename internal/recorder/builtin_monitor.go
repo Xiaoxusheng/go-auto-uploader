@@ -103,9 +103,13 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 						case <-t.C:
 						}
 					} else {
-						// 断流后退避：避免 CDN 抖动时 15s 紧循环重拉把 CPU 打满
+						// 断流后退避：避免 CDN 抖动时 15s 紧循环重拉把 CPU 打满。
+						// Twitch 广告插入/CDN 轮换会频繁触发流 EOF，用短冷却快速重连减少内容丢失
 						backoff := 30 * time.Second
-						log.Printf("⏳ [断流等待] %s %s 进入30秒冷却...", platformName, name)
+						if platformName == "Twitch" {
+							backoff = 8 * time.Second
+						}
+						log.Printf("⏳ [断流等待] %s %s 进入%d秒冷却...", platformName, name, int(backoff.Seconds()))
 						updateBuiltinStatus(platformName, roomID, name, avatar, q, "断流缓冲中")
 
 						t := time.NewTimer(backoff)

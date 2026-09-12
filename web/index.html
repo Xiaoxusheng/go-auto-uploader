@@ -544,6 +544,19 @@
             margin-right: 2px;
         }
 
+        /* 列表小号标签：浅底彩字 + 缩小字号 */
+        .builtin-sm-tag.arco-tag {
+            font-size: 11px;
+            line-height: 16px;
+            padding: 0 6px;
+        }
+
+        .builtin-sm-tag .arco-icon {
+            font-size: 11px;
+            vertical-align: -0.12em;
+            margin-right: 2px;
+        }
+
         .builtin-card-empty {
             grid-column: 1 / -1;
             padding: 100px 0;
@@ -1550,15 +1563,13 @@
                                                   {{ record.anchor_name }}
                                                 </span>
                                                 <div style="display: flex; gap: 4px; margin-top: 4px; flex-wrap: nowrap;">
-                                                    <a-tag size="small" class="builtin-solid-tag"
-                                                           :style="builtinPlatformTagStyle(record.platform)">
+                                                    <a-tag color="red" size="small" class="builtin-sm-tag">
                                                         <template #icon>
                                                             <component :is="builtinPlatformIcon(record.platform)"></component>
                                                         </template>
                                                         {{ builtinPlatformLabel(record.platform) }}
                                                     </a-tag>
-                                                    <a-tag size="small" class="builtin-solid-tag"
-                                                           style="background: #165DFF;">
+                                                    <a-tag color="arcoblue" size="small" class="builtin-sm-tag">
                                                         <template #icon>
                                                             <icon-thunderbolt></icon-thunderbolt>
                                                         </template>
@@ -1670,14 +1681,14 @@
                                         {{ record.anchor_name }}
                                     </div>
                                     <div class="builtin-card-tags">
-                                        <a-tag size="small" class="builtin-solid-tag" style="background: #165DFF;">
+                                        <a-tag color="arcoblue" size="small" class="builtin-sm-tag">
                                             <template #icon>
                                                 <icon-thunderbolt></icon-thunderbolt>
                                             </template>
                                             {{ builtinQualityText(record.quality) }}
                                         </a-tag>
-                                        <a-tag size="small" class="builtin-solid-tag"
-                                               :style="builtinLiveTagStyle(record)">
+                                        <a-tag size="small" class="builtin-sm-tag"
+                                               :color="builtinLiveTagColor(record)">
                                             <template #icon>
                                                 <component :is="builtinLiveTagIcon(record)"></component>
                                             </template>
@@ -2966,18 +2977,20 @@
                 ({Douyin: '抖音', Kuaishou: '快手', Bilibili: 'B站', Twitch: 'Twitch', Soop: 'SOOP'})[p] || p || '未知';
             const builtinPlatformIcon = (p) =>
                 ({Douyin: 'icon-music', Kuaishou: 'icon-video-camera', Bilibili: 'icon-tv', Twitch: 'icon-play-circle', Soop: 'icon-globe'})[p] || 'icon-tag';
+            // 浅色 tag（列表用）：Arco 预设色，浅底彩字
+            const builtinPlatformTagColor = (p) =>
+                ({Douyin: 'red', Kuaishou: 'orange', Bilibili: 'magenta', Twitch: 'purple', Soop: 'green'})[p] || 'gray';
+            // 实心样式（封面角标用）：图片上保证可读
             const builtinPlatformTagStyle = (p) => {
                 const c = {Douyin: '#FE2C55', Kuaishou: '#FF7D00', Bilibili: '#FB7299', Twitch: '#9146FF', Soop: '#00B42A'}[p] || '#86909C';
                 return {background: c, color: '#fff', border: 'none'};
             };
             const builtinQualityText = (q) =>
                 ({uhd: '蓝光/超清', hd: '高清', sd: '标清'})[q] || '默认画质';
+            const builtinLiveTagColor = (t) =>
+                isBuiltinLiveStatusJS(t.status) ? 'green' : (t.is_paused ? 'orange' : '');
             const builtinLiveTagIcon = (t) =>
                 isBuiltinLiveStatusJS(t.status) ? 'icon-play-circle-fill' : 'icon-pause-circle';
-            const builtinLiveTagStyle = (t) => {
-                const c = isBuiltinLiveStatusJS(t.status) ? '#00B42A' : (t.is_paused ? '#FF7D00' : '#4E5969');
-                return {background: c, color: '#fff', border: 'none'};
-            };
 
             const sortedBuiltinTasks = computed(() => {
                 try {
@@ -4387,8 +4400,8 @@
                 streamerSearchQuery, streamerSearchRef, filteredStreamers, trafficMetrics, statsData,
                 calculateRankPercent, builtinSearchQuery, showBuiltinSettingsModal, showBuiltinBatchModal,
                 builtinViewMode, builtinStatusFilter, builtinPlatformFilter, isBuiltinLiveStatusJS,
-                builtinPlatformLabel, builtinPlatformIcon, builtinPlatformTagStyle,
-                builtinQualityText, builtinLiveTagIcon, builtinLiveTagStyle,
+                builtinPlatformLabel, builtinPlatformIcon, builtinPlatformTagStyle, builtinPlatformTagColor,
+                builtinQualityText, builtinLiveTagColor, builtinLiveTagIcon,
                 builtinCurrentPage, builtinPageSize, sortedBuiltinTasks, paginatedBuiltinTasks, builtinForm,
                 builtinBatchForm, builtinSettings, builtinCookies, builtinTasks, builtinActiveCount,
                 builtinRecordingCount, builtinPausedCount, isAllBuiltinActive, builtinAdding, builtinBatchAdding, builtinSaving,
