@@ -225,6 +225,10 @@ func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 		f := getBuiltinTaskFlags(task.Platform, task.RoomID)
 		task.Record = f.Record
 		task.Screenshot = f.Screenshot
+		task.ShotInterval = f.ShotInterval
+		task.Watermark = f.Watermark
+		task.QualityOverride = f.Quality
+		task.MaxDuration = f.MaxDuration
 		safeName := sanitizeBuiltinFileName(task.AnchorName)
 		if safeName == "" {
 			safeName = task.RoomID

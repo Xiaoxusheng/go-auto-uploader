@@ -156,9 +156,9 @@ func UpdateStatus(platform, roomID, anchorName, avatar, quality, statusMsg strin
 	updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMsg)
 }
 
-// ExtractCoverFromLocalFile 抽帧导出。
+// ExtractCoverFromLocalFile 抽帧导出（水印跟随全局开关）。
 func ExtractCoverFromLocalFile(dir, prefix, coverPath, anchorName string) bool {
-	return extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName)
+	return extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName, Config().WatermarkEnable)
 }
 
 // ProxyImage 封面反代。

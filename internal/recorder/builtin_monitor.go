@@ -24,6 +24,9 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 
 		rand.NewSource(time.Now().UnixNano())
 
+		// 单场录满时长上限标记：录满后本场不再续录，主播下播（探测明确离线）后自动复位
+		cappedThisLive := false
+
 		for {
 			state, _ := builtinTaskStates.Load(key)
 
@@ -44,8 +47,14 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 			builtinCancels.Store(key, cancel)
 
 			cfgSnap := Config()
-			q := cfgSnap.Quality
 			st := cfgSnap.SegmentTime
+
+			// 画质取值：单主播覆盖（画质:uhd/hd/sd）优先，否则跟随全局设置
+			taskFlags := getBuiltinTaskFlags(platformName, roomID)
+			q := cfgSnap.Quality
+			if taskFlags.Quality != "" {
+				q = taskFlags.Quality
+			}
 
 			url, name, avatar, err := p.GetStreamURL(roomID, q)
 
@@ -75,52 +84,84 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 				case <-t.C:
 				}
 			} else if url != "" {
-				taskFlags := getBuiltinTaskFlags(platformName, roomID)
-				RecordStream(ctx, url, platformName, roomID, name, avatar, q, st, taskFlags)
-
-				// 配置热重载（如视频水印开关切换）导致的中断：立即按新配置重开，
-				// 不走 30 秒断流退避，也不触发下播通知。
-				if clearConfigRestart(key) {
-					log.Printf("🔄 [配置重载] %s %s 已按新配置立即重启录制", platformName, name)
-					builtinCancels.Delete(key)
-					cancel()
-					continue
+				// 录制中通过 set_flags 改画质/水印会打配置重开标记并取消会话：
+				// 处于「已录满上限」轮询时同样要放行，否则新配置永远不会生效
+				if cappedThisLive && clearConfigRestart(key) {
+					cappedThisLive = false
 				}
 
-				state, _ = builtinTaskStates.Load(key)
-				if state != "deleted" && state != "paused" {
-					// 录屏/截屏全关时仅探测，不进入断流冷却，避免状态横跳
-					if !taskFlags.Record && !taskFlags.Screenshot {
-						sleepDur := Config().CheckInterval
-						if sleepDur < 10 {
-							sleepDur = 10
+				if cappedThisLive {
+					// 本场已录满最长录制时长：流仍在线时不续录，按探测间隔轮询直至下播
+					updateBuiltinStatus(platformName, roomID, name, avatar, q, "已录满时长上限")
+					sleepDur := Config().CheckInterval
+					if sleepDur < 10 {
+						sleepDur = 10
+					}
+					t := time.NewTimer(time.Duration(sleepDur) * time.Second)
+					select {
+					case <-ctx.Done():
+						t.Stop()
+						// 取消可能伴随配置重开标记而来（如录满轮询中改画质）：
+						// 必须赶在循环尾部就地清理之前消费，否则新画质永远不生效
+						if clearConfigRestart(key) {
+							cappedThisLive = false
 						}
-						updateBuiltinStatus(platformName, roomID, name, avatar, q, "监控中")
-						t := time.NewTimer(time.Duration(sleepDur) * time.Second)
-						select {
-						case <-ctx.Done():
-							t.Stop()
-						case <-t.C:
-						}
-					} else {
-						// 断流后退避：避免 CDN 抖动时 15s 紧循环重拉把 CPU 打满。
-						// Twitch 广告插入/CDN 轮换会频繁触发流 EOF，用短冷却快速重连减少内容丢失
-						backoff := 30 * time.Second
-						if platformName == "Twitch" {
-							backoff = 8 * time.Second
-						}
-						log.Printf("⏳ [断流等待] %s %s 进入%d秒冷却...", platformName, name, int(backoff.Seconds()))
-						updateBuiltinStatus(platformName, roomID, name, avatar, q, "断流缓冲中")
+					case <-t.C:
+					}
+				} else {
+					hitMax := RecordStream(ctx, url, platformName, roomID, name, avatar, q, st, taskFlags)
+					if hitMax {
+						cappedThisLive = true
+						log.Printf("⏹️ [时长上限] %s %s 已录满单场上限（%d 分钟），本场停止续录，主播下播后自动恢复", platformName, name, taskFlags.MaxDuration)
+					}
 
-						t := time.NewTimer(backoff)
-						select {
-						case <-ctx.Done():
-							t.Stop()
-						case <-t.C:
+					// 配置热重载（如视频水印开关切换）导致的中断：立即按新配置重开，
+					// 不走 30 秒断流退避，也不触发下播通知。
+					if clearConfigRestart(key) {
+						log.Printf("🔄 [配置重载] %s %s 已按新配置立即重启录制", platformName, name)
+						builtinCancels.Delete(key)
+						cancel()
+						continue
+					}
+
+					state, _ = builtinTaskStates.Load(key)
+					if state != "deleted" && state != "paused" {
+						// 录屏/截屏全关时仅探测，不进入断流冷却，避免状态横跳
+						if !taskFlags.Record && !taskFlags.Screenshot {
+							sleepDur := Config().CheckInterval
+							if sleepDur < 10 {
+								sleepDur = 10
+							}
+							updateBuiltinStatus(platformName, roomID, name, avatar, q, "监控中")
+							t := time.NewTimer(time.Duration(sleepDur) * time.Second)
+							select {
+							case <-ctx.Done():
+								t.Stop()
+							case <-t.C:
+							}
+						} else {
+							// 断流后退避：避免 CDN 抖动时 15s 紧循环重拉把 CPU 打满。
+							// Twitch 广告插入/CDN 轮换会频繁触发流 EOF，用短冷却快速重连减少内容丢失
+							backoff := 30 * time.Second
+							if platformName == "Twitch" {
+								backoff = 8 * time.Second
+							}
+							log.Printf("⏳ [断流等待] %s %s 进入%d秒冷却...", platformName, name, int(backoff.Seconds()))
+							updateBuiltinStatus(platformName, roomID, name, avatar, q, "断流缓冲中")
+
+							t := time.NewTimer(backoff)
+							select {
+							case <-ctx.Done():
+								t.Stop()
+							case <-t.C:
+							}
 						}
 					}
 				}
 			} else {
+				// 探测明确离线（未开播/已下播）：解除本场录满标记，下次开播恢复正常录制
+				cappedThisLive = false
+
 				if name != "" {
 					updateBuiltinStatus(platformName, roomID, name, avatar, q, "监控中")
 				}

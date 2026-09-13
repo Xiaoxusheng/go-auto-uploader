@@ -63,6 +63,7 @@ type BuiltinSettings struct {
 	Quality              string `json:"quality"`
 	SegmentTime          int    `json:"segment_time"`
 	CheckInterval        int    `json:"check_interval"`
+	ScreenshotInterval   int    `json:"screenshot_interval"` // 定期截图间隔（秒），0=默认20
 	SavePath             string `json:"save_path"`
 	WatermarkEnable      bool   `json:"watermark_enable"`       // 截图水印
 	VideoWatermarkEnable bool   `json:"video_watermark_enable"` // 视频烧录水印（需重编码）
@@ -195,6 +196,9 @@ func (b *BuiltinSettings) ApplyDefaults() {
 	}
 	if b.CheckInterval == 0 {
 		b.CheckInterval = 30
+	}
+	if b.ScreenshotInterval <= 0 {
+		b.ScreenshotInterval = 20
 	}
 	if b.SavePath == "" {
 		b.SavePath = "./downloads"

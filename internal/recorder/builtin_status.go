@@ -103,17 +103,21 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 	// 整体覆盖指针，不存在内部并发修改的脏数据竞争问题
 	taskFlags := getBuiltinTaskFlags(platform, roomID)
 	builtinStatusMap.Store(key, &BuiltinTaskStatus{
-		Platform:   platform,
-		RoomID:     roomID,
-		AnchorName: anchorName,
-		Avatar:     avatar,
-		Quality:    quality,
-		Status:     statusMsg,
-		UpdateTime: time.Now().Format("2006-01-02 15:04:05"),
-		IsPaused:   isPaused,
-		Record:     taskFlags.Record,
-		Screenshot: taskFlags.Screenshot,
-		startTime:  sTime,
+		Platform:        platform,
+		RoomID:          roomID,
+		AnchorName:      anchorName,
+		Avatar:          avatar,
+		Quality:         quality,
+		Status:          statusMsg,
+		UpdateTime:      time.Now().Format("2006-01-02 15:04:05"),
+		IsPaused:        isPaused,
+		Record:          taskFlags.Record,
+		Screenshot:      taskFlags.Screenshot,
+		ShotInterval:    taskFlags.ShotInterval,
+		Watermark:       taskFlags.Watermark,
+		QualityOverride: taskFlags.Quality,
+		MaxDuration:     taskFlags.MaxDuration,
+		startTime:       sTime,
 	})
 
 	triggerBuiltinBroadcast()

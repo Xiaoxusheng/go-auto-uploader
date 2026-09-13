@@ -77,6 +77,14 @@ type BuiltinTaskStatus struct {
 	Duration   string `json:"duration"`
 	Record     bool   `json:"record"`
 	Screenshot bool   `json:"screenshot"`
+	// ShotInterval 单主播专属截图间隔（秒）；0 表示跟随全局设置
+	ShotInterval int `json:"shot_interval"`
+	// Watermark 单主播水印三态：0=跟随全局，1=强制开，2=强制关
+	Watermark int `json:"watermark"`
+	// QualityOverride 单主播画质覆盖："" = 跟随全局（uhd/hd/sd）
+	QualityOverride string `json:"quality_override"`
+	// MaxDuration 单主播单场最长录制时长（分钟）；0 = 不限制
+	MaxDuration int `json:"max_duration"`
 
 	startTime time.Time `json:"-"`
 }

@@ -1,5 +1,17 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
 
+### [v2.5.3] - 2026-09-13 (Per-Task Quality & Duration & Screenshot Clarity)
+#### 🌟 核心特性 (New Features)
+* **单主播画质覆盖 (Per-Task Quality Override)**：每个直播间的任务详情抽屉新增「录制画质」选择（跟随全局 / 原画蓝光 / 高清 / 标清），名单行支持 `画质:uhd|hd|sd` 后缀并持久化；监控循环按单主播覆盖值拉流取档，变更后录制中的会话自动按新画质重开（不误报下播）。
+* **单主播最长录制时长 (Per-Task Max Duration)**：任务详情抽屉新增「最长录制时长（分钟）」，录满后向 ffmpeg 发送优雅收尾指令并安全落盘，本场直播不再续录，主播下播后自动恢复常规监控；录制中修改即时热生效（调小立即收尾、调大/清零立即解除），名单行支持 `录制时长:分钟` 后缀；前端新增「已录满上限」状态展示。
+* **单主播配置全量落盘兼容**：画质与时长覆盖同录屏/截屏/截图间隔/水印一样写回 `builtin_urls.txt`，重启与热重载均不丢失。
+
+#### 📸 截图清晰度优化 (Screenshot Clarity)
+* **抽帧窗口扩容**：旁路截图的 TS 尾部读取窗口由 5MB 提升至 12MB，覆盖 10Mbps+ 原画流约 1~2 个 GOP，确保尾部必有干净 I 帧可抽，高码率原画流不再因找不到 I 帧而退化为糊帧。
+* **关键帧重试防花屏**：抽帧兜底路径改为先用 `-skip_frame nokey` 仅解码关键帧出图，避免旧逻辑直接从 GOP 中段起解造成花屏/糊块；仍失败才退回首帧兜底。
+* **烧录水印画质提升**：视频水印重编码 CRF 由 26 提升至 23，截图与录像不再因过度量化同步发糊（仍保持 ultrafast + 双线程的实时性约束）。
+
+---
 ### [v2.5.2] - 2026-09-12 (Bilibili & Twitch Support)
 #### 🌟 核心特性 (New Features)
 * **新增 B 站直播录制 (Bilibili Recorder)**：接入 `xlive getRoomPlayInfo v2` 接口，自动拼装 FLV 直链（host + base_url + extra），按 `accept_qn` 就近匹配画质档位；主播名与头像走 `live_user Master/info`，头像经内置图片代理回显。支持 `b23.tv` 分享短链自动跳转解析（添加入口 + 监控循环双保险），短号房间自动映射真实房间号。配置 SESSDATA Cookie 可解锁原画等登录档位。
