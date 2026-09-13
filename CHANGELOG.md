@@ -1,5 +1,12 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
 
+### [v2.5.4] - 2026-09-13 (Cookie Health & Recording Window & Stats)
+#### 🌟 核心特性 (New Features)
+* **Cookie 失效检测与主动告警 (Cookie Health Monitor)**：B 站（nav 接口 isLogin）与 Twitch（OAuth validate）每 30 分钟权威探活；全平台（含抖音/快手/Soop）基于监控解析结果的「连续 12 次平台级报错」被动检测，疑似失效即经微信/TG 推送「Cookie告警」，恢复自动通知。健康状态经 `/builtin_recorder/cookies/health` 下发，Cookie 面板徽标显示 正常/疑似失效/已失效（标红），探活网络失败不覆盖已有结论，杜绝误报。
+* **按主播定时录制窗口 (Per-Task Recording Window)**：任务详情抽屉新增「录制时段」（HH:MM-HH:MM，支持跨午夜如 20:00-02:00，按服务器本地时间），名单行 `时段:` 后缀并持久化。窗口外只探测不调用平台接口；录制中途跨出窗口优雅收尾（状态「非录制时段」），窗口再次打开后自动续录；修改即时热生效，无需重开会话。
+* **录制统计 (Recording Stats)**：新增 `/builtin_recorder/stats` 接口按「主播/日期」目录聚合累计体积、文件数与近 14 天趋势（截图归档不计入，60 秒内存缓存防 IO 拖垮）；控制台录制页新增「统计」入口，弹窗内展示总量卡片、每日趋势与主播占用 Top 条形图（纯 CSS 实现，移动端友好）。
+
+---
 ### [v2.5.3] - 2026-09-13 (Per-Task Quality & Duration & Screenshot Clarity)
 #### 🌟 核心特性 (New Features)
 * **单主播画质覆盖 (Per-Task Quality Override)**：每个直播间的任务详情抽屉新增「录制画质」选择（跟随全局 / 原画蓝光 / 高清 / 标清），名单行支持 `画质:uhd|hd|sd` 后缀并持久化；监控循环按单主播覆盖值拉流取档，变更后录制中的会话自动按新画质重开（不误报下播）。

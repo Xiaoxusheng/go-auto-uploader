@@ -198,15 +198,20 @@ func InitBuiltinRecorder(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/builtin_recorder/proxy_image", apiProxyImage)
 	mux.HandleFunc("/api/v1/builtin_recorder/config", apiRecorderConfig)
 	mux.HandleFunc("/api/v1/builtin_recorder/cookies", apiRecorderCookies)
+	mux.HandleFunc("/api/v1/builtin_recorder/cookies/health", apiCookieHealth)
 	mux.HandleFunc("/api/v1/builtin_recorder/add", apiRecorderAdd)
 	mux.HandleFunc("/api/v1/builtin_recorder/control", apiRecorderControl)
 	mux.HandleFunc("/api/v1/builtin_recorder/control_all", apiRecorderControlAll)
+	mux.HandleFunc("/api/v1/builtin_recorder/stats", apiRecorderStats)
 
 	log.Println("[BUILTIN] 🎥 内置轻量录制引擎已成功挂载！")
 
 	// ✨ 启动广播防抖控制流：必须放在配置加载完成之后，
 	// 防抖协程会调用 GetBuiltinRecorderTasks 读取 builtinConfig，提前启动会在初始化窗口期踩空指针
 	startBuiltinBroadcastDebouncer()
+
+	// Cookie 健康巡检：B 站/Twitch 权威探活 + 全平台连续错误被动检测，异常经通知钩子告警
+	go builtinCookieHealthLoop()
 
 	go builtinHotReloadLoop()
 }
@@ -229,6 +234,7 @@ func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 		task.Watermark = f.Watermark
 		task.QualityOverride = f.Quality
 		task.MaxDuration = f.MaxDuration
+		task.Window = f.Window
 		safeName := sanitizeBuiltinFileName(task.AnchorName)
 		if safeName == "" {
 			safeName = task.RoomID

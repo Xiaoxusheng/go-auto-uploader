@@ -373,7 +373,10 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 	modeDesc := fmt.Sprintf("录屏=%v 截屏=%v", flags.Record, flags.Screenshot)
 	maxDesc := ""
 	if flags.MaxDuration > 0 {
-		maxDesc = fmt.Sprintf(" | 最长录制: %d 分钟", flags.MaxDuration)
+		maxDesc += fmt.Sprintf(" | 最长录制: %d 分钟", flags.MaxDuration)
+	}
+	if w := strings.TrimSpace(flags.Window); w != "" {
+		maxDesc += fmt.Sprintf(" | 时段: %s", w)
 	}
 	log.Printf("\n🟢 [开始录制] 平台: %s | 主播: %s | 画质: %s | %s%s\n   📂 TS视频存至: %s", platformName, anchorName, formatBuiltinQualityName(quality), modeDesc, maxDesc, outPath)
 	if flags.Screenshot {
@@ -479,11 +482,12 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 		done <- cmd.Wait()
 	}()
 
-	// 最长录制时长巡检：每 5 秒重读该主播最新 flags，
-	// 时长上限中途修改也能热生效（调小立即收尾，调大/清零立即解除）
+	// 最长录制时长/时段窗口巡检：每 5 秒重读该主播最新 flags，
+	// 时长上限与时段窗口中途修改都能热生效（调小立即收尾，调大/清零立即解除）
 	maxTicker := time.NewTicker(5 * time.Second)
 	defer maxTicker.Stop()
 	maxStopSent := false
+	windowStopSent := false
 
 	// 核心生命周期管控模型（hitMax 为命名返回值：录满主动收尾时通知监控循环，本场不再续录）
 selectLoop:
@@ -517,10 +521,25 @@ selectLoop:
 			}
 			break selectLoop
 		case <-maxTicker.C:
-			if maxStopSent {
+			if maxStopSent || windowStopSent {
 				continue
 			}
 			curFlags := getBuiltinTaskFlags(platformName, roomID)
+			// 定时窗口：录制中途跨出时段则优雅收尾；窗口重开后由监控循环自动续录
+			if !inRecordingWindow(curFlags.Window, time.Now()) {
+				windowStopSent = true
+				log.Printf("\n⏰ [时段结束] %s | %s | 已超出录制时段 %s，正在安全收尾...\n", platformName, anchorName, strings.TrimSpace(curFlags.Window))
+				if stdin != nil {
+					io.WriteString(stdin, "q\n")
+					stdin.Close()
+				}
+				time.AfterFunc(10*time.Second, func() {
+					if cmd.Process != nil {
+						_ = cmd.Process.Kill()
+					}
+				})
+				continue
+			}
 			if curFlags.MaxDuration <= 0 {
 				continue
 			}

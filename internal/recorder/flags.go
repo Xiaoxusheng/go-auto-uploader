@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // TaskFlags 单主播「录屏 / 截屏」独立开关与截图间隔、水印、画质、时长覆盖。
@@ -15,6 +16,8 @@ import (
 // Quality 为该主播专属画质（uhd/hd/sd）；空串表示跟随全局设置。
 // MaxDuration 为该主播单场直播的最长录制时长（分钟）；0 表示不限制，
 // 录满后自动停止且本场不续录，主播下播后自动恢复常规监控。
+// Window 为该主播的录制时段（"HH:MM-HH:MM"，结束允许 24:00，可跨午夜）；空串表示全天可录。
+// 窗口外只探测不拉流；录制中途跨出窗口会优雅收尾，窗口再次打开后自动续录。
 type TaskFlags struct {
 	Record       bool
 	Screenshot   bool
@@ -22,10 +25,70 @@ type TaskFlags struct {
 	Watermark    int
 	Quality      string
 	MaxDuration  int
+	Window       string
 }
 
 // 全局画质档位：与各平台解析器的就近降档逻辑及引擎设置下拉保持一致。
 var builtinQualityCodes = map[string]bool{"uhd": true, "hd": true, "sd": true}
+
+// parseClockMinutes 解析 "HH:MM" 为当日分钟数；结束侧允许 24:00（=1440）。
+func parseClockMinutes(s string) (int, bool) {
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) != 2 {
+		return 0, false
+	}
+	h, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	m, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err1 != nil || err2 != nil || m < 0 || m > 59 {
+		return 0, false
+	}
+	if h == 24 && m == 0 {
+		return 1440, true
+	}
+	if h < 0 || h > 23 {
+		return 0, false
+	}
+	return h*60 + m, true
+}
+
+// parseRecordWindow 解析 "HH:MM-HH:MM" 时段；起止相同视为无效（不设窗口）。
+func parseRecordWindow(w string) (start, end int, ok bool) {
+	parts := strings.SplitN(w, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	s, ok1 := parseClockMinutes(strings.TrimSpace(parts[0]))
+	e, ok2 := parseClockMinutes(strings.TrimSpace(parts[1]))
+	if !ok1 || !ok2 || s == e {
+		return 0, 0, false
+	}
+	return s, e, true
+}
+
+// formatRecordWindow 将分钟区间格式化为 "HH:MM-HH:MM"（1440 → "24:00"）。
+func formatRecordWindow(start, end int) string {
+	clock := func(m int) string { return fmt.Sprintf("%02d:%02d", m/60, m%60) }
+	return clock(start) + "-" + clock(end)
+}
+
+// inRecordingWindow 判定 now 是否落在录制时段内。
+// 窗口为空或格式非法时按「无限制」处理（fail-open，不影响录制）。
+func inRecordingWindow(window string, now time.Time) bool {
+	window = strings.TrimSpace(window)
+	if window == "" {
+		return true
+	}
+	start, end, ok := parseRecordWindow(window)
+	if !ok {
+		return true
+	}
+	cur := now.Hour()*60 + now.Minute()
+	if start < end {
+		return cur >= start && cur < end
+	}
+	// 跨午夜窗口（如 20:00-02:00）
+	return cur >= start || cur < end
+}
 
 // DefaultFlags 缺省双开、间隔与水印跟随全局，兼容旧名单行。
 func DefaultFlags() TaskFlags {
@@ -37,7 +100,7 @@ func IsLiveStatus(s string) bool {
 	return s == "录制中" || s == "截屏中"
 }
 
-// StripFlagSuffixes 从行尾剥离 ,录屏:x / ,截屏:y / ,截图间隔:n / ,水印:x / ,画质:x / ,录制时长:n。
+// StripFlagSuffixes 从行尾剥离 ,录屏:x / ,截屏:y / ,截图间隔:n / ,水印:x / ,画质:x / ,录制时长:n / ,时段:HH:MM-HH:MM。
 func StripFlagSuffixes(line string) string {
 	line = strings.TrimSpace(line)
 	for {
@@ -48,7 +111,8 @@ func StripFlagSuffixes(line string) string {
 		tail := strings.TrimSpace(line[idx+1:])
 		if strings.HasPrefix(tail, "录屏:") || strings.HasPrefix(tail, "截屏:") ||
 			strings.HasPrefix(tail, "截图间隔:") || strings.HasPrefix(tail, "水印:") ||
-			strings.HasPrefix(tail, "画质:") || strings.HasPrefix(tail, "录制时长:") {
+			strings.HasPrefix(tail, "画质:") || strings.HasPrefix(tail, "录制时长:") ||
+			strings.HasPrefix(tail, "时段:") {
 			line = strings.TrimSpace(line[:idx])
 			continue
 		}
@@ -90,6 +154,11 @@ func ParseFlagsFromLine(line string) TaskFlags {
 			v := strings.TrimSpace(strings.TrimPrefix(part, "录制时长:"))
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				flags.MaxDuration = n
+			}
+		} else if strings.HasPrefix(part, "时段:") {
+			v := strings.TrimSpace(strings.TrimPrefix(part, "时段:"))
+			if s, e, ok := parseRecordWindow(v); ok {
+				flags.Window = formatRecordWindow(s, e)
 			}
 		}
 	}
@@ -201,6 +270,10 @@ func RebuildLineWithFlags(trimmedLine string, flags TaskFlags) string {
 	// 单主播最长录制时长仅在显式设置时写回（分钟），0 = 不限制
 	if flags.MaxDuration > 0 {
 		out += fmt.Sprintf(",录制时长:%d", flags.MaxDuration)
+	}
+	// 单主播录制时段仅在显式设置且格式合法时写回（空 = 全天可录）
+	if _, _, ok := parseRecordWindow(strings.TrimSpace(flags.Window)); ok {
+		out += ",时段:" + strings.TrimSpace(flags.Window)
 	}
 	return prefix + out
 }

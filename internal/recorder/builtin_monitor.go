@@ -56,20 +56,42 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 				q = taskFlags.Quality
 			}
 
-			url, name, avatar, err := p.GetStreamURL(roomID, q)
+			// 定时录制窗口：窗口外只探测等待，不调用平台接口、不拉流
+			outsideWindow := !inRecordingWindow(taskFlags.Window, time.Now())
 
-			if name != "" && name != roomID && !strings.Contains(name, "未命名") {
-				if custom, ok := builtinCustomNames.Load(key); !ok || custom.(string) != name {
-					builtinCustomNames.Store(key, name)
-					updateBuiltinNameInTxt(platformName, roomID, name)
-				}
+			var url, name, avatar string
+			var err error
+			if outsideWindow {
+				updateBuiltinStatus(platformName, roomID, "", "", q, "非录制时段")
 			} else {
-				if custom, ok := builtinCustomNames.Load(key); ok && custom.(string) != "" {
-					name = custom.(string)
+				url, name, avatar, err = p.GetStreamURL(roomID, q)
+				// 上报解析结果供 Cookie 健康被动检测：err 计入平台连续错误
+				recordCookieProbeOutcome(platformName, err != nil)
+
+				if name != "" && name != roomID && !strings.Contains(name, "未命名") {
+					if custom, ok := builtinCustomNames.Load(key); !ok || custom.(string) != name {
+						builtinCustomNames.Store(key, name)
+						updateBuiltinNameInTxt(platformName, roomID, name)
+					}
+				} else {
+					if custom, ok := builtinCustomNames.Load(key); ok && custom.(string) != "" {
+						name = custom.(string)
+					}
 				}
 			}
 
-			if err != nil {
+			if outsideWindow {
+				sleepDur := Config().CheckInterval
+				if sleepDur < 10 {
+					sleepDur = 10
+				}
+				t := time.NewTimer(time.Duration(sleepDur) * time.Second)
+				select {
+				case <-ctx.Done():
+					t.Stop()
+				case <-t.C:
+				}
+			} else if err != nil {
 				log.Printf("⚠️ [检测出错] %s %s: %v", platformName, roomID, err)
 				updateBuiltinStatus(platformName, roomID, name, avatar, q, "检测异常等待中")
 

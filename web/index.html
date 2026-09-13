@@ -1918,6 +1918,91 @@
             background: var(--color-fill-3, #e5e6eb);
         }
 
+        .cookie-badge.is-ok {
+            color: #00b42a;
+            background: rgba(0, 180, 42, 0.10);
+        }
+
+        .cookie-badge.is-suspect {
+            color: #ff7d00;
+            background: rgba(255, 125, 0, 0.10);
+        }
+
+        .cookie-badge.is-invalid {
+            color: #f53f3f;
+            background: rgba(245, 63, 63, 0.12);
+        }
+
+        /* 录制统计弹窗：纯 CSS 条形图（主播 Top 与近 14 天趋势） */
+        .rec-stats-summary {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+
+        .rec-stats-cell {
+            flex: 1 1 140px;
+            background: var(--color-fill-2, #f2f3f5);
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+
+        .rec-stats-cell .k {
+            font-size: 11px;
+            color: var(--color-text-3, #86909c);
+        }
+
+        .rec-stats-cell .v {
+            font-size: 17px;
+            font-weight: 600;
+            margin-top: 2px;
+        }
+
+        .rec-sec-title {
+            font-size: 12px;
+            color: var(--color-text-3, #86909c);
+            margin: 14px 0 8px 0;
+        }
+
+        .rec-stat-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+
+        .rec-stat-row .name {
+            flex: 0 0 108px;
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-align: right;
+        }
+
+        .rec-stat-row .bar {
+            flex: 1 1 auto;
+            height: 14px;
+            border-radius: 4px;
+            background: var(--color-fill-2, #f2f3f5);
+            overflow: hidden;
+        }
+
+        .rec-stat-row .bar i {
+            display: block;
+            height: 100%;
+            border-radius: 4px;
+            background: linear-gradient(90deg, #165DFF, #4080FF);
+        }
+
+        .rec-stat-row .val {
+            flex: 0 0 76px;
+            font-size: 11px;
+            color: var(--color-text-2, #4e5969);
+            font-variant-numeric: tabular-nums;
+        }
+
         .cookie-card .arco-textarea {
             font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace;
             font-size: 12px;
@@ -3355,6 +3440,12 @@
                                     </template>
                                     批量添加
                                 </a-button>
+                                <a-button size="medium" @click="openBuiltinStatsModal">
+                                    <template #icon>
+                                        <icon-bar-chart></icon-bar-chart>
+                                    </template>
+                                    统计
+                                </a-button>
                                 <a-button size="medium" @click="openBuiltinSettingsModal">
                                     <template #icon>
                                         <icon-settings></icon-settings>
@@ -3923,6 +4014,17 @@
                                         </a-tooltip>
                                         <a-button size="mini" type="primary" :loading="maxDurationSaving"
                                                   @click="saveBuiltinMaxDuration">保存</a-button>
+                                    </span>
+                                </div>
+                                <div class="rec-drawer-row">
+                                    <span class="rec-drawer-label">录制时段</span>
+                                    <span style="display: flex; align-items: center; gap: 6px;">
+                                        <a-tooltip content="该主播的定时录制窗口，格式 HH:MM-HH:MM（如 20:00-24:00，可跨午夜如 20:00-02:00），按服务器本地时间判定；窗口外只探测不录制。清空表示全天可录，修改即时生效">
+                                            <a-input v-model="windowEdit" size="mini" placeholder="全天可录"
+                                                     style="width: 110px;" allow-clear></a-input>
+                                        </a-tooltip>
+                                        <a-button size="mini" type="primary" :loading="windowSaving"
+                                                  @click="saveBuiltinWindow">保存</a-button>
                                     </span>
                                 </div>
                                 <div class="rec-drawer-row">
@@ -4819,16 +4921,14 @@
                 <a-tab-pane key="2" title="内置平台 Cookie">
                     <div class="cookie-tip">
                         <icon-info-circle></icon-info-circle>
-                        <span>若内置引擎一直显示"等待中"或报错，请在此更新对应平台的 Cookie 以解除风控；Cookie 仅保存在服务器本机。</span>
+                        <span>若内置引擎一直显示"等待中"或报错，请在此更新对应平台的 Cookie 以解除风控；Cookie 仅保存在服务器本机。引擎会定期探活校验，失效的平台会标红提醒。</span>
                     </div>
                     <div v-for="cp in cookiePlatforms" :key="cp.key" class="cookie-card">
                         <div class="cookie-card-head">
                             <span class="cookie-card-name">
                                 <i class="cookie-card-dot" :style="{ background: cp.color }"></i>
                                 {{ cp.name }}
-                                <span class="cookie-badge" :class="builtinCookies[cp.key] ? 'is-set' : 'is-empty'">
-                                    {{ builtinCookies[cp.key] ? '已配置' : '未配置' }}
-                                </span>
+                                <span class="cookie-badge" :class="cookieBadge(cp.key).cls">{{ cookieBadge(cp.key).text }}</span>
                             </span>
                             <a-button v-if="builtinCookies[cp.key]" size="mini" type="text" status="danger"
                                       @click="builtinCookies[cp.key] = ''">清空
@@ -4842,6 +4942,50 @@
                     </a-button>
                 </a-tab-pane>
             </a-tabs>
+        </a-modal>
+
+        <a-modal v-model:visible="showBuiltinStatsModal" title="📊 录制统计" :footer="false" width="640px">
+            <template v-if="builtinStats">
+                <div class="rec-stats-summary">
+                    <div class="rec-stats-cell">
+                        <div class="k">累计录制体积</div>
+                        <div class="v">{{ builtinStats.total_size }}</div>
+                    </div>
+                    <div class="rec-stats-cell">
+                        <div class="k">录像文件数</div>
+                        <div class="v">{{ builtinStats.total_files }}</div>
+                    </div>
+                    <div class="rec-stats-cell">
+                        <div class="k">主播数</div>
+                        <div class="v">{{ (builtinStats.anchors || []).length }}</div>
+                    </div>
+                </div>
+
+                <div class="rec-sec-title">近 14 天录制趋势</div>
+                <template v-if="(builtinStats.daily || []).length">
+                    <div v-for="d in builtinStats.daily" :key="d.date" class="rec-stat-row">
+                        <span class="name">{{ d.date.slice(5) }}</span>
+                        <span class="bar"><i :style="{ width: statsBarPct(d.bytes, statsMaxDaily) + '%' }"></i></span>
+                        <span class="val">{{ fmtStatSize(d.bytes) }} · {{ d.files }}文件</span>
+                    </div>
+                </template>
+                <div v-else class="rec-drawer-empty">暂无按日记录</div>
+
+                <div class="rec-sec-title">主播占用 Top（最多展示 10 位）</div>
+                <template v-if="(builtinStats.anchors || []).length">
+                    <div v-for="a in builtinStats.anchors.slice(0, 10)" :key="a.anchor" class="rec-stat-row">
+                        <span class="name" :title="a.anchor">{{ a.anchor }}</span>
+                        <span class="bar"><i :style="{ width: statsBarPct(a.size_bytes, statsMaxAnchor) + '%' }"></i></span>
+                        <span class="val">{{ a.size }} · {{ a.files }}文件</span>
+                    </div>
+                </template>
+                <div v-else class="rec-drawer-empty">暂无录制数据</div>
+
+                <div style="margin-top:10px;font-size:11px;color:var(--color-text-4,#c9cdd4);text-align:right;">
+                    数据时间：{{ builtinStats.generated_at }}（服务端缓存 60 秒，截图归档不计入）
+                </div>
+            </template>
+            <a-skeleton v-else :loading="true" :rows="5"></a-skeleton>
         </a-modal>
 
         <a-modal v-model:visible="showBuiltinBatchModal" title="📑 批量添加内置引擎任务" @before-ok="handleBatchAddBuiltin"
@@ -5254,6 +5398,63 @@
             const builtinSearchQuery = ref('');
             const showBuiltinSettingsModal = ref(false);
             const showBuiltinBatchModal = ref(false);
+
+            // Cookie 健康状态：后端 B站/Twitch 权威探活 + 全平台连续错误被动检测，面板内标红提示
+            const cookieHealth = ref({});
+            const fetchCookieHealth = async () => {
+                try {
+                    const res = await api.get('/builtin_recorder/cookies/health');
+                    cookieHealth.value = res.data || {};
+                } catch (e) {
+                }
+            };
+            const builtinCookieHealthBadge = (key) => {
+                if (!builtinCookies.value[key]) return {cls: 'is-empty', text: '未配置'};
+                const p = ({douyin: 'Douyin', kuaishou: 'Kuaishou', soop: 'Soop', bilibili: 'Bilibili', twitch: 'Twitch'})[key];
+                const h = cookieHealth.value[p];
+                if (h && h.state === 'invalid') return {cls: 'is-invalid', text: '已失效'};
+                if (h && h.state === 'suspect') return {cls: 'is-suspect', text: '疑似失效'};
+                if (h && h.state === 'ok') return {cls: 'is-ok', text: '已配置 · 正常'};
+                return {cls: 'is-set', text: '已配置'};
+            };
+
+            // 录制统计弹窗：总量 / 近 14 天趋势 / 主播占用 Top（后端 60 秒缓存聚合）
+            const showBuiltinStatsModal = ref(false);
+            const builtinStats = ref(null);
+            const statsMaxDaily = computed(() => {
+                let max = 1;
+                ((builtinStats.value && builtinStats.value.daily) || []).forEach(d => {
+                    if ((d.bytes || 0) > max) max = d.bytes;
+                });
+                return max;
+            });
+            const statsMaxAnchor = computed(() => {
+                let max = 1;
+                ((builtinStats.value && builtinStats.value.anchors) || []).forEach(a => {
+                    if ((a.size_bytes || 0) > max) max = a.size_bytes;
+                });
+                return max;
+            });
+            const statsBarPct = (v, max) => (v > 0 ? Math.max(2, Math.round(v / max * 100)) : 0);
+            const fmtStatSize = (b) => {
+                if (!b || b <= 0) return '0 B';
+                const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+                let i = 0, n = b;
+                while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+                return n.toFixed(n >= 100 ? 0 : 1) + ' ' + units[i];
+            };
+            const fetchBuiltinStats = async () => {
+                try {
+                    const res = await api.get('/builtin_recorder/stats');
+                    builtinStats.value = res.data || null;
+                } catch (e) {
+                }
+            };
+            const openBuiltinStatsModal = () => {
+                showBuiltinStatsModal.value = true;
+                builtinStats.value = null;
+                fetchBuiltinStats();
+            };
             const builtinCurrentPage = ref(1);
             const builtinForm = ref({platform: 'Douyin', url: ''});
             const builtinBatchForm = ref({platform: 'Douyin', urls: ''});
@@ -5352,6 +5553,8 @@
                         return {key: 'buffer', badge: 'WAIT', label: '断流缓冲中', pulse: true};
                     case '已录满时长上限':
                         return {key: 'buffer', badge: 'FULL', label: '已录满上限', pulse: false};
+                    case '非录制时段':
+                        return {key: 'paused', badge: 'WAIT', label: '非录制时段', pulse: false};
                     case '检测异常等待中':
                         return {key: 'error', badge: 'ERROR', label: '检测异常', pulse: true};
                     case '配置重载中':
@@ -5475,6 +5678,9 @@
             // 单主播最长录制时长编辑态（分钟）：null = 不限制（与后端 0 值语义对应）
             const maxDurationEdit = ref(null);
             const maxDurationSaving = ref(false);
+            // 单主播录制时段编辑态：'' = 全天可录
+            const windowEdit = ref('');
+            const windowSaving = ref(false);
             const openRecDrawer = (record) => {
                 if (!record) return;
                 recDrawer.record = record;
@@ -5483,6 +5689,7 @@
                 watermarkEdit.value = (wm === 1 || wm === 2) ? wm : 0;
                 qualityEdit.value = ['uhd', 'hd', 'sd'].includes(record.quality_override) ? record.quality_override : '';
                 maxDurationEdit.value = Number(record.max_duration) > 0 ? Number(record.max_duration) : null;
+                windowEdit.value = String(record.window || '');
                 recDrawer.visible = true;
                 if (!builtinSettings.value.save_path) {
                     fetchBuiltinConfig();
@@ -5594,6 +5801,37 @@
                     Message.error('录制时长保存失败');
                 } finally {
                     maxDurationSaving.value = false;
+                }
+            };
+
+            /**
+             * 保存当前主播的定时录制时段（'' = 全天可录）。
+             * 窗口由监控循环与录制巡检每轮热读取：窗口外只探测不拉流，
+             * 录制中跨出窗口会优雅收尾，窗口再次打开后自动续录。
+             */
+            const saveBuiltinWindow = async () => {
+                const record = recDrawer.record;
+                if (!record) return;
+                const val = String(windowEdit.value || '').trim();
+                if (val && !/^\d{1,2}:\d{1,2}\s*-\s*\d{1,2}:\d{1,2}$/.test(val)) {
+                    Message.warning('时段格式应为 HH:MM-HH:MM，例如 20:00-24:00');
+                    return;
+                }
+                windowSaving.value = true;
+                try {
+                    await api.post('/builtin_recorder/control', {
+                        action: 'set_flags',
+                        platform: record.platform,
+                        room_id: record.room_id,
+                        window: val.replace(/\s/g, '')
+                    });
+                    record.window = val.replace(/\s/g, '');
+                    windowEdit.value = record.window;
+                    Message.success(record.window ? `该主播录制时段已设为 ${record.window}（服务器本地时间），即时生效` : '该主播已恢复全天可录');
+                } catch (e) {
+                    Message.error('录制时段保存失败');
+                } finally {
+                    windowSaving.value = false;
                 }
             };
 
@@ -5814,6 +6052,7 @@
                     if (res2.data) {
                         builtinCookies.value = res2.data;
                     }
+                    fetchCookieHealth();
                 } catch (e) {
                 }
             };
@@ -6808,11 +7047,12 @@
                                     existing.duration = pTask.duration;
                                     existing.file_size = pTask.file_size;
                                     existing.is_paused = pTask.is_paused;
-                                    // 单主播截图间隔/水印/画质/时长覆盖：后端每次全量快照都带最新值
+                                    // 单主播截图间隔/水印/画质/时长/时段覆盖：后端每次全量快照都带最新值
                                     existing.shot_interval = pTask.shot_interval || 0;
                                     existing.watermark = pTask.watermark || 0;
                                     existing.quality_override = pTask.quality_override || '';
                                     existing.max_duration = pTask.max_duration || 0;
+                                    existing.window = pTask.window || '';
 
                                     // 【核心流量拦截】只有在页面可见且停留在当前 Tab 时，才主动更新 DOM 触发浏览器图片拉取
                                     if (isPageVisible.value && activeTab.value === 'builtin_recorder') {
@@ -7236,6 +7476,10 @@
                 watermarkEdit, watermarkSaving, saveBuiltinWatermark,
                 qualityEdit, qualitySaving, saveBuiltinQuality,
                 maxDurationEdit, maxDurationSaving, saveBuiltinMaxDuration,
+                windowEdit, windowSaving, saveBuiltinWindow,
+                cookieHealth, builtinCookieHealthBadge,
+                showBuiltinStatsModal, builtinStats, openBuiltinStatsModal,
+                statsBarPct, statsMaxDaily, statsMaxAnchor, fmtStatSize,
                 cookiePlatforms,
                 builtinUploadMap, recDrawerUploads, builtinUploadTaskView, hasBuiltinFilters,
                 clearBuiltinFilters, builtinRangeText, pauseOrResumeBuiltin, copyBuiltinLink, confirmDeleteBuiltin,

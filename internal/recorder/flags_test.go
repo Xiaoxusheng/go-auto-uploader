@@ -1,6 +1,9 @@
 package recorder
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestParseFlagsFromLine(t *testing.T) {
 	cases := []struct {
@@ -150,6 +153,74 @@ func TestRebuildQualityAndMaxDurationFlags(t *testing.T) {
 	// 写回结果必须能原样解析回同样的 flags（往返一致）
 	_, _, _, _, _, fl := ParseLine(out3)
 	if fl.Quality != "sd" || fl.MaxDuration != 45 || fl.ShotInterval != 30 || !fl.Record || !fl.Screenshot {
+		t.Fatalf("roundtrip flags=%+v", fl)
+	}
+}
+
+func TestParseWindowFlag(t *testing.T) {
+	cases := []struct {
+		in     string
+		window string
+	}{
+		{"https://live.douyin.com/1,主播:甲", ""},
+		{"https://live.douyin.com/1,时段:20:00-24:00", "20:00-24:00"},
+		{"https://live.douyin.com/1,时段:20:00-02:00", "20:00-02:00"},
+		{"https://live.douyin.com/1,主播:乙,时段:08:30-12:00,录制时长:60", "08:30-12:00"},
+		{"https://live.douyin.com/1,时段:8:0-12:00", "08:00-12:00"}, // 宽松解析并归一化
+		{"https://live.douyin.com/1,时段:25:00-26:00", ""},          // 越界忽略
+		{"https://live.douyin.com/1,时段:abc-def", ""},              // 非法忽略
+		{"https://live.douyin.com/1,时段:10:00-10:00", ""},          // 起止相同视为无效
+		{"https://live.douyin.com/1,时段:10:00", ""},                // 缺结束忽略
+	}
+	for _, c := range cases {
+		_, _, room, _, _, fl := ParseLine(c.in)
+		if fl.Window != c.window {
+			t.Fatalf("%q window=%q, want %q", c.in, fl.Window, c.window)
+		}
+		if room == "" {
+			t.Fatalf("%q empty room", c.in)
+		}
+	}
+}
+
+func TestInRecordingWindow(t *testing.T) {
+	mk := func(h, m int) time.Time { return time.Date(2026, 9, 13, h, m, 0, 0, time.Local) }
+
+	// 空/非法窗口 = 不限制
+	if !inRecordingWindow("", mk(3, 0)) || !inRecordingWindow("abc", mk(3, 0)) {
+		t.Fatal("empty/invalid window must not restrict")
+	}
+	// 普通窗口含头不含尾
+	if !inRecordingWindow("20:00-24:00", mk(20, 0)) || !inRecordingWindow("20:00-24:00", mk(23, 59)) {
+		t.Fatal("in-window start..end-1")
+	}
+	if inRecordingWindow("20:00-24:00", mk(19, 59)) || inRecordingWindow("20:00-24:00", mk(0, 0)) {
+		t.Fatal("out-of-window")
+	}
+	// 跨午夜窗口
+	if !inRecordingWindow("20:00-02:00", mk(21, 0)) || !inRecordingWindow("20:00-02:00", mk(1, 30)) {
+		t.Fatal("overnight in-window")
+	}
+	if inRecordingWindow("20:00-02:00", mk(12, 0)) || inRecordingWindow("20:00-02:00", mk(2, 0)) {
+		t.Fatal("overnight out-of-window")
+	}
+}
+
+func TestRebuildWindowFlag(t *testing.T) {
+	in := "https://live.douyin.com/444,主播:丁,录屏:1,截屏:1"
+	out := RebuildLineWithFlags(in, TaskFlags{Record: true, Screenshot: true, Window: "20:00-24:00"})
+	if out != "https://live.douyin.com/444,主播:丁,录屏:1,截屏:1,时段:20:00-24:00" {
+		t.Fatalf("rebuild window=%q", out)
+	}
+	// 回到全天时旧后缀被剥掉
+	in2 := "#https://live.douyin.com/444,主播:丁,时段:20:00-24:00"
+	out2 := RebuildLineWithFlags(in2, TaskFlags{Record: true, Screenshot: true})
+	if out2 != "#https://live.douyin.com/444,主播:丁,录屏:1,截屏:1" {
+		t.Fatalf("rebuild follow=%q", out2)
+	}
+	// 往返一致
+	_, _, _, _, _, fl := ParseLine(out)
+	if fl.Window != "20:00-24:00" || !fl.Record || !fl.Screenshot {
 		t.Fatalf("roundtrip flags=%+v", fl)
 	}
 }

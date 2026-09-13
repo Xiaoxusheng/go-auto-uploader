@@ -85,6 +85,8 @@ type BuiltinTaskStatus struct {
 	QualityOverride string `json:"quality_override"`
 	// MaxDuration 单主播单场最长录制时长（分钟）；0 = 不限制
 	MaxDuration int `json:"max_duration"`
+	// Window 单主播录制时段（"HH:MM-HH:MM"）；空 = 全天可录
+	Window string `json:"window"`
 
 	startTime time.Time `json:"-"`
 }
