@@ -3,62 +3,81 @@
 
 # 🚀 Go Auto Uploader
 
-**高性能分布式自动文件上传与监控系统**
+**直播自动录制 · 智能切片归档 · 7x24 无人值守一体化系统**
 
-[🌟 项目 GitHub 仓库](https://github.com/Xiaoxusheng/go-auto-uploader) &nbsp; | &nbsp; [📝 查看更新日志 (Changelog)](CHANGELOG.md)
+[🌟 项目 GitHub 仓库](https://github.com/Xiaoxusheng/go-auto-uploader) &nbsp; | &nbsp; [📝 查看更新日志 (Changelog)](CHANGELOG.md) &nbsp; | &nbsp; [📚 更多文档 (docs/)](docs/)
 
 </div>
 
 ## 📖 项目简介
 
-**Go Auto Uploader** 是一款基于 Golang 和 Vue 3 打造的轻量级、高性能自动化文件监控与上传引擎。专为需要 7x24 小时无人值守、将本地大批量文件（如直播录像、监控视频、日志备份等）稳定同步至远端服务器的场景而设计。
+**Go Auto Uploader** 是一款基于 Golang 与 Vue 3 打造的直播录制与云盘归档一体化系统，为主播粉丝、录播组与个人归档玩家设计：**主播一开播就自动录制，切片一录完就自动上传到你的云盘**，全程无人值守。
 
-**🤝 开源生态强强联手**：本项目天生为流媒体录制与云端归档而打造，原生深度对接了 **[ihmily/DouyinLiveRecorder](https://github.com/ihmily/DouyinLiveRecorder)**（知名开源直播录制引擎）与 **[OpenList](https://github.com/OpenListTeam/OpenList)**（开源多云端存储文件管理系统）两大开源巨头。它作为核心的“智能中枢”，完美串联了从“全自动开播录制”到“全自动多云盘归档”的完整工作流闭环。
+- **🎙️ 内置轻量录制引擎**：原生支持 **抖音 / 快手 / B站 / Twitch / SOOP(AfreecaTV)** 五大平台，无需部署任何外部容器，FFmpeg 直拉直播流落盘。
+- **☁️ 无缝对接 OpenList / AList**：录制产物自动推送到阿里云盘、115、OneDrive 等数十种被挂载的存储节点，SHA-256 秒传去重，绝不浪费带宽。
+- **🎛️ 单主播级精细控制**：每个直播间可独立设置录屏/截屏开关、画质、最长录制时长、录制时段、水印、截图间隔，网页点选即生效。
+- **📦 单文件极简部署**：Web 控制台经 `//go:embed` 打进二进制，一个可执行文件 + 一个 FFmpeg 就是全部依赖。
 
-系统不仅拥有强大的底层并发调度和流量控制能力，还内置了一个极具现代感的 **Apple 级毛玻璃 (Glassmorphism)** 响应式 Web 控制台。只需一个编译后的独立二进制文件，即可完成全部部署，无需额外部署 Nginx 或前端环境。
+系统同时兼容外置 **[ihmily/DouyinLiveRecorder](https://github.com/ihmily/DouyinLiveRecorder)** Docker 容器作为录制引擎（双引擎架构），并提供 Apple 风格的响应式 Web 控制台，手机、平板、桌面均可操控。
 
 ## ✨ 核心特性
 
-### 🔗 双引擎与生态深度联动 (Dual-Engine Integration)
+### 🎙️ 内置轻量录制引擎
 
-本项目采用创新的 **“双引擎驱动 (Dual-Engine)”** 架构，既能完美驾驭外部重型生态，又拥有独立的轻量级内建能力：
+* **五平台开箱即用**：抖音（短链自动换算 web_rid）、快手、B站（`b23.tv` 短链解析、SESSDATA 解锁原画）、Twitch（`HTTPS_PROXY` 代理、断流 8 秒快速重连）、SOOP。
+* **单主播精细控制**：任务详情抽屉内直接调整以下参数，全部随名单文件持久化、重启不丢：
 
-* **🎥 完美驾驭外置 DouyinLiveRecorder**:
-  * **容器级可视化守护**：支持在 Web 控制台直接实时探测录制引擎 Docker 容器的运行状态，并提供一键启停、重启、物理终端日志实时拉取功能。
-  * **名单与凭证热穿透**：独创无损 INI 精准覆写算法。在网页端即可随时批量增删主播录制名单 (`URL_config.ini`)，或动态注入多平台 Cookie (`config.ini`)，彻底告别繁琐的 SSH 文本编辑。
-* **🎙️ 内置极速轻量录制引擎 (Built-in Recorder)**:
-  * **开箱即用**：无需部署外部 Docker 容器，系统原生内置对主流直播平台的监听与录制支持（**抖音、快手、B站、Twitch、SOOP/AfreecaTV**），依托轻量级 FFmpeg 进程调度，极大降低系统内存占用。B 站支持 `b23.tv` 分享短链自动解析，Twitch 支持经 `HTTPS_PROXY` 代理访问。
-  * **底层热重载与自动固化**：修改底层物理文件 `urls.txt`，3秒内毫秒级感知并热推送到所有设备的 Web 端；抓取到的主播名称自动固化写入物理文件，重启永不丢失。
-  * **智能中断唤醒**：内置引擎一旦捕获到主播开播，将立刻下发硬件级中断信号，瞬间“踹醒”处于休眠状态的上传扫描调度器，极速切入狂暴上传模式。
-* **☁️ 无缝对接 OpenList (及 AList 生态)**:
-  * **API 直连聚合存储**：全面对接 OpenList 远端服务器 API，将录制好的庞大视频文件稳定、高速地推送到阿里云盘、115网盘、OneDrive 等数十种被挂载的云存储节点。
-  * **动态鉴权与心跳保护**：系统支持配置 OpenList 的远端认证账号密码，自动完成 API 鉴权、Token 获取与定期的强制刷新，保障 7x24 小时跨云传输的绝对稳定。
+  | 能力 | 说明 |
+  | --- | --- |
+  | 录屏 / 截屏开关 | 只录视频、只定时截图、或双开 |
+  | 画质覆盖 | 原画蓝光 / 高清 / 标清，档位不存在时自动就近降档 |
+  | 最长录制时长 | 单场录满自动安全收尾，本场不续录，下播后自动恢复 |
+  | 录制时段 | 仅在指定时间窗内录制（支持跨午夜），窗口外只探测不拉流 |
+  | 水印三态 | 跟随全局 / 强制开 / 强制关，作用于截图与视频烧录 |
+  | 截图间隔 | 主播专属定期截图间隔，热生效不断流 |
+
+* **Cookie 失效检测与告警**：B 站、Twitch 每 30 分钟走官方接口权威探活，全平台基于解析结果的连续报错被动检测；Cookie 失效即刻经微信 / Telegram 推送告警，控制台 Cookie 面板同步标红，杜绝"默默漏录好几天"。
+* **录制统计**：累计录制体积、近 14 天录制趋势、主播占用 Top 10、近 7 天上传流量，一屏总览。
+* **抗抖动设计**：开播/断流防抖缓冲池避免状态横跳，断流指数退避防止 CDN 抖动打满 CPU；配置热重载自动重开会话且不误报下播。
+* **名单热重载**：手工编辑 `builtin_urls.txt`，3 秒内毫秒级感知并同步到所有在线终端；解析到的主播名自动固化回写。
+
+### 🎥 外置 DouyinLiveRecorder（可选双引擎）
+
+* **容器级可视化守护**：Web 控制台实时探测 Docker 容器状态，一键启停、重启、拉取物理终端日志。
+* **名单与凭证热穿透**：无损 INI 精准覆写，网页端直接批量增删录制名单、注入多平台 Cookie，告别 SSH 手改配置。
+
+### ☁️ OpenList / AList 自动归档
+
+* **API 直连多云存储**：对接 OpenList 远端 API，将录像稳定推送至阿里云盘、115、OneDrive 等挂载节点。
+* **SHA-256 秒传去重**：本地指纹库（百万级记录秒级加载）自动跳过远端已有文件；远端"同名冲突"按已上传幂等处理，不堆积失败告警。
+* **智能中断唤醒**：内置引擎捕获开播即刻触发上传扫描器介入，录制-归档链路无缝衔接。
+* **动态鉴权与心跳保护**：自动完成 OpenList Token 获取与定期刷新，保障 7x24 跨云传输稳定。
 
 ### ⚙️ 高性能核心引擎
 
-* **📦 单文件极简部署**：依托 Go 的 `//go:embed` 特性，Web 前端被无缝打包入二进制文件中，开箱即用，极度轻量。
-* **⚡ 智能哈希碰撞与秒传**：内置 SHA-256 文件指纹校验与本地 Hash 缓存机制，自动跳过远端已存在的文件，大幅降低带宽损耗。
-* **🎛️ 流式动态流量控制**：支持**白班/夜间双模式智能限速**。基于底层字节流 (`io.Reader`) 拦截限速，保证主干网络在工作时间的稳定性。
-* **🔥 无宕机热更新**：采用 Channel 信号量打断机制，在 Web 端修改并发数、扫描间隔等核心参数后，系统会自动重载配置并即刻生效，无需重启进程。
+* **流式动态限速**：白班/夜间双模式智能限速，基于 `io.Reader` 字节流拦截，工作时间不抢主干带宽。
+* **无宕机热更新**：Web 端修改并发数、扫描间隔等参数后自动重载即刻生效，无需重启进程。
+* **TS → MP4 无损转码**：切片录制完成后自动封装 MP4，便于回看与二传。
 
-### 🔐 商业级数据安全 (Enterprise-Grade Security)
+### 🔐 商业级数据安全
 
-* **🛡️ 动态 RSA+AES 混合加密**：引入基于 RSA-2048 和 AES-256-GCM 的完美前向保密 (PFS) 动态密钥交换机制。前端每次加载自动换取专属 SessionID 与 AES 临时密钥，对 API 传输载荷进行全链路端到端加密，彻底防止中间人 (MITM) 抓包窃听与重放攻击。
-* **🔌 无感加解密拦截器**：重构前后端网络层与 Axios 拦截器，自动完成 JSON 结构体到 Base64 密文的装箱与拆箱，对上层业务代码实现 100% 零侵入透明兼容。
-* **🎛️ 可视化加密开关**：在前端“上传参数”设置面板中提供 API 加密通信热开关。可随时在明文调试与密文安全模式间无缝动态切换，兼顾极客开发与生产环境的高强度安全需求。
+* **动态 RSA+AES 混合加密**：RSA-2048 密钥协商 + AES-256-GCM 载荷加密的完美前向保密（PFS）通道，Axios 拦截器无感加解密，业务代码零侵入；控制台可在明文调试与密文模式间一键切换。
+* **全站强制鉴权**：所有 API 与 WebSocket 通道必须持有效令牌，256 位高熵随机令牌 + 24 小时 TTL；口令常数时间比对，连续失败 10 次锁定 5 分钟防爆破。
+* **SSRF 防火墙**：图片代理在建连前校验全部解析 IP，环回/内网/链路本地/组播网段一律拒绝，并以校验后 IP 直连杜绝 DNS 重绑定。
+* **弱口令告警**：检测到默认 admin/admin 时启动即打印高危告警，可在 `config.json` 自定义控制台凭据。
 
 ### 💻 现代化 Web 控制台
 
-* **🎨 极客美学 UI**：采用 Arco Design Vue 深度定制，支持跟随系统时间自动切换的**日间 / 暗黑模式 (Dark Mode)**，以及全局平滑毛玻璃渲染引擎。配合严格的防折行保护机制与动态字号自适应缩放引擎，完美适配各种尺寸的屏幕。
-* **📡 WebSocket 实时追踪**：通过全双工 WebSocket 通道，毫秒级同步各个上传工作流的瞬时速度、进度及历史耗时。
-* **📊 动态可视化大屏**：集成 ECharts，实时渲染全站流量趋势、硬盘消耗排行及整体任务分布状态。
-* **💽 全局硬件资源监控**：底层引擎全面接入 `gopsutil` 系统级探针，毫秒级实时计算并下发系统磁盘剩余可用空间（Disk Free）与底层 FFmpeg 录制进程物理内存占用（RSS Memory），彻底告别“盲盒式”录制。
-* **🖥️ Web 终端全量投射**：独创的 `logInterceptor` 机制，将后端标准控制台输出拦截并清洗后，实时投射至前端页面，支持多条件检索与分页查阅，并提供 `.log` 格式一键导出。
+* **Arco Design Vue 深度定制**：日间/暗黑模式自动切换，桌面与移动端双布局，卡片/表格双视图自由切换。
+* **WebSocket 实时追踪**：毫秒级同步上传速度、进度、录制状态、系统探针数据；500ms 聚合广播防抖杜绝高并发推送卡顿。
+* **ECharts 动态大屏**：近 7 日流量趋势、主播硬盘消耗排行、任务分布实时渲染。
+* **实时日志投射**：后端标准输出拦截清洗后实时投射前端，多条件检索、分页查阅、`.log` 一键导出。
+* **硬件资源探针**：磁盘剩余空间与 FFmpeg 进程物理内存（RSS）实时下发，录制不再"盲盒"。
 
-### 🛡️ 自动化与健壮性保障
+### 📧 自动化通知与机器人
 
-* **📧 自动化数据邮件推送**：内置 SMTP 服务，根据设定的周期合并发送精美的 HTML 格式流量统计与成功上传报告。
-* **🔄 优雅的错误恢复**：支持针对特定网络异常导致的任务失败进行一键重试及队列干预。
+* **多通道推送**：微信（Server 酱）、Telegram Bot、SMTP 邮件周期报告，开播/下播/Cookie 告警/录制事件全量可推送。
+* **Telegram Bot 远程操控**：开播即收通知，支持机器人交互查询与控制。
 
 ---
 
@@ -70,7 +89,7 @@
     <tbody>
         <tr>
             <td><img src="img/1.png" alt="登录" width="100%" /></td>
-            <td><img src="img/2.png" alt="主页面" width="100%" /></td> 
+            <td><img src="img/2.png" alt="主页面" width="100%" /></td>
         </tr>
         <tr>
             <td><img src="img/3.png" alt="日志页面" width="100%" /></td>
@@ -89,218 +108,140 @@
 
 ---
 
-## 📡 WebSocket 实时数据协议规范
+## ⌨️ 单主播名单行速查
 
-系统通过单路全双工 WebSocket (`/ws/live`) 向前端实时推送业务数据。所有消息均采用 JSON 格式，结构为 `{ "type": "类型", "payload": 载荷数据 }`。
+内置引擎的录制名单（`builtin_urls.txt`，Web 端「批量添加」与单条添加均可写入）每行一个直播间，行尾可追加逗号分隔的控制后缀：
 
-### 📊 1. 大屏看板与统计数据
-
-**全站流量与排行榜 (`type: "statsTrend"`)**
-驱动近7日流量增长面积图与硬盘消耗 TOP 5 排名。
-```json
-{
-  "type": "statsTrend",
-  "payload": {
-    "rank": [
-      { "name": "KingKing", "size": 3.123 },
-      { "name": "小毛毛芋头", "size": 2.369 }
-    ],
-    "trend": [
-      { "date": "02-23", "size": 0, "count": 0 },
-      { "date": "02-24", "size": 17.458, "count": 66 }
-    ]
-  }
-}
+```
+https://live.douyin.com/12345,主播:某某,画质:uhd,录制时长:240,时段:20:00-24:00
+https://live.bilibili.com/8888,主播:B站主播,截图间隔:30,水印:0
+#https://live.kuaishou.com/666,主播:已暂停的主播,录屏:0,截屏:1
 ```
 
-**瞬时网络速率 (`type: "trafficMetrics"`)**
-实时展示系统的瞬时上传带宽消耗，每 2~3 秒推送。
+| 后缀 | 取值 | 说明 |
+| --- | --- | --- |
+| `#`（行首） | — | 暂停该主播的监控 |
+| `主播:` | 任意名称 | 自定义主播名（留空自动抓取并固化） |
+| `录屏:` | `1` / `0` | 是否录制视频文件 |
+| `截屏:` | `1` / `0` | 是否定期保存截图 |
+| `截图间隔:` | 秒数 | 主播专属截图间隔，缺省跟随全局（默认 20s） |
+| `水印:` | `1` / `0` | 强制开 / 强制关水印，缺省跟随全局 |
+| `画质:` | `uhd` / `hd` / `sd` | 主播专属画质，缺省跟随全局默认画质 |
+| `录制时长:` | 分钟 | 单场最长录制时长，录满即安全收尾且本场不续录 |
+| `时段:` | `HH:MM-HH:MM` | 录制时间窗（支持跨午夜，按服务器本地时间），窗口外只探测不录制 |
 
-```json
-{
-  "type": "trafficMetrics",
-  "payload": {
-    "speed": 52028120, // 字节每秒 (Bytes/s)
-    "time": 1708765432000
-  }
-}
+所有后缀均可在 Web 控制台「任务详情」抽屉中点选修改，自动回写名单文件。
+
+---
+
+## 🚀 快速开始
+
+### 1. 环境准备
+
+1. **Go 语言环境** [Go 1.20+](https://go.dev/dl/)。
+2. **FFmpeg（⚠️ 必须）**：内置录制引擎与截帧高度依赖系统 FFmpeg 进程。
+   * **Windows**：下载预编译版并将 `ffmpeg.exe` 置于环境变量 `Path`，或直接放在编译产物同级目录。
+   * **Linux**：`sudo apt install ffmpeg`（Debian/Ubuntu）或 `sudo yum install ffmpeg`（CentOS）。
+   * **macOS**：`brew install ffmpeg`。
+
+### 2. 编译
+
+```bash
+git clone https://github.com/Xiaoxusheng/go-auto-uploader.git
+cd go-auto-uploader
+go mod tidy
+
+# Windows
+go build -o uploader.exe ./cmd/uploader
+
+# Linux / macOS
+go build -o uploader ./cmd/uploader
 ```
 
-**队列分布状态 (`type: "queueStatus"`)**
-驱动任务分布饼图，统计当前各类任务的实时数量。
+> 仓库自带 `build.bat`（Windows 交叉编译双平台）与 `build.sh` 脚本。
 
-```json
-{
-  "type": "queueStatus",
-  "payload": {
-    "waiting": 5,
-    "uploading": 2,
-    "success": 120,
-    "failed": 0
-  }
-}
+### 3. 启动服务
+
+```bash
+./uploader -dirs "D:\录像文件夹, E:\LiveRecord" -workers 3 -day-rate 20 -night-rate 80 -web-port 8888
 ```
 
-### ⚡ 2. 任务流与进度追踪
+#### 启动参数说明
 
-**实时上传进度 (`type: "uploadProgress"`)**
-高频推送，驱动上传任务列表的进度条与速度显示。
+| 参数标志 | 默认值 | 说明 |
+| --- | --- | --- |
+| `-dirs` | *(必填)* | 监听扫描的本地目录（多个用英文逗号 `,` 分隔） |
+| `-server` | `http://127.0.0.1:5244` | 远端 OpenList/AList 服务器 API 地址 |
+| `-workers` | `3` | 并发上传线程数 |
+| `-rate` | `0` | 全天候强制限速（MB/s，0 = 启用日夜分段限速） |
+| `-day-rate` | `20` | 日间时段 (08:00–23:00) 限速（MB/s） |
+| `-night-rate` | `80` | 夜间时段 (23:00–08:00) 限速（MB/s） |
+| `-scan-interval` | `30` | 目录扫描循环间隔（分钟） |
+| `-report-minutes` | `360` | 邮件统计报告间隔（分钟） |
+| `-web-port` | `8080` | Web 控制台监听端口 |
+| `-live-config` | `/home/live/.../URL_config.ini` | 外置引擎录制名单路径（双引擎模式） |
+| `-recorder-container` | `douyinliverecorder-app-1` | 外置引擎 Docker 容器名 |
+| `-recorder-config` | *(空)* | 外置引擎主配置文件（config.ini）路径 |
 
-```json
-{
-  "type": "uploadProgress",
-  "payload": {
-    "id": "task-1708765432",
-    "filename": "streamer_20260224.mp4",
-    "path": "D:\\Record\\streamer_20260224.mp4",
-    "size": 1073741824,
-    "uploaded": 536870912,
-    "speed": 10485760,
-    "status": "uploading",
-    "startTime": 1708765000000
-  }
-}
+### 4. 访问控制台
+
+浏览器打开 `http://127.0.0.1:<web-port>`
+
+* 🔐 **默认账号**：`admin`　**默认密码**：`admin`
+* ⚠️ 生产环境务必在 `config.json` 的 `dashboardUser` / `dashboardPass` 中配置强口令（默认弱口令启动时会有高危告警）。
+
+---
+
+## 🔧 生产部署（Linux systemd）
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-w -s" -o uploader ./cmd/uploader
 ```
 
-**任务完成通知 (`type: "taskDone"`)**
-当单个任务成功上传或遭遇错误失败时触发。
+完整 systemd 单元示例、升级流程与回滚说明见 [docs/deployment.md](docs/deployment.md)；HTTP API 摘要见 [docs/api.md](docs/api.md)；配置项详解见 [docs/configuration.md](docs/configuration.md)。
+
+---
+
+## 📡 WebSocket 实时数据协议
+
+系统通过单路全双工 WebSocket（`/ws/live?token=`）向前端推送 JSON 消息，结构为 `{ "type": "类型", "payload": 载荷 }`。
+
+| 消息类型 | 说明 |
+| --- | --- |
+| `statsTrend` | 近 7 日上传流量聚合 + 主播硬盘消耗 TOP 5 |
+| `trafficMetrics` | 瞬时上传速率（Bytes/s，2~3 秒一推） |
+| `queueStatus` | 等待/上传中/成功/失败任务数分布 |
+| `uploadProgress` | 高频上传进度（文件名、已传字节、速度、状态） |
+| `taskDone` | 单任务完成/失败通知 |
+| `systemStatus` | 全局开关、扫描倒计时、磁盘/FFmpeg 内存探针、目录统计 |
+| `scanStarted` / `scanFinished` | 扫描起止事件（含触发源与新文件数） |
+| `builtinTasks` | 内置引擎全部录制任务快照（状态/画质/时长/单主播覆盖值） |
+| `recorderStatus` / `activeStreamers` / `streamersData` | 外置引擎容器状态、录制红点主播、名单同步 |
+| `newLog` / `systemAlert` | 实时终端日志条目 / 全局告警强推 |
+
+示例 —— 内置引擎任务快照：
 
 ```json
 {
-  "type": "taskDone",
-  "payload": {
-    "id": "task-1708765432",
-    "status": "success", // 或 "fail"
-    "progress": 100,
-    "size": 1073741824,
-    "error": "Token expired" // 仅失败时存在
-  }
-}
-```
-
-### 🚀 3. 系统调度与控制
-
-**系统核心状态 (`type: "systemStatus"`)**
-包含全局雷达倒计时、动态休眠时间、目录统计情况以及硬件资源探针数据。
-
-```json
-{
-  "type": "systemStatus",
-  "payload": {
-    "running": true,
-    "workers": 3,
-    "scanningInterval": 30,
-    "dynamicInterval": 5, // 动态调节后的频率
-    "nextScanTime": 1708765900000,
-    "uptime": 3600,
-    "diskFree": 52684820480, // 系统可用磁盘空间 (Bytes)
-    "ffmpegMem": 24560000,   // FFmpeg进程内存消耗 (Bytes)
-    "dirs": [
-      {
-        "path": "D:\\Record",
-        "pendingFiles": 5,
-        "uploadedFiles": 100,
-        "totalSize": 10737418240,
-        "uploadedSize": 5368709120
-      }
-    ]
-  }
-}
-```
-
-**扫描启动事件 (`type: "scanStarted"`)**
-当引擎开始探测目录时触发（前端可借此弹出提示）。
-
-```json
-{
-  "type": "scanStarted",
-  "payload": {
-    "time": 1708765000000,
-    "dirs": ["D:\\Record"],
-    "interval": 5,
-    "workers": 3,
-    "trigger": "auto" // auto, manual-start, rescan, config-change
-  }
-}
-```
-
-**扫描完毕事件 (`type: "scanFinished"`)**
-当引擎完成目录比对后触发，告知发现了多少新文件。
-
-```json
-{
-  "type": "scanFinished",
-  "payload": {
-    "time": 1708765100000,
-    "added": 12 // 压入队列的新文件数量
-  }
-}
-```
-
-### 🎥 4. 直播引擎生态联动
-
-**录制引擎容器状态 (`type: "recorderStatus"`)**
-实时投射底层 Docker 容器的状态。
-
-```json
-{
-  "type": "recorderStatus",
-  "payload": "running" // running, exited, 离线/异常 等
-}
-```
-
-**热点录制主播探测 (`type: "activeStreamers"`)**
-动态识别正在写入视频文件的主播，前端借此展示“录制红点”。
-
-```json
-{
-  "type": "activeStreamers",
-  "payload": ["KingKing", "小毛毛芋头"]
-}
-```
-
-**主播配置名单同步 (`type: "streamersData"`)**
-向所有在线终端同步最新的录制名单数据（防冲突覆盖）。
-
-```json
-{
-  "type": "streamersData",
+  "type": "builtinTasks",
   "payload": [
-    { "name": "KingKing", "url": "[https://live.douyin.com/123](https://live.douyin.com/123)", "active": true },
-    { "name": "未知", "url": "[https://live.kuaishou.com/456](https://live.kuaishou.com/456)", "active": false }
+    {
+      "platform": "Douyin",
+      "room_id": "12345",
+      "anchor_name": "某某",
+      "status": "录制中",
+      "quality": "uhd",
+      "record": true,
+      "screenshot": true,
+      "shot_interval": 30,
+      "watermark": 0,
+      "quality_override": "",
+      "max_duration": 240,
+      "window": "20:00-24:00",
+      "duration": "01:23:45",
+      "file_size": "12.3 GB"
+    }
   ]
-}
-```
-
-### 🚨 5. 诊断与告警
-
-**系统实时终端日志 (`type: "newLog"`)**
-拦截 Go 后端标准输出，实时推送给前端日志查看器。
-
-```json
-{
-  "type": "newLog",
-  "payload": {
-    "Time": "15:04:05",
-    "Level": "info", // info, warn, error
-    "Message": "系统初始化完成，启动中...",
-    "Error": ""
-  }
-}
-```
-
-**全局告警强推 (`type: "systemAlert"`)**
-遇到致命错误（如认证失效、API拒绝）时主动触发弹窗。
-
-```json
-{
-  "type": "systemAlert",
-  "payload": {
-    "level": "error", // info, success, warning, error
-    "title": "上传遭拒绝",
-    "message": "远端返回 Code 401，请检查 Token 是否已过期。",
-    "time": "15:04:05"
-  }
 }
 ```
 
@@ -308,89 +249,15 @@
 
 ## 🛠️ 技术架构
 
-* **Backend (服务端)**: Go (原生 `net/http`, `sync` 协程调度), Gorilla WebSocket。
-* **Frontend (前端 UI)**: Vue.js 3 (Composition API), Arco Design Vue, ECharts, Axios。
-* **Data (数据持久化)**: 轻量级本地 `.db` 文件存储 Hash 与成功记录，无外部数据库依赖。
-
----
-
-## 🚀 快速开始
-
-### 1. 环境准备与编译
-
-请确保你的本地环境已安装
-1. **Go 语言环境** [Go 1.20+](https://go.dev/dl/)。
-2. **FFmpeg 多媒体处理核心 (⚠️ 必须)**：内置的轻量级录制引擎与无损截帧引擎高度依赖操作系统的 FFmpeg 进程。
-  * **Windows**: 请前往 [FFmpeg 官网](https://ffmpeg.org/download.html) 下载预编译的 `.exe`，并将其路径加入到系统环境变量 `Path` 中（或直接将 `ffmpeg.exe` 放置在与本项目编译产物同级的目录中）。
-  * **Linux**: 执行 `sudo apt install ffmpeg` (Debian/Ubuntu) 或 `sudo yum install ffmpeg` (CentOS)。
-  * **macOS**: 执行 `brew install ffmpeg`。
-
-```bash
-# 克隆项目到本地
-git clone [https://github.com/Xiaoxusheng/go-auto-uploader.git](https://github.com/Xiaoxusheng/go-auto-uploader.git)
-cd go-auto-uploader
-
-# 解决依赖
-go mod tidy
-
-# 编译为可执行文件 (前端 HTML 会被自动 embed 打包)
-# Windows 平台:
-go build -o uploader.exe .
-
-# Linux / macOS 平台:
-go build -o uploader .
-```
-
-### 2. 启动服务
-
-系统可通过命令行参数进行初始化配置（所有的配置均可在启动后的 Web 页面中**随时进行热修改**）。
-
-```bash
-./uploader -dirs "D:\录像文件夹, E:\LiveRecord" -workers 3 -day-rate 20 -night-rate 80 -web-port 8080
-```
-
-#### 详细参数说明表：
-
-| 参数标志 | 默认值 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `-dirs` | *(必填)* | `string` | 需要监听扫描的本地绝对路径（多目录请用英文逗号 `,` 分隔）。 |
-| `-server` | `https://wustwust.cn:8081` | `string` | 远端 OpenList 接收服务器的 API Endpoint 地址。 |
-| `-workers` | `3` | `int` | 核心并发上传的线程数（Worker 数量）。 |
-| `-rate` | `0` | `int` | 全天候强制最大上传限速（单位 MB/s，设为 0 则不启用）。 |
-| `-day-rate` | `20` | `int` | 日间时段 (08:00 - 23:00) 最大上传限速（单位 MB/s）。 |
-| `-night-rate` | `80` | `int` | 夜间时段 (23:00 - 08:00) 最大上传限速（单位 MB/s）。 |
-| `-scan-interval` | `30` | `int` | 自动执行目录扫描的循环间隔（单位：分钟）。 |
-| `-report-minutes` | `360` | `int` | 定时向管理员邮箱发送统计报告的间隔（单位：分钟）。 |
-| `-web-port` | `8080` | `int` | 本地 Web 监控面板的监听端口。 |
-
-### 3. 访问控制台
-
-程序启动成功后，浏览器访问：[http://127.0.0.1:8080](http://127.0.0.1:8080)
-
-* 🔐 **默认账号**: `admin`
-* 🔐 **默认密码**: `admin`
-
----
-
-## ⚙️ RESTful API 规范
-
-若需接入第三方监控或企业内部 CI/CD 流程，你可以直接调用系统提供的标准化 API。API 默认受 Bearer Token 保护（在 `/api/v1/auth/login` 接口获取）。
-
-* **获取当前系统参数**：`GET /api/v1/config`
-* **热更新系统参数**：`PUT /api/v1/config`
-* **获取实时系统与目录状态**：`GET /api/v1/status`
-* **获取实时上传流数据**：`GET /api/v1/tasks/live`
-* **拉取系统控制台日志**：`GET /api/v1/logs?page=1&limit=50`
-* **下发队列控制指令**：`POST /api/v1/control/[action]`
-  *(支持的 action: `start`, `pause`, `stop`, `rescan`, `clear-fail-queue` 等)*
-
-*(注：系统默认开启动态混合加密机制，调用此类受保护 API 请参考无感拦截器封装格式)*
+* **Backend (服务端)**：Go（原生 `net/http`、协程调度、`atomic`/`sync.Map` 无锁聚合），Gorilla WebSocket，`gopsutil` 硬件探针。
+* **Frontend (前端 UI)**：Vue.js 3（Composition API），Arco Design Vue，ECharts，Axios 加密拦截器。
+* **Data (数据持久化)**：本地 `.db` / `.json` 文件存储指纹库与成功记录（原子写盘、启动恢复），无外部数据库依赖。
 
 ---
 
 ## 🤝 参与贡献
 
-我们非常欢迎所有的 Issue 和 Pull Request！如果你有好的想法、发现了 Bug，或是想为前端 UI 添加新的主题，请随时向仓库提交代码。
+欢迎所有 Issue 和 Pull Request！无论是新平台接入、前端主题，还是 Bug 修复，请随时提交。
 
 ## 📜 许可证 & 版权声明
 
