@@ -4018,10 +4018,15 @@
                                 </div>
                                 <div class="rec-drawer-row">
                                     <span class="rec-drawer-label">录制时段</span>
-                                    <span style="display: flex; align-items: center; gap: 6px;">
-                                        <a-tooltip content="该主播的定时录制窗口，格式 HH:MM-HH:MM（如 20:00-24:00，可跨午夜如 20:00-02:00），按服务器本地时间判定；窗口外只探测不录制。清空表示全天可录，修改即时生效">
-                                            <a-input v-model="windowEdit" size="mini" placeholder="全天可录"
-                                                     style="width: 110px;" allow-clear></a-input>
+                                    <span style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                                        <a-tooltip content="该主播的定时录制窗口，按服务器本地时间判定；窗口外只探测不录制，录制中跨出窗口会优雅收尾，窗口重开自动续录。结束选 00:00 表示录到当天午夜（24:00）；起止相同或全部清空表示全天可录。修改即时生效">
+                                            <span style="display: inline-flex; align-items: center; gap: 4px;">
+                                                <a-time-picker v-model="windowStart" size="mini" format="HH:mm"
+                                                               placeholder="开始" allow-clear style="width: 80px;"></a-time-picker>
+                                                <span style="color: var(--color-text-3, #86909c);">–</span>
+                                                <a-time-picker v-model="windowEnd" size="mini" format="HH:mm"
+                                                               placeholder="结束" allow-clear style="width: 80px;"></a-time-picker>
+                                            </span>
                                         </a-tooltip>
                                         <a-button size="mini" type="primary" :loading="windowSaving"
                                                   @click="saveBuiltinWindow">保存</a-button>
@@ -5704,9 +5709,32 @@
             // 单主播最长录制时长编辑态（分钟）：null = 不限制（与后端 0 值语义对应）
             const maxDurationEdit = ref(null);
             const maxDurationSaving = ref(false);
-            // 单主播录制时段编辑态：'' = 全天可录
-            const windowEdit = ref('');
+            // 单主播录制时段编辑态：时间选择框（'' = 全天可录；结束 00:00 与后端 24:00 语义互转）
+            const windowStart = ref('');
+            const windowEnd = ref('');
             const windowSaving = ref(false);
+            // 归一化时间选择器的值：兼容字符串 "HH:mm[:ss]" 与 Date 对象，输出 "HH:mm"
+            const normClock = (v) => {
+                if (!v) return '';
+                if (v instanceof Date) {
+                    return String(v.getHours()).padStart(2, '0') + ':' + String(v.getMinutes()).padStart(2, '0');
+                }
+                const parts = String(v).trim().split(':');
+                if (parts.length < 2) return String(v).trim();
+                return parts[0].padStart(2, '0') + ':' + parts[1].padStart(2, '0');
+            };
+            // 名单行时段 → 选择框：结束 "24:00" 显示为 "00:00"
+            const windowToPickers = (w) => {
+                const val = String(w || '').trim();
+                if (!val || !val.includes('-')) {
+                    windowStart.value = '';
+                    windowEnd.value = '';
+                    return;
+                }
+                const [s, e] = val.split('-');
+                windowStart.value = normClock(s);
+                windowEnd.value = e.trim().startsWith('24') ? '00:00' : normClock(e);
+            };
             const openRecDrawer = (record) => {
                 if (!record) return;
                 recDrawer.record = record;
@@ -5715,7 +5743,7 @@
                 watermarkEdit.value = (wm === 1 || wm === 2) ? wm : 0;
                 qualityEdit.value = ['uhd', 'hd', 'sd'].includes(record.quality_override) ? record.quality_override : '';
                 maxDurationEdit.value = Number(record.max_duration) > 0 ? Number(record.max_duration) : null;
-                windowEdit.value = String(record.window || '');
+                windowToPickers(record.window);
                 recDrawer.visible = true;
                 if (!builtinSettings.value.save_path) {
                     fetchBuiltinConfig();
@@ -5831,16 +5859,25 @@
             };
 
             /**
-             * 保存当前主播的定时录制时段（'' = 全天可录）。
+             * 保存当前主播的定时录制时段（两个选择框全空 = 全天可录）。
              * 窗口由监控循环与录制巡检每轮热读取：窗口外只探测不拉流，
              * 录制中跨出窗口会优雅收尾，窗口再次打开后自动续录。
              */
             const saveBuiltinWindow = async () => {
                 const record = recDrawer.record;
                 if (!record) return;
-                const val = String(windowEdit.value || '').trim();
-                if (val && !/^\d{1,2}:\d{1,2}\s*-\s*\d{1,2}:\d{1,2}$/.test(val)) {
-                    Message.warning('时段格式应为 HH:MM-HH:MM，例如 20:00-24:00');
+                const s = normClock(windowStart.value);
+                const e = normClock(windowEnd.value);
+                let val = '';
+                if (s && e) {
+                    if (s === e) {
+                        Message.info('起止时间相同，已按全天可录处理');
+                    } else {
+                        // 结束 00:00 即当天午夜，按后端约定的 24:00 语义存储
+                        val = s + '-' + (e === '00:00' ? '24:00' : e);
+                    }
+                } else if (s || e) {
+                    Message.warning('请同时选择开始与结束时间；全部清空表示全天可录');
                     return;
                 }
                 windowSaving.value = true;
@@ -5849,12 +5886,12 @@
                         action: 'set_flags',
                         platform: record.platform,
                         room_id: record.room_id,
-                        window: val.replace(/\s/g, '')
+                        window: val
                     });
-                    record.window = val.replace(/\s/g, '');
-                    windowEdit.value = record.window;
-                    Message.success(record.window ? `该主播录制时段已设为 ${record.window}（服务器本地时间），即时生效` : '该主播已恢复全天可录');
-                } catch (e) {
+                    record.window = val;
+                    windowToPickers(val);
+                    Message.success(val ? `该主播录制时段已设为 ${val}（服务器本地时间），即时生效` : '该主播已恢复全天可录');
+                } catch (err) {
                     Message.error('录制时段保存失败');
                 } finally {
                     windowSaving.value = false;
@@ -7502,7 +7539,7 @@
                 watermarkEdit, watermarkSaving, saveBuiltinWatermark,
                 qualityEdit, qualitySaving, saveBuiltinQuality,
                 maxDurationEdit, maxDurationSaving, saveBuiltinMaxDuration,
-                windowEdit, windowSaving, saveBuiltinWindow,
+                windowStart, windowEnd, windowSaving, saveBuiltinWindow,
                 cookieHealth, cookieBadge,
                 showBuiltinStatsModal, builtinStats, openBuiltinStatsModal,
                 statsBarPct, statsMaxDaily, statsMaxAnchor, fmtStatSize, uploadTrendRows,
