@@ -163,8 +163,12 @@ func DrawtextPos(position string) string {
 // escapeFilterPath 将文件路径转为 FFmpeg filtergraph 可安全解析的形式。
 // Windows 盘符（D:\...）里的冒号是 filtergraph 的参数分隔符，必须转义为 `\:`，
 // 且反斜杠统一为 `/`，否则整条 drawtext 滤镜会被 FFmpeg 判定为语法错误而失败。
+//
+// 注意：这里不能用 filepath.ToSlash——它在 Linux 上是 no-op（分隔符本就是 `/`），
+// 会导致 Windows 风格路径在 Linux 上漏转反斜杠，使同名测试在 Linux CI 失败。
+// 统一按字符串替换，保证跨平台结果一致。
 func escapeFilterPath(p string) string {
-	p = filepath.ToSlash(p)
+	p = strings.ReplaceAll(p, `\`, "/")
 	return strings.ReplaceAll(p, ":", `\:`)
 }
 
