@@ -130,53 +130,60 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 						}
 					case <-t.C:
 					}
-				} else {
-					hitMax := RecordStream(ctx, url, platformName, roomID, name, avatar, q, st, taskFlags)
-					if hitMax {
-						cappedThisLive = true
-						log.Printf("⏹️ [时长上限] %s %s 已录满单场上限（%d 分钟），本场停止续录，主播下播后自动恢复", platformName, name, taskFlags.MaxDuration)
-					}
+					continue
+				}
 
-					// 配置热重载（如视频水印开关切换）导致的中断：立即按新配置重开，
-					// 不走 30 秒断流退避，也不触发下播通知。
-					if clearConfigRestart(key) {
-						log.Printf("🔄 [配置重载] %s %s 已按新配置立即重启录制", platformName, name)
-						builtinCancels.Delete(key)
-						cancel()
-						continue
-					}
+				// 单主播切片时长覆盖优先，否则跟随全局「自动分片时长」。
+				// 切片由 ffmpeg 原生完成：同进程内按时间切文件，录制不中断、不丢帧。
+				segTime := taskFlags.SegmentTime
+				if segTime <= 0 {
+					segTime = st
+				}
+				hitMax := RecordStream(ctx, url, platformName, roomID, name, avatar, q, segTime, taskFlags)
+				if hitMax {
+					cappedThisLive = true
+					log.Printf("⏹️ [时长上限] %s %s 已录满单场上限（%d 分钟），本场停止续录，主播下播后自动恢复", platformName, name, taskFlags.MaxDuration)
+				}
 
-					state, _ = builtinTaskStates.Load(key)
-					if state != "deleted" && state != "paused" {
-						// 录屏/截屏全关时仅探测，不进入断流冷却，避免状态横跳
-						if !taskFlags.Record && !taskFlags.Screenshot {
-							sleepDur := Config().CheckInterval
-							if sleepDur < 10 {
-								sleepDur = 10
-							}
-							updateBuiltinStatus(platformName, roomID, name, avatar, q, "监控中")
-							t := time.NewTimer(time.Duration(sleepDur) * time.Second)
-							select {
-							case <-ctx.Done():
-								t.Stop()
-							case <-t.C:
-							}
-						} else {
-							// 断流后退避：避免 CDN 抖动时 15s 紧循环重拉把 CPU 打满。
-							// Twitch 广告插入/CDN 轮换会频繁触发流 EOF，用短冷却快速重连减少内容丢失
-							backoff := 30 * time.Second
-							if platformName == "Twitch" {
-								backoff = 8 * time.Second
-							}
-							log.Printf("⏳ [断流等待] %s %s 进入%d秒冷却...", platformName, name, int(backoff.Seconds()))
-							updateBuiltinStatus(platformName, roomID, name, avatar, q, "断流缓冲中")
+				// 配置热重载（如视频水印开关切换）导致的中断：立即按新配置重开，
+				// 不走 30 秒断流退避，也不触发下播通知。
+				if clearConfigRestart(key) {
+					log.Printf("🔄 [配置重载] %s %s 已按新配置立即重启录制", platformName, name)
+					builtinCancels.Delete(key)
+					cancel()
+					continue
+				}
 
-							t := time.NewTimer(backoff)
-							select {
-							case <-ctx.Done():
-								t.Stop()
-							case <-t.C:
-							}
+				state, _ = builtinTaskStates.Load(key)
+				if state != "deleted" && state != "paused" {
+					// 录屏/截屏全关时仅探测，不进入断流冷却，避免状态横跳
+					if !taskFlags.Record && !taskFlags.Screenshot {
+						sleepDur := Config().CheckInterval
+						if sleepDur < 10 {
+							sleepDur = 10
+						}
+						updateBuiltinStatus(platformName, roomID, name, avatar, q, "监控中")
+						t := time.NewTimer(time.Duration(sleepDur) * time.Second)
+						select {
+						case <-ctx.Done():
+							t.Stop()
+						case <-t.C:
+						}
+					} else {
+						// 断流后退避：避免 CDN 抖动时 15s 紧循环重拉把 CPU 打满。
+						// Twitch 广告插入/CDN 轮换会频繁触发流 EOF，用短冷却快速重连减少内容丢失
+						backoff := 30 * time.Second
+						if platformName == "Twitch" {
+							backoff = 8 * time.Second
+						}
+						log.Printf("⏳ [断流等待] %s %s 进入%d秒冷却...", platformName, name, int(backoff.Seconds()))
+						updateBuiltinStatus(platformName, roomID, name, avatar, q, "断流缓冲中")
+
+						t := time.NewTimer(backoff)
+						select {
+						case <-ctx.Done():
+							t.Stop()
+						case <-t.C:
 						}
 					}
 				}

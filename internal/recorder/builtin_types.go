@@ -85,6 +85,8 @@ type BuiltinTaskStatus struct {
 	QualityOverride string `json:"quality_override"`
 	// MaxDuration 单主播单场最长录制时长（分钟）；0 = 不限制
 	MaxDuration int `json:"max_duration"`
+	// SegmentTime 单主播专属切片时长（分钟）；0 = 跟随全局「自动分片时长」
+	SegmentTime int `json:"segment_time"`
 	// Window 单主播录制时段（"HH:MM-HH:MM"）；空 = 全天可录
 	Window string `json:"window"`
 

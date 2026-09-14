@@ -1,5 +1,11 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
 
+### [v2.5.5] - 2026-09-14 (Per-Task Segment Duration)
+#### 🌟 核心特性 (New Features)
+* **单主播切片时长覆盖 (Per-Task Segment Duration)**：任务详情抽屉新增「切片时长（分钟）」，录满该时长就自动切分为下一个文件，**录制不中断、不丢帧、不漏录**；留空/填 0 表示跟随「引擎设置」里的全局自动分片时长。名单行支持 `切片:分钟` 后缀并持久化，修改后录制中的会话自动按新时长重开一次（走配置重载通道，不误报下播）。
+* **切片语义与「最长录制时长」明确分离**：切片（`切片:` / `segment_time`）是「录多久换一个文件」，由 ffmpeg 原生 `-segment_time` 在同进程内完成；最长录制时长（`录制时长:` / `max_duration`）是「一场最多录多久」，录满即整场收尾。两者可独立配置、互不覆盖，前端抽屉上下相邻展示并各有独立 tooltip 说明。
+
+---
 ### [v2.5.4] - 2026-09-13 (Cookie Health & Recording Window & Stats)
 #### 🌟 核心特性 (New Features)
 * **Cookie 失效检测与主动告警 (Cookie Health Monitor)**：B 站（nav 接口 isLogin）与 Twitch（OAuth validate）每 30 分钟权威探活；全平台（含抖音/快手/Soop）基于监控解析结果的「连续 12 次平台级报错」被动检测，疑似失效即经微信/TG 推送「Cookie告警」，恢复自动通知。健康状态经 `/builtin_recorder/cookies/health` 下发，Cookie 面板徽标显示 正常/疑似失效/已失效（标红），探活网络失败不覆盖已有结论，杜绝误报。

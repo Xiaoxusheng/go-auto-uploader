@@ -157,6 +157,55 @@ func TestRebuildQualityAndMaxDurationFlags(t *testing.T) {
 	}
 }
 
+// 单主播切片时长：解析、写回与往返一致性。
+// 切片由 ffmpeg 原生 -segment_time 完成，不影响 MaxDuration（那才是整场停录）。
+func TestParseAndRebuildSegmentTime(t *testing.T) {
+	cases := []struct {
+		in      string
+		segment int
+	}{
+		{"https://live.douyin.com/1,主播:甲", 0},                      // 缺省跟随全局
+		{"https://live.douyin.com/1,切片:30", 30},
+		{"https://live.douyin.com/1,主播:乙,切片:60,画质:hd", 60},
+		{"https://live.douyin.com/1,切片:abc", 0},   // 非法忽略
+		{"https://live.douyin.com/1,切片:-5", 0},    // 负数忽略
+		{"https://live.douyin.com/1,切片:0", 0},     // 0 = 跟随全局
+		{"#https://live.douyin.com/1,录屏:0,切片:120", 120},
+	}
+	for _, c := range cases {
+		_, _, room, _, _, fl := ParseLine(c.in)
+		if fl.SegmentTime != c.segment {
+			t.Fatalf("%q segment=%d, want %d", c.in, fl.SegmentTime, c.segment)
+		}
+		if room == "" {
+			t.Fatalf("%q empty room", c.in)
+		}
+	}
+
+	// 写回：切片与录制时长是两个独立后缀，必须共存且互不覆盖
+	in := "https://live.douyin.com/444,主播:丁,录屏:1,截屏:1"
+	out := RebuildLineWithFlags(in, TaskFlags{Record: true, Screenshot: true, SegmentTime: 45, MaxDuration: 240})
+	want := "https://live.douyin.com/444,主播:丁,录屏:1,截屏:1,录制时长:240,切片:45"
+	if out != want {
+		t.Fatalf("rebuild=%q, want %q", out, want)
+	}
+	// 往返一致
+	_, _, _, _, _, fl := ParseLine(out)
+	if fl.SegmentTime != 45 || fl.MaxDuration != 240 {
+		t.Fatalf("roundtrip flags=%+v", fl)
+	}
+	// 回到跟随全局时旧后缀被剥掉
+	back := RebuildLineWithFlags(out, TaskFlags{Record: true, Screenshot: true})
+	if back != "https://live.douyin.com/444,主播:丁,录屏:1,截屏:1" {
+		t.Fatalf("rebuild follow=%q", back)
+	}
+	// 仅设切片、不设录制时长时，切片后缀必须能单独写回
+	out2 := RebuildLineWithFlags(in, TaskFlags{Record: true, Screenshot: true, SegmentTime: 20})
+	if out2 != "https://live.douyin.com/444,主播:丁,录屏:1,截屏:1,切片:20" {
+		t.Fatalf("rebuild segment-only=%q", out2)
+	}
+}
+
 func TestParseWindowFlag(t *testing.T) {
 	cases := []struct {
 		in     string

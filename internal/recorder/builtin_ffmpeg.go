@@ -247,6 +247,7 @@ func prepareBuiltinDrawtextFilter(anchorName, tag string, live bool) (filter str
 
 // BuiltinRecordStream 调动底层 FFmpeg 进程并将推流直通本地文件，增加了高度强化的上下文状态管控防止僵尸进程
 // flags 控制本任务是否落盘录像 / 是否旁路截屏。
+// segmentTime 为本会话的切片时长（分钟），0 表示整场不切片。
 // 返回 hitMax：是否因达到单主播最长录制时长（录制时长:n 分钟）而主动结束本次会话。
 func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorName, avatar, quality string, segmentTime int, flags BuiltinTaskFlags) (hitMax bool) {
 	// 配置热重载可能已在进入前取消上下文，此时不要空转拉起 ffmpeg

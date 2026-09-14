@@ -234,6 +234,7 @@ func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 		task.Watermark = f.Watermark
 		task.QualityOverride = f.Quality
 		task.MaxDuration = f.MaxDuration
+		task.SegmentTime = f.SegmentTime
 		task.Window = f.Window
 		safeName := sanitizeBuiltinFileName(task.AnchorName)
 		if safeName == "" {

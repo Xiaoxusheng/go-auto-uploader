@@ -4006,6 +4006,19 @@
                                     </span>
                                 </div>
                                 <div class="rec-drawer-row">
+                                    <span class="rec-drawer-label">切片时长 (分钟)</span>
+                                    <span style="display: flex; align-items: center; gap: 6px;">
+                                        <a-tooltip content="该主播专属的切片时长：录满这个时长就自动切成下一个文件，录制不中断、不丢帧。留空或填 0 表示跟随「引擎设置」里的全局自动分片时长。修改后正在录制的会话会按新时长重开一次">
+                                            <a-input-number v-model="segmentTimeEdit" size="mini" :min="0" :max="1440"
+                                                            placeholder="跟随全局" style="width: 110px;"></a-input-number>
+                                        </a-tooltip>
+                                        <a-button size="mini" type="primary" :loading="segmentTimeSaving"
+                                                  @click="saveBuiltinSegmentTime">保存</a-button>
+                                        <span class="rec-drawer-value" style="font-size:12px;flex-shrink:0;"
+                                              :title="'当前实际切片时长（含全局默认）'">生效：{{ builtinSegmentText(recDrawer.record.segment_time) }}</span>
+                                    </span>
+                                </div>
+                                <div class="rec-drawer-row">
                                     <span class="rec-drawer-label">最长录制 (分钟)</span>
                                     <span style="display: flex; align-items: center; gap: 6px;">
                                         <a-tooltip content="该主播单场直播的最长录制时长，录满后自动安全收尾且本场不再续录，主播下播后恢复常规监控；清空或填 0 表示不限制。录制中修改即时生效">
@@ -4836,7 +4849,7 @@
                         </a-form-item>
                         <a-row :gutter="12">
                             <a-col :span="12">
-                                <a-form-item label="自动分片时长 (分钟)" tooltip="达到时间后自动分割视频文件，0为不限制">
+                                <a-form-item label="自动分片时长 (分钟)" tooltip="全局默认的切片时长：录满就自动切成下一个文件，录制不中断、不丢帧。0 表示不切片（整场单文件）。可在每个主播的任务详情里单独覆盖">
                                     <a-input-number v-model="builtinSettings.segment_time" :min="0"
                                                     :max="1440" style="width: 100%;"></a-input-number>
                                 </a-form-item>
@@ -5519,7 +5532,9 @@
             const builtinSaving = ref(false);
             const builtinSavingCookies = ref(false);
 
-            const isBuiltinLiveStatusJS = (s) => s === '录制中' || s === '截屏中';
+            // 「分段续录中」是录满截断后的极短缓冲态，主播仍在播、马上续录下一段，
+            // 计入活跃状态以保证计时与卡片样式连续不闪烁。
+            const isBuiltinLiveStatusJS = (s) => s === '录制中' || s === '截屏中' || s === '分段续录中';
 
             // ========== 视图切换与筛选（表格/卡片、直播状态、平台） ==========
             const builtinViewMode = ref((() => {
@@ -5564,6 +5579,11 @@
             };
             const builtinQualityText = (q) =>
                 ({uhd: '蓝光/超清', hd: '高清', sd: '标清'})[q] || '默认画质';
+            // 单主播切片时长的生效文案：0/空 = 跟随引擎设置里的全局自动分片时长
+            const builtinSegmentText = (v) => {
+                const n = Number(v) > 0 ? Number(v) : (Number(builtinSettings.value.segment_time) || 0);
+                return n > 0 ? `${n} 分钟` : '不切片（整场单文件）';
+            };
             const builtinQualityShort = (q) =>
                 ({uhd: '超清', hd: '高清', sd: '标清'})[q] || '默认画质';
             const builtinLiveTagColor = (t) =>
@@ -5582,8 +5602,8 @@
                         return {key: 'live', badge: 'LIVE', label: '正在截屏', pulse: true};
                     case '断流缓冲中':
                         return {key: 'buffer', badge: 'WAIT', label: '断流缓冲中', pulse: true};
-                    case '已录满时长上限':
-                        return {key: 'buffer', badge: 'FULL', label: '已录满上限', pulse: false};
+                    case '分段续录中':
+                        return {key: 'rec', badge: 'REC', label: '分段续录中', pulse: true};
                     case '非录制时段':
                         return {key: 'paused', badge: 'WAIT', label: '非录制时段', pulse: false};
                     case '检测异常等待中':
@@ -5709,6 +5729,9 @@
             // 单主播最长录制时长编辑态（分钟）：null = 不限制（与后端 0 值语义对应）
             const maxDurationEdit = ref(null);
             const maxDurationSaving = ref(false);
+            // 单主播切片时长编辑态（分钟）：null = 跟随全局「自动分片时长」
+            const segmentTimeEdit = ref(null);
+            const segmentTimeSaving = ref(false);
             // 单主播录制时段编辑态：时间选择框（'' = 全天可录；结束 00:00 与后端 24:00 语义互转）
             const windowStart = ref('');
             const windowEnd = ref('');
@@ -5743,6 +5766,7 @@
                 watermarkEdit.value = (wm === 1 || wm === 2) ? wm : 0;
                 qualityEdit.value = ['uhd', 'hd', 'sd'].includes(record.quality_override) ? record.quality_override : '';
                 maxDurationEdit.value = Number(record.max_duration) > 0 ? Number(record.max_duration) : null;
+                segmentTimeEdit.value = Number(record.segment_time) > 0 ? Number(record.segment_time) : null;
                 windowToPickers(record.window);
                 recDrawer.visible = true;
                 if (!builtinSettings.value.save_path) {
@@ -5828,6 +5852,36 @@
                     Message.error('画质设置保存失败');
                 } finally {
                     qualitySaving.value = false;
+                }
+            };
+
+            /**
+             * 保存当前主播的专属切片时长（0/清空 = 跟随全局「自动分片时长」）。
+             * 切片由 ffmpeg 原生 -segment_time 完成，只在进程启动时生效，
+             * 因此录制中修改会按新配置重开一次会话（不误报下播、不丢内容）。
+             */
+            const saveBuiltinSegmentTime = async () => {
+                const record = recDrawer.record;
+                if (!record) return;
+                const val = segmentTimeEdit.value === null || segmentTimeEdit.value === undefined
+                    ? 0 : Math.max(0, Math.floor(Number(segmentTimeEdit.value) || 0));
+                segmentTimeSaving.value = true;
+                try {
+                    await api.post('/builtin_recorder/control', {
+                        action: 'set_flags',
+                        platform: record.platform,
+                        room_id: record.room_id,
+                        segment_time: val
+                    });
+                    record.segment_time = val;
+                    segmentTimeEdit.value = val > 0 ? val : null;
+                    Message.success(val > 0
+                        ? `该主播切片时长已设为 ${val} 分钟（录制中的会话将自动重开一次）`
+                        : '该主播切片时长已恢复跟随全局');
+                } catch (e) {
+                    Message.error('切片时长保存失败');
+                } finally {
+                    segmentTimeSaving.value = false;
                 }
             };
 
@@ -7115,6 +7169,7 @@
                                     existing.watermark = pTask.watermark || 0;
                                     existing.quality_override = pTask.quality_override || '';
                                     existing.max_duration = pTask.max_duration || 0;
+                                    existing.segment_time = pTask.segment_time || 0;
                                     existing.window = pTask.window || '';
 
                                     // 【核心流量拦截】只有在页面可见且停留在当前 Tab 时，才主动更新 DOM 触发浏览器图片拉取
@@ -7526,7 +7581,7 @@
                 calculateRankPercent, builtinSearchQuery, showBuiltinSettingsModal, showBuiltinBatchModal,
                 builtinViewMode, builtinStatusFilter, builtinPlatformFilter, isBuiltinLiveStatusJS,
                 builtinPlatformLabel, builtinPlatformIcon, builtinPlatformTagStyle, builtinPlatformTagColor,
-                builtinQualityText, builtinLiveTagColor, builtinLiveTagIcon,
+                builtinQualityText, builtinSegmentText, builtinLiveTagColor, builtinLiveTagIcon,
                 builtinCurrentPage, builtinPageSize, sortedBuiltinTasks, paginatedBuiltinTasks, builtinForm,
                 builtinBatchForm, builtinSettings, builtinCookies, builtinTasks, builtinActiveCount,
                 builtinRecordingCount, builtinPausedCount, isAllBuiltinActive, builtinAdding, builtinBatchAdding, builtinSaving,
@@ -7539,6 +7594,7 @@
                 watermarkEdit, watermarkSaving, saveBuiltinWatermark,
                 qualityEdit, qualitySaving, saveBuiltinQuality,
                 maxDurationEdit, maxDurationSaving, saveBuiltinMaxDuration,
+                segmentTimeEdit, segmentTimeSaving, saveBuiltinSegmentTime,
                 windowStart, windowEnd, windowSaving, saveBuiltinWindow,
                 cookieHealth, cookieBadge,
                 showBuiltinStatsModal, builtinStats, openBuiltinStatsModal,

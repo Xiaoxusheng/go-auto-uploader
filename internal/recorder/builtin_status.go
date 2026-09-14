@@ -117,6 +117,7 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 		Watermark:       taskFlags.Watermark,
 		QualityOverride: taskFlags.Quality,
 		MaxDuration:     taskFlags.MaxDuration,
+		SegmentTime:     taskFlags.SegmentTime,
 		Window:          taskFlags.Window,
 		startTime:       sTime,
 	})

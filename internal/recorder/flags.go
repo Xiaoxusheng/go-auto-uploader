@@ -16,6 +16,8 @@ import (
 // Quality 为该主播专属画质（uhd/hd/sd）；空串表示跟随全局设置。
 // MaxDuration 为该主播单场直播的最长录制时长（分钟）；0 表示不限制，
 // 录满后自动停止且本场不续录，主播下播后自动恢复常规监控。
+// SegmentTime 为该主播专属的切片时长（分钟）：录满该时长自动切分为下一个文件，
+// 录制不中断、不丢帧；0 表示跟随全局「自动分片时长」。
 // Window 为该主播的录制时段（"HH:MM-HH:MM"，结束允许 24:00，可跨午夜）；空串表示全天可录。
 // 窗口外只探测不拉流；录制中途跨出窗口会优雅收尾，窗口再次打开后自动续录。
 type TaskFlags struct {
@@ -25,6 +27,7 @@ type TaskFlags struct {
 	Watermark    int
 	Quality      string
 	MaxDuration  int
+	SegmentTime  int
 	Window       string
 }
 
@@ -100,7 +103,7 @@ func IsLiveStatus(s string) bool {
 	return s == "录制中" || s == "截屏中"
 }
 
-// StripFlagSuffixes 从行尾剥离 ,录屏:x / ,截屏:y / ,截图间隔:n / ,水印:x / ,画质:x / ,录制时长:n / ,时段:HH:MM-HH:MM。
+// StripFlagSuffixes 从行尾剥离 ,录屏:x / ,截屏:y / ,截图间隔:n / ,水印:x / ,画质:x / ,录制时长:n / ,切片:n / ,时段:HH:MM-HH:MM。
 func StripFlagSuffixes(line string) string {
 	line = strings.TrimSpace(line)
 	for {
@@ -112,7 +115,7 @@ func StripFlagSuffixes(line string) string {
 		if strings.HasPrefix(tail, "录屏:") || strings.HasPrefix(tail, "截屏:") ||
 			strings.HasPrefix(tail, "截图间隔:") || strings.HasPrefix(tail, "水印:") ||
 			strings.HasPrefix(tail, "画质:") || strings.HasPrefix(tail, "录制时长:") ||
-			strings.HasPrefix(tail, "时段:") {
+			strings.HasPrefix(tail, "切片:") || strings.HasPrefix(tail, "时段:") {
 			line = strings.TrimSpace(line[:idx])
 			continue
 		}
@@ -154,6 +157,11 @@ func ParseFlagsFromLine(line string) TaskFlags {
 			v := strings.TrimSpace(strings.TrimPrefix(part, "录制时长:"))
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				flags.MaxDuration = n
+			}
+		} else if strings.HasPrefix(part, "切片:") {
+			v := strings.TrimSpace(strings.TrimPrefix(part, "切片:"))
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				flags.SegmentTime = n
 			}
 		} else if strings.HasPrefix(part, "时段:") {
 			v := strings.TrimSpace(strings.TrimPrefix(part, "时段:"))
@@ -270,6 +278,10 @@ func RebuildLineWithFlags(trimmedLine string, flags TaskFlags) string {
 	// 单主播最长录制时长仅在显式设置时写回（分钟），0 = 不限制
 	if flags.MaxDuration > 0 {
 		out += fmt.Sprintf(",录制时长:%d", flags.MaxDuration)
+	}
+	// 单主播切片时长仅在显式覆盖时写回（分钟），0 = 跟随全局「自动分片时长」
+	if flags.SegmentTime > 0 {
+		out += fmt.Sprintf(",切片:%d", flags.SegmentTime)
 	}
 	// 单主播录制时段仅在显式设置且格式合法时写回（空 = 全天可录）
 	if _, _, ok := parseRecordWindow(strings.TrimSpace(flags.Window)); ok {

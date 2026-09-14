@@ -256,8 +256,9 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 		ShotInterval *int    `json:"shot_interval"`
 		Watermark    *int    `json:"watermark"`    // 0=跟随全局 1=强制开 2=强制关
 		Quality      *string `json:"quality"`      // ""=跟随全局 uhd/hd/sd
-		MaxDuration  *int    `json:"max_duration"` // 单场最长录制时长（分钟），0=不限制
-		Window       *string `json:"window"`       // 录制时段 "HH:MM-HH:MM"，""=全天
+		MaxDuration  *int    `json:"max_duration"`  // 单场最长录制时长（分钟），0=不限制
+		SegmentTime  *int    `json:"segment_time"`  // 单主播切片时长（分钟），0=跟随全局
+		Window       *string `json:"window"`        // 录制时段 "HH:MM-HH:MM"，""=全天
 	}
 
 	if err := hookParseEncrypted(r, &req); err != nil {
@@ -291,6 +292,9 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 		if req.MaxDuration != nil && *req.MaxDuration >= 0 {
 			cur.MaxDuration = *req.MaxDuration
 		}
+		if req.SegmentTime != nil && *req.SegmentTime >= 0 {
+			cur.SegmentTime = *req.SegmentTime
+		}
 		if req.Window != nil {
 			v := strings.TrimSpace(*req.Window)
 			if v == "" {
@@ -300,11 +304,13 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// 录屏/截屏开关变化需要重开会话；截图间隔、截图水印与最长录制时长由
-		// 抽帧循环/录制巡检热读取，无需断流；画质决定拉流档位，须重开会话
+		// 抽帧循环/录制巡检热读取，无需断流；画质决定拉流档位，切片时长决定
+		// ffmpeg 分段参数，两者都只在进程启动时生效，须重开会话
 		modeChanged := cur.Record != prev.Record || cur.Screenshot != prev.Screenshot
 		// 视频水印与拉流画质只在 ffmpeg 启动时生效：变化且正在录屏时须重开会话
 		wmChanged := cur.Watermark != prev.Watermark
 		qualityChanged := cur.Quality != prev.Quality
+		segmentChanged := cur.SegmentTime != prev.SegmentTime
 		setBuiltinTaskFlags(req.Platform, req.RoomID, cur)
 		persistBuiltinFlagsToTxt(req.Platform, req.RoomID, cur)
 		if existing, ok := builtinStatusMap.Load(key); ok {
@@ -315,6 +321,7 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 			task.Watermark = cur.Watermark
 			task.QualityOverride = cur.Quality
 			task.MaxDuration = cur.MaxDuration
+			task.SegmentTime = cur.SegmentTime
 			task.Window = cur.Window
 			builtinStatusMap.Store(key, &task)
 		}
@@ -324,15 +331,22 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 		if qualityChanged {
 			log.Printf("[BUILTIN] 🎚️ 主播 %s（%s）画质覆盖已切换为 %q，按需重开会话…", req.Platform, req.RoomID, cur.Quality)
 		}
+		if segmentChanged {
+			if cur.SegmentTime > 0 {
+				log.Printf("[BUILTIN] ✂️ 主播 %s（%s）切片时长已覆盖为 %d 分钟，按需重开会话…", req.Platform, req.RoomID, cur.SegmentTime)
+			} else {
+				log.Printf("[BUILTIN] ✂️ 主播 %s（%s）切片时长已恢复跟随全局，按需重开会话…", req.Platform, req.RoomID)
+			}
+		}
 		if cur.MaxDuration != prev.MaxDuration {
 			log.Printf("[BUILTIN] ⏱️ 主播 %s（%s）最长录制时长已切换为 %d 分钟（热生效，无需重开）", req.Platform, req.RoomID, cur.MaxDuration)
 		}
 		if cur.Window != prev.Window {
 			log.Printf("[BUILTIN] ⏰ 主播 %s（%s）录制时段已切换为 %q（热生效，无需重开）", req.Platform, req.RoomID, cur.Window)
 		}
-		// 录屏/截屏/画质/水印实际变化 → 直接取消；纯水印或画质变化 → 先打配置重载标记
+		// 录屏/截屏/画质/水印/切片实际变化 → 直接取消；纯水印或画质变化 → 先打配置重载标记
 		//（让监控循环知道这是配置重开、不是断流，避免误报下播）
-		if modeChanged || wmChanged || qualityChanged {
+		if modeChanged || wmChanged || qualityChanged || segmentChanged {
 			if !modeChanged {
 				markConfigRestart(key)
 			}
