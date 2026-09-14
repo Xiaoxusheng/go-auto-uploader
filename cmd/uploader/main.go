@@ -2,12 +2,20 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"strings"
 
 	"upload/internal/app"
 	"upload/internal/bots"
 	"upload/internal/recorder"
+)
+
+// 编译期由 -ldflags "-X main.Version=... -X main.BuildTime=..." 注入，
+// 未注入时为开发态默认值。
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
 )
 
 func builtinActiveNames() []string {
@@ -54,7 +62,13 @@ func main() {
 	flag.StringVar(&cli.LiveConfigPath, "live-config", "/home/live/DouyinLiveRecorder/config/URL_config.ini", "录制配置文件路径")
 	flag.StringVar(&cli.RecorderContainer, "recorder-container", "douyinliverecorder-app-1", "录制引擎Docker容器名")
 	flag.StringVar(&cli.RecorderConfigPath, "recorder-config", "", "录制引擎主配置文件(config.ini)路径")
+	showVersion := flag.Bool("version", false, "打印版本信息后退出")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("go-auto-uploader %s (built %s)\n", Version, BuildTime)
+		return
+	}
 
 	app.Run(app.Options{
 		CLI:                cli,
