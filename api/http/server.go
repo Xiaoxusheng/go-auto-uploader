@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -108,8 +109,47 @@ func (s *Server) Start(port int) error {
 	go s.wsDashboardBroadcaster()
 
 	addr := fmt.Sprintf(":%d", port)
-	log.Printf("[WEB] 控制台已就绪: http://127.0.0.1%s", addr)
+	log.Printf("[WEB] 🖥️ 控制台已就绪，本机访问: http://127.0.0.1:%d", port)
+	for _, ip := range lanIPv4s() {
+		log.Printf("[WEB] 🌐 局域网访问: http://%s:%d", ip, port)
+	}
 	return http.ListenAndServe(addr, s.Middleware(mux))
+}
+
+// lanIPv4s 返回本机所有已启用网卡上的非回环 IPv4 地址（用于打印局域网访问地址）。
+func lanIPv4s() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok || ipnet.IP.To4() == nil || ipnet.IP.IsLoopback() {
+				continue
+			}
+			ip := ipnet.IP.String()
+			dup := false
+			for _, seen := range out {
+				if seen == ip {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				out = append(out, ip)
+			}
+		}
+	}
+	return out
 }
 
 // Register 挂载全部业务路由。
