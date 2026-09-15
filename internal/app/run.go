@@ -138,9 +138,6 @@ func RecordSuccess(remotePath, name string, size int64) {
 // Run 启动完整应用生命周期（阻塞直到 SIGINT/SIGTERM）。
 func Run(opts Options) {
 	cli := opts.CLI
-	if cli.Dirs == "" {
-		log.Fatal("必须指定 -dirs")
-	}
 
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	log.SetOutput(&logx.Interceptor{Original: os.Stdout, Store: AppLogs})
@@ -179,6 +176,10 @@ func Run(opts Options) {
 
 	if cli.Rate > 0 {
 		CfgStore.Update(func(c *config.Config) { c.Rate = cli.Rate })
+	}
+
+	if len(AppCfg().Dirs) == 0 {
+		log.Println("[CONFIG] ⚠️ 未配置扫描目录：可通过 -dirs 参数指定，或在 config.json / Web 控制台中配置 dirs 后再启动扫描")
 	}
 
 	// 运行时数据统一落到 config.dataDir，并迁移启动目录里的历史数据文件

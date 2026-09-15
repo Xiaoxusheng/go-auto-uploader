@@ -50,7 +50,7 @@ func builtinActiveNames() []string {
 func main() {
 	var cli app.CLI
 
-	flag.StringVar(&cli.Dirs, "dirs", "", "扫描目录(逗号分隔)")
+	flag.StringVar(&cli.Dirs, "dirs", "", "扫描目录(逗号分隔，可选；不指定则使用 config.json 中的 dirs)")
 	flag.StringVar(&cli.Server, "server", "http://127.0.0.1:5244", "服务器")
 	flag.IntVar(&cli.Workers, "workers", 3, "并发")
 	flag.IntVar(&cli.Rate, "rate", 0, "手动限速 MB/s（>0 时覆盖日夜限速）")
