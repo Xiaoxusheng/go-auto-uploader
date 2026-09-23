@@ -2,7 +2,11 @@ package recorder
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -100,6 +104,28 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 		statusMsg = "已暂停"
 	}
 
+	// 状态真正变化时打一行，并带上调用方位置。
+	// 起因：线上出现过「主播实际在录、控制台却显示未开播」——后端状态停在「监控中」而非
+	// 「录制中」，但当时没有任何日志能看出是谁把它覆盖的。有这行就能直接定位到调用点。
+	if prev, ok := builtinStatusMap.Load(key); ok {
+		if old := prev.(*BuiltinTaskStatus); old.Status != statusMsg {
+			_, file, line, _ := runtime.Caller(1)
+			log.Printf("[STATUS] %s/%s %s: %q → %q  (%s)",
+				platform, roomID, anchorName, old.Status, statusMsg,
+				filepath.Base(file)+":"+strconv.Itoa(line))
+		}
+	}
+
+	// ✨ 兜底：已接管推流却拿不到有效起点时补当前时刻。
+	// 唯一会把 startTime 留成零值的路径是上面的防抖分支——命中 3 分钟窗口时
+	// 直接沿用 oldTask.startTime，而条目若刚被删过重建（热重载移除后重加、
+	// 删除后重加），旧快照的 startTime 就是零值，于是零值被一路继承下去。
+	// 后果：GetBuiltinRecorderTasks 判定 startTime 为零 → 下发 duration="-"，
+	// 前端「REC · 时长」恒显示 --:--（重启进程才恢复，因为状态表是内存态）。
+	if isBuiltinLiveStatus(statusMsg) && sTime.IsZero() {
+		sTime = now
+	}
+
 	// 整体覆盖指针，不存在内部并发修改的脏数据竞争问题
 	taskFlags := getBuiltinTaskFlags(platform, roomID)
 	builtinStatusMap.Store(key, &BuiltinTaskStatus{
@@ -119,6 +145,8 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 		MaxDuration:     taskFlags.MaxDuration,
 		SegmentTime:     taskFlags.SegmentTime,
 		Window:          taskFlags.Window,
+		Highlight:       taskFlags.Highlight,
+		HighlightOnly:   taskFlags.HighlightOnly,
 		startTime:       sTime,
 	})
 
@@ -130,6 +158,33 @@ func updateBuiltinStatus(platform, roomID, anchorName, avatar, quality, statusMs
 			hookTriggerScan(fmt.Sprintf("内置引擎捕获[%s]开播", anchorName))
 		}()
 	}
+}
+
+// resumeStatusAfterUnpause 返回「恢复监控」时应写入的状态。
+//
+// 关键约束：只有确实处于暂停态时才回落「监控中」。
+// 恢复监控走的是 builtinTaskStates 的 paused → running，但监控协程可能压根没停——
+// 典型路径是任务从未被暂停过，或暂停期间 RecordStream 仍在阻塞（ffmpeg 未退出、
+// 本场 TS 仍在增长）。此时状态表里的「录制中 / 截屏中」才是真实状态，无条件覆盖会
+// 让控制台在「正在录」的时候显示 IDLE，并且因为 RecordStream 只在启动录制时写一次
+// 状态（builtin_ffmpeg.go），这个错误会一直持续到本场录制结束才被下一轮循环纠正。
+// 副作用：GetBuiltinRecorderTasks 判 isBuiltinLiveStatus 失败 → 下发 duration="-"，
+// 前端「时长」恒显示 --:--，看起来像录制卡死。
+func resumeStatusAfterUnpause(cur string) string {
+	if cur == "" || cur == "已暂停" {
+		return "监控中"
+	}
+	return cur
+}
+
+// clearBuiltinDebounce 清理某任务的上下播通知防抖记录。
+// 任务条目被移除（删除 / 热重载剔除 / 监控协程退出）时必须一并清理：
+// 防抖记录按 platform_roomID 存，生命周期却比条目长。若残留，
+// 同一主播在 3 分钟内被重新加入并开播时会被误判成「同一次直播的静默重连」，
+// 既吞掉本该发出的开播通知，又会去继承一个已失效（甚至零值）的录制起点。
+func clearBuiltinDebounce(key string) {
+	builtinNotifyDebounce.Delete("live_" + key)
+	builtinNotifyDebounce.Delete("offline_" + key)
 }
 
 // updateBuiltinNameInTxt 将新解析到的主播自定义名称同步持久化更新至本地的名单文件中

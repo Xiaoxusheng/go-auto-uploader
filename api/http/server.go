@@ -27,8 +27,9 @@ import (
 )
 
 const (
-	authSessionTTL = 24 * time.Hour
 	maxKeyPoolSize = 4096
+	// sessionsFileName 登录会话落盘文件名（位于 config.dataDir 下）。
+	sessionsFileName = "sessions.json"
 )
 
 // Options 启动注入项。
@@ -95,6 +96,11 @@ func (s *Server) Start(port int) error {
 	}
 	s.rsaKeyPair = kp
 	log.Println("[SEC] 🛡️ 商业级动态 RSA+AES 混合加密中心已初始化")
+
+	// 登录令牌落盘到 dataDir：进程重启（含每次部署）后已登录的浏览器不必重新输密码。
+	// 同时绑定当前账号密码——改过凭据的话，历史会话会在载入时作废。
+	// 必须在 ListenAndServe 之前完成，否则首批请求可能落在尚未载入历史会话的空表上。
+	s.authSessions.Init(filepath.Join(app.AppCfg().DataDirPath(), sessionsFileName), app.DashUser, app.DashPass)
 
 	restoreQueueCounts()
 	app.SetRunning(true)

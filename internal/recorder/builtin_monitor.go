@@ -34,6 +34,7 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 				log.Printf("🗑️ [任务移除] 已停止监控 %s 房间: %s", platformName, roomID)
 				builtinStatusMap.Delete(key)
 				builtinActiveTasks.Delete(key)
+				clearBuiltinDebounce(key)
 				return
 			}
 
@@ -191,10 +192,12 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 				// 探测明确离线（未开播/已下播）：解除本场录满标记，下次开播恢复正常录制
 				cappedThisLive = false
 
-				if name != "" {
-					updateBuiltinStatus(platformName, roomID, name, avatar, q, "监控中")
-				}
-
+				// 这里曾经先写一次「监控中」再写「未开播等待中」（相隔 0.1~0.3ms），
+				// 两次调用的 name/avatar/quality 参数完全一致，纯属冗余。它唯一的效果
+				// 是给前端制造误报窗口：广播是 500ms 聚合，时机不巧就会把这个瞬态推给
+				// 前端，让「未开播」的卡片闪成 IDLE（灰点）——线上实测每 15~20 秒就会
+				// 为每个未开播主播闪现一次。更糟的是它会把下面这次写入看到的 prev 状态
+				// 改成非 live，从而绕过 builtin_status.go 的下播通知分支。
 				sleepDur := Config().CheckInterval
 				if sleepDur < 10 {
 					sleepDur = 10

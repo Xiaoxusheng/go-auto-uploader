@@ -73,6 +73,35 @@ type BuiltinSettings struct {
 	WatermarkFontSize    int    `json:"watermark_font_size"`
 	WatermarkFontColor   string `json:"watermark_font_color"`
 
+	// Highlight* 高光切片：录制切片落盘后离线分析，自动裁出活跃片段。
+	// 判定用「画面运动量 + 音频能量」双因子，权重默认偏向运动量——
+	// 实测跳舞直播里音频与「跳舞」负相关（主播跳舞时停止说话）。
+	HighlightEnable    bool    `json:"highlight_enable"`        // 总开关，默认关闭
+	HighlightMotionW   float64 `json:"highlight_motion_weight"` // 画面运动量权重
+	HighlightAudioW    float64 `json:"highlight_audio_weight"`  // 音频能量权重
+	HighlightThreshold float64 `json:"highlight_threshold"`     // 综合分阈值（自适应 z 分，非绝对量）
+	HighlightMinDur    int     `json:"highlight_min_duration"`  // 最短高光（秒），短于此丢弃
+	HighlightMaxDur    int     `json:"highlight_max_duration"`  // 单个高光最长（秒）
+	HighlightPerClip   int     `json:"highlight_per_clip"`      // 每个切片最多产出几个高光
+	HighlightMergeGap  int     `json:"highlight_merge_gap"`     // 相邻候选段合并间隔（秒）
+	// HighlightSmoothWindow z 分归一化前的滑动平均窗口（秒），0/未配置时回落 5。
+	// 调大它会让运动量曲线更平滑，压掉「礼物特效/切场景」那种几秒的孤立尖峰；
+	// ⚠️ 但它同时会缩小 MAD、把 z 分整体放大，所以**必须与 HighlightThreshold 一起改**：
+	// 实测把 5→15 时，阈值要 1.2→1.8 才对应同一档灵敏度（见 docs/highlight-progress.md §13）。
+	HighlightSmoothWindow int `json:"highlight_smooth_window"`
+	// HighlightOnlyUpload 为 true 时，开了高光的主播只上传高光片段，原片保留在本地不上传。
+	// 单主播可用「只传高光:1/0」覆盖。
+	HighlightOnlyUpload bool `json:"highlight_only_upload"`
+	// HighlightSourceRetentionDays 源片最长保留天数，0 或负值表示关闭。
+	//
+	// 正常路径下源片会在「上传成功」或「高光分析完成」后立即删除，这个兜底只针对
+	// 异常残留：上传长期失败、分析反复失败、标了「只传高光」但高光从未跑起来等。
+	// 没有它，这类文件会一直占盘直到写满（线上实测单个主播堆到 14GB）。
+	//
+	// 用指针是为了区分「未配置」（nil → 默认 7 天）与「显式关闭」（0）。
+	// 未开启上传的实例（采集/训练机）不执行清理 —— 那种实例本地就是唯一副本。
+	HighlightSourceRetentionDays *int `json:"highlight_source_retention_days"`
+
 	// Cookies 原 builtin_cookies.json
 	Cookies BuiltinCookies `json:"cookies"`
 }
@@ -215,6 +244,49 @@ func (b *BuiltinSettings) ApplyDefaults() {
 	if b.WatermarkFontColor == "" {
 		b.WatermarkFontColor = "white@0.95"
 	}
+	// 高光参数：基于真实素材校准的经验值。
+	// 权重两者同时为 0 才视为「未设置」，这样用户可把音频权重显式设为 0、只保留运动量。
+	if b.HighlightMotionW == 0 && b.HighlightAudioW == 0 {
+		b.HighlightMotionW, b.HighlightAudioW = 0.8, 0.2
+	}
+	if b.HighlightThreshold <= 0 {
+		b.HighlightThreshold = 1.5
+	}
+	// 平滑窗口默认 5，与改动前 score.go 的常量一致 —— 未配置时行为完全不变。
+	if b.HighlightSmoothWindow <= 0 {
+		b.HighlightSmoothWindow = 5
+	}
+	if b.HighlightMinDur <= 0 {
+		b.HighlightMinDur = 15
+	}
+	if b.HighlightMaxDur <= 0 {
+		b.HighlightMaxDur = 180
+	}
+	if b.HighlightPerClip <= 0 {
+		b.HighlightPerClip = 3
+	}
+	if b.HighlightMergeGap <= 0 {
+		// 鲁棒性关键参数：太小会在候选间隔处断链，把一整支舞切成互不相连的几段。
+		b.HighlightMergeGap = 20
+	}
+}
+
+// defaultSourceRetentionDays 是源片兜底清理的默认保留天数。
+const defaultSourceRetentionDays = 7
+
+// SourceRetentionDays 返回生效的源片保留天数。
+//
+// 未配置时返回默认的 7 天；显式配置 0 或负值表示关闭清理（返回 0）。
+// 之所以用指针字段 + 取值方法、而不是在 applyDefaults 里补默认值，
+// 是为了让「没配过」和「明确要关掉」这两种情况区分得开。
+func (b BuiltinSettings) SourceRetentionDays() int {
+	if b.HighlightSourceRetentionDays == nil {
+		return defaultSourceRetentionDays
+	}
+	if *b.HighlightSourceRetentionDays <= 0 {
+		return 0
+	}
+	return *b.HighlightSourceRetentionDays
 }
 
 // DataDirPath 返回生效的数据目录（已补默认值）。

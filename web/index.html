@@ -1565,7 +1565,7 @@
         .rec-dot.is-rec, .rec-dot.is-live, .rec-dot.is-error { background: #f53f3f; }
         .rec-dot.is-on { background: #00b42a; }
         .rec-dot.is-paused { background: #ff7d00; }
-        .rec-dot.is-init, .rec-dot.is-buffer { background: var(--rec-text-3, #86909c); }
+        .rec-dot.is-init, .rec-dot.is-buffer, .rec-dot.is-idle { background: var(--rec-text-3, #86909c); }
         .rec-dot.is-pulse { animation: recPulse 1.6s ease-in-out infinite; }
 
         body[arco-theme='dark'] .rec-dot:not(.is-rec):not(.is-live):not(.is-error):not(.is-paused) {
@@ -4090,6 +4090,34 @@
                                                   @click="saveBuiltinWatermark">保存</a-button>
                                     </span>
                                 </div>
+                                <div class="rec-drawer-row">
+                                    <span class="rec-drawer-label">高光切片</span>
+                                    <span style="display: flex; align-items: center; gap: 6px;">
+                                        <a-tooltip content="该主播高光切片覆盖：跟随全局用「引擎设置」里的开关。开启后切片落盘会自动分析并裁出高光片段，属离线后处理，不会中断录制">
+                                            <a-select v-model="highlightEdit" size="mini" style="width: 100px;">
+                                                <a-option :value="0">跟随全局</a-option>
+                                                <a-option :value="1">强制开启</a-option>
+                                                <a-option :value="2">强制关闭</a-option>
+                                            </a-select>
+                                        </a-tooltip>
+                                        <a-button size="mini" type="primary" :loading="highlightSaving"
+                                                  @click="saveBuiltinHighlight">保存</a-button>
+                                    </span>
+                                </div>
+                                <div class="rec-drawer-row">
+                                    <span class="rec-drawer-label">高光上传</span>
+                                    <span style="display: flex; align-items: center; gap: 6px;">
+                                        <a-tooltip content="开启后该主播的原片不上传，高光分析结束（含未检出）后原片会从本地删除；远端只收高光片段，高光文件位于「主播目录/<日期>/高光」下">
+                                            <a-select v-model="highlightOnlyEdit" size="mini" style="width: 100px;">
+                                                <a-option :value="0">跟随全局</a-option>
+                                                <a-option :value="1">只传高光</a-option>
+                                                <a-option :value="2">原片也传</a-option>
+                                            </a-select>
+                                        </a-tooltip>
+                                        <a-button size="mini" type="primary" :loading="highlightOnlySaving"
+                                                  @click="saveBuiltinHighlightOnly">保存</a-button>
+                                    </span>
+                                </div>
                             </div>
 
                             <div class="rec-drawer-section">
@@ -4862,6 +4890,81 @@
                             </a-col>
                         </a-row>
 
+                        <a-divider style="margin: 12px 0;"><span style="color: var(--color-text-3); font-size: 12px;">高光切片</span></a-divider>
+
+                        <div class="cfg-switch-row" :class="{ 'is-on': builtinSettings.highlight_enable }">
+                            <div class="cfg-switch-main">
+                                <span class="cfg-switch-label">自动提取高光片段</span>
+                                <span class="cfg-switch-desc">切片落盘后离线分析，把动作最活跃的片段单独裁成 mp4 一起上传；可在每个主播的任务详情里单独覆盖</span>
+                            </div>
+                            <a-switch v-model="builtinSettings.highlight_enable" checked-color="#165DFF" unchecked-color="#C9CDD4">
+                                <template #checked>ON</template>
+                                <template #unchecked>OFF</template>
+                            </a-switch>
+                        </div>
+
+                        <template v-if="builtinSettings.highlight_enable">
+                            <div class="cfg-switch-row" :class="{ 'is-on': builtinSettings.highlight_only_upload }">
+                                <div class="cfg-switch-main">
+                                    <span class="cfg-switch-label">只上传高光片段</span>
+                                    <span class="cfg-switch-desc">原片不上传、高光分析完即从本地删除，远端只收高光；截图照常上传；可在每个主播的任务详情里单独覆盖</span>
+                                </div>
+                                <a-switch v-model="builtinSettings.highlight_only_upload" checked-color="#165DFF" unchecked-color="#C9CDD4">
+                                    <template #checked>ON</template>
+                                    <template #unchecked>OFF</template>
+                                </a-switch>
+                            </div>
+
+                            <a-row :gutter="12">
+                                <a-col :span="12">
+                                    <a-form-item label="运动量权重" tooltip="画面动作幅度的权重。实测跳舞直播里这一项最有效，建议保持 0.8 左右">
+                                        <a-input-number v-model="builtinSettings.highlight_motion_weight" :min="0" :max="10"
+                                                        :step="0.1" style="width: 100%;"></a-input-number>
+                                    </a-form-item>
+                                </a-col>
+                                <a-col :span="12">
+                                    <a-form-item label="音频权重" tooltip="声音能量的权重。跳舞时主播往往不说话，这一项在跳舞场景反而会拉低准确度，建议 0.2 或直接设 0">
+                                        <a-input-number v-model="builtinSettings.highlight_audio_weight" :min="0" :max="10"
+                                                        :step="0.1" style="width: 100%;"></a-input-number>
+                                    </a-form-item>
+                                </a-col>
+                            </a-row>
+                            <a-row :gutter="12">
+                                <a-col :span="8">
+                                    <a-form-item label="灵敏度阈值" tooltip="综合分超过该值才算高光。调低更灵敏（可能多检），调高更严格（可能漏检）。默认 1.5">
+                                        <a-input-number v-model="builtinSettings.highlight_threshold" :min="0.5" :max="10"
+                                                        :step="0.1" style="width: 100%;"></a-input-number>
+                                    </a-form-item>
+                                </a-col>
+                                <a-col :span="8">
+                                    <a-form-item label="最短高光 (秒)" tooltip="短于该时长的候选片段会被丢弃，用来滤掉抖动噪声。默认 15">
+                                        <a-input-number v-model="builtinSettings.highlight_min_duration" :min="5"
+                                                        :max="600" style="width: 100%;"></a-input-number>
+                                    </a-form-item>
+                                </a-col>
+                                <a-col :span="8">
+                                    <a-form-item label="单个最长 (秒)" tooltip="单个高光片段的上限，超出则保留分数最高的一段。默认 180">
+                                        <a-input-number v-model="builtinSettings.highlight_max_duration" :min="30"
+                                                        :max="3600" style="width: 100%;"></a-input-number>
+                                    </a-form-item>
+                                </a-col>
+                            </a-row>
+                            <a-row :gutter="12">
+                                <a-col :span="8">
+                                    <a-form-item label="合并间隔 (秒)" tooltip="相邻候选片段的间隔小于该值就合并成一段。调大能避免把一整支舞切成几段，默认 20">
+                                        <a-input-number v-model="builtinSettings.highlight_merge_gap" :min="0"
+                                                        :max="300" style="width: 100%;"></a-input-number>
+                                    </a-form-item>
+                                </a-col>
+                                <a-col :span="8">
+                                    <a-form-item label="每片最多几个" tooltip="每个录像切片最多产出几个高光片段。默认 3">
+                                        <a-input-number v-model="builtinSettings.highlight_per_clip" :min="1"
+                                                        :max="20" style="width: 100%;"></a-input-number>
+                                    </a-form-item>
+                                </a-col>
+                            </a-row>
+                        </template>
+
                         <a-divider style="margin: 12px 0;"><span style="color: var(--color-text-3); font-size: 12px;">水印设置</span></a-divider>
 
                         <div class="cfg-switch-row" :class="{ 'is-on': builtinSettings.watermark_enable }">
@@ -5345,7 +5448,9 @@
             let pollingTimer = null;
             let ws = null;
 
-            const loginForm = reactive({username: 'admin', password: 'admin', otp: ''});
+            // 凭据不预填：预填 admin/admin 等于向任何打开页面的人泄露口令，
+            // 且默认弱口令会在服务端触发高危告警
+            const loginForm = reactive({username: '', password: ''});
 
             const systemStatus = reactive({
                 running: false,
@@ -5514,7 +5619,16 @@
                 watermark_format: '%Y-%m-%d %H:%M:%S',
                 watermark_position: 'bottom-right',
                 watermark_font_size: 38,
-                watermark_font_color: '#FFFFFFE6'
+                watermark_font_color: '#FFFFFFE6',
+                highlight_enable: false,
+                highlight_motion_weight: 0.8,
+                highlight_audio_weight: 0.2,
+                highlight_threshold: 1.5,
+                highlight_min_duration: 15,
+                highlight_max_duration: 180,
+                highlight_merge_gap: 20,
+                highlight_per_clip: 3,
+                highlight_only_upload: false
             });
             const builtinCookies = ref({douyin: '', kuaishou: '', soop: '', bilibili: '', twitch: ''});
             // Cookie 平台卡片配置：驱动设置弹窗 Cookie 标签页渲染
@@ -5612,6 +5726,10 @@
                         return {key: 'init', badge: 'INIT', label: '配置重载', pulse: true};
                     case '初始化中':
                         return {key: 'init', badge: 'INIT', label: '等待抓取', pulse: true};
+                    case '监控中':
+                        // 后端「监控中」= 正在轮询探测、当前未录制。它以前落到 default 被显示成
+                        // 「未开播」，于是「实际在录却显示未开播」这种误导就出现了，这里单独给一档。
+                        return {key: 'idle', badge: 'IDLE', label: '监控中', pulse: false};
                     default:
                         return {key: 'offline', badge: 'OFFLINE', label: '未开播', pulse: false};
                 }
@@ -5723,6 +5841,12 @@
             // 单主播水印覆盖编辑态：0=跟随全局 1=强制开 2=强制关
             const watermarkEdit = ref(0);
             const watermarkSaving = ref(false);
+            // 单主播高光切片覆盖编辑态：0=跟随全局 1=强制开 2=强制关
+            const highlightEdit = ref(0);
+            const highlightSaving = ref(false);
+            // 单主播「只传高光」编辑态：0=跟随全局 1=只传高光 2=原片也传
+            const highlightOnlyEdit = ref(0);
+            const highlightOnlySaving = ref(false);
             // 单主播画质覆盖编辑态：'' = 跟随全局（与后端空串语义对应）
             const qualityEdit = ref('');
             const qualitySaving = ref(false);
@@ -5764,6 +5888,10 @@
                 shotIntervalEdit.value = Number(record.shot_interval) > 0 ? Number(record.shot_interval) : null;
                 const wm = Number(record.watermark);
                 watermarkEdit.value = (wm === 1 || wm === 2) ? wm : 0;
+                const hl = Number(record.highlight);
+                highlightEdit.value = (hl === 1 || hl === 2) ? hl : 0;
+                const hlo = Number(record.highlight_only);
+                highlightOnlyEdit.value = (hlo === 1 || hlo === 2) ? hlo : 0;
                 qualityEdit.value = ['uhd', 'hd', 'sd'].includes(record.quality_override) ? record.quality_override : '';
                 maxDurationEdit.value = Number(record.max_duration) > 0 ? Number(record.max_duration) : null;
                 segmentTimeEdit.value = Number(record.segment_time) > 0 ? Number(record.segment_time) : null;
@@ -5825,6 +5953,62 @@
                     Message.error('水印设置保存失败');
                 } finally {
                     watermarkSaving.value = false;
+                }
+            };
+
+            /**
+             * 保存当前主播的高光切片覆盖（0=跟随全局 1=强制开 2=强制关）。
+             * 高光是离线后处理，改完只影响后续落盘的切片，不会中断录制。
+             */
+            const saveBuiltinHighlight = async () => {
+                const record = recDrawer.record;
+                if (!record) return;
+                const val = Number(highlightEdit.value) === 1 || Number(highlightEdit.value) === 2
+                    ? Number(highlightEdit.value) : 0;
+                highlightSaving.value = true;
+                try {
+                    await api.post('/builtin_recorder/control', {
+                        action: 'set_flags',
+                        platform: record.platform,
+                        room_id: record.room_id,
+                        highlight: val
+                    });
+                    record.highlight = val;
+                    const label = val === 1 ? '已强制开启该主播高光切片'
+                        : val === 2 ? '已强制关闭该主播高光切片' : '该主播高光切片已恢复跟随全局';
+                    Message.success(label);
+                } catch (e) {
+                    Message.error('高光设置保存失败');
+                } finally {
+                    highlightSaving.value = false;
+                }
+            };
+
+            /**
+             * 保存当前主播的「只传高光」覆盖（0=跟随全局 1=只传高光 2=原片也传）。
+             * 开启后原片保留在本地不上传，远端只收高光片段。
+             */
+            const saveBuiltinHighlightOnly = async () => {
+                const record = recDrawer.record;
+                if (!record) return;
+                const val = Number(highlightOnlyEdit.value) === 1 || Number(highlightOnlyEdit.value) === 2
+                    ? Number(highlightOnlyEdit.value) : 0;
+                highlightOnlySaving.value = true;
+                try {
+                    await api.post('/builtin_recorder/control', {
+                        action: 'set_flags',
+                        platform: record.platform,
+                        room_id: record.room_id,
+                        highlight_only: val
+                    });
+                    record.highlight_only = val;
+                    const label = val === 1 ? '该主播已设为只上传高光（原片不再上传）'
+                        : val === 2 ? '该主播原片与高光都会上传' : '该主播上传策略已恢复跟随全局';
+                    Message.success(label);
+                } catch (e) {
+                    Message.error('上传策略保存失败');
+                } finally {
+                    highlightOnlySaving.value = false;
                 }
             };
 
@@ -6164,6 +6348,18 @@
                             savedColor = '#FFFFFFE6';
                         }
                         builtinSettings.value.watermark_font_color = savedColor;
+
+                        // 高光切片参数：后端未返回时回落到与后端一致的默认值。
+                        // 权重用 ?? 而非 ||，因为 0 是合法值（只保留单因子）。
+                        builtinSettings.value.highlight_enable = res1.data.highlight_enable || false;
+                        builtinSettings.value.highlight_motion_weight = res1.data.highlight_motion_weight ?? 0.8;
+                        builtinSettings.value.highlight_audio_weight = res1.data.highlight_audio_weight ?? 0.2;
+                        builtinSettings.value.highlight_threshold = res1.data.highlight_threshold || 1.5;
+                        builtinSettings.value.highlight_min_duration = res1.data.highlight_min_duration || 15;
+                        builtinSettings.value.highlight_max_duration = res1.data.highlight_max_duration || 180;
+                        builtinSettings.value.highlight_merge_gap = res1.data.highlight_merge_gap || 20;
+                        builtinSettings.value.highlight_per_clip = res1.data.highlight_per_clip || 3;
+                        builtinSettings.value.highlight_only_upload = res1.data.highlight_only_upload || false;
                     }
                     const res2 = await api.get('/builtin_recorder/cookies');
                     if (res2.data) {
@@ -6383,6 +6579,8 @@
              */
             const handleGlobalKeydown = (e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
+                    const el = e.target;
+                    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
                     if (activeTab.value === 'streamers') {
                         e.preventDefault();
                         if (streamerSearchRef.value) {
@@ -6708,20 +6906,14 @@
             };
 
             watch(queueStatus, renderChart, {deep: true});
-            watch(activeTab, (val) => {
-                if (val === 'overview') {
-                    setTimeout(() => {
-                        renderChart();
-                        renderTrendChart();
-                    }, 200);
-                }
-            });
 
-            window.addEventListener('resize', () => {
+            // resize 用命名 handler：匿名函数无法被 removeEventListener 匹配，会随登出/重登不断累积
+            const handleWindowResize = () => {
                 handleResize();
                 if (chartInstance) chartInstance.resize();
                 if (trendChartInstance) trendChartInstance.resize();
-            });
+            };
+            window.addEventListener('resize', handleWindowResize);
 
             /**
              * 处理后台管理系统管理员身份验证核发接口的 POST 请求与持久化业务
@@ -6729,7 +6921,11 @@
             const handleLogin = async () => {
                 loginLoading.value = true;
                 try {
-                    const res = await api.post('/auth/login', loginForm);
+                    // otp 字段后端未启用，不再发送
+                    const res = await api.post('/auth/login', {
+                        username: loginForm.username,
+                        password: loginForm.password
+                    });
                     localStorage.setItem('upload_system_token', res.data.token);
                     isLoggedIn.value = true;
                     Message.success('网关认证成功');
@@ -6981,6 +7177,9 @@
              * 构建全功能的 WebSocket 客户端信道，并封装断线重连、密文解码鉴别与心跳存活自动确认处理机
              */
             const connectWS = async () => {
+                // 已登出（或 token 被清）时不再建立连接：否则登出后挂起的重连定时器仍会拿旧 token 反复握手
+                if (!isLoggedIn.value || !localStorage.getItem('upload_system_token')) return;
+
                 if (window._encryptionEnabled && !_sessionId) {
                     await initSecurity();
                 }
@@ -7297,7 +7496,8 @@
              */
             const downloadLogs = async () => {
                 try {
-                    let url = `/api/v1/logs/download?limit=${logExportLimit.value}&level=${logQuery.level}&keyword=${logQuery.keyword}`;
+                    // level/keyword 进查询串，必须编码，否则关键词里的空格、&、# 会截断参数
+                    let url = `/api/v1/logs/download?limit=${logExportLimit.value}&level=${encodeURIComponent(logQuery.level || '')}&keyword=${encodeURIComponent(logQuery.keyword || '')}`;
                     if (window._encryptionEnabled) {
                         if (!_sessionId) await initSecurity();
                         url += `&session_id=${_sessionId}`;
@@ -7402,8 +7602,12 @@
              * @returns {string} 合合并修整完成带标签展示文本串
              */
             const formatDuration = (seconds) => {
-                const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60);
-                return `${h}h ${m}m`;
+                if (!seconds || seconds < 0) return '0h 0m';
+                const d = Math.floor(seconds / 86400);
+                const h = Math.floor((seconds % 86400) / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                // 超过一天按天计，避免出现 "72h 5m" 这类反直觉读数
+                return d > 0 ? `${d}d ${h}h ${m}m` : `${h}h ${m}m`;
             };
 
             /**
@@ -7482,9 +7686,12 @@
             const cleanUp = () => {
                 if (pollingTimer) clearInterval(pollingTimer);
                 if (pingTimer) clearInterval(pingTimer);
+                pollingTimer = null;
+                pingTimer = null;
                 if (ws) {
                     ws.onclose = null;
                     ws.close();
+                    ws = null;
                 }
                 if (chartInstance) {
                     chartInstance.dispose();
@@ -7494,9 +7701,25 @@
                     trendChartInstance.dispose();
                     trendChartInstance = null;
                 }
-                window.removeEventListener('resize', handleResize);
-                document.removeEventListener('compositionstart', handleCompositionGuard, true);
-                document.removeEventListener('compositionend', handleCompositionGuard, true);
+                // 全局监听（keydown / composition / visibilitychange）在 onMounted 注册一次、
+                // 仅 onUnmounted 移除；这里若移除，重新登录后输入法保护与快捷键会静默失效。
+
+                // 登出后清空内存中的业务数据，避免换账号登录时闪现上一个会话的内容
+                liveTasks.value = [];
+                builtinTasks.value = [];
+                streamers.value = [];
+                activeRecordingStreamers.value = [];
+                statsData.trend = [];
+                statsData.rank = [];
+                Object.assign(queueStatus, {waiting: 0, uploading: 0, success: 0, failed: 0, retrying: 0});
+                Object.assign(trafficMetrics, {speed: 0, time: 0});
+                Object.assign(systemStatus, {
+                    running: false, uptime: 0, workers: 0, rate: 0, dirs: [],
+                    dynamicInterval: 0, nextScanTime: 0, scanningInterval: 0, diskFree: 0, ffmpegMem: 0
+                });
+                wsStats.msgCount = 0;
+                window.lastStatsStr = '';
+                window.lastStreamersStr = '';
             };
 
             onMounted(() => {
@@ -7552,6 +7775,12 @@
                 if (newTab === 'builtin_recorder') {
                     fetchBuiltinConfig();
                 }
+                if (newTab === 'overview') {
+                    setTimeout(() => {
+                        renderChart();
+                        renderTrendChart();
+                    }, 200);
+                }
             });
 
             watch(() => logData.items.length, () => {
@@ -7592,6 +7821,8 @@
                 builtinPlatformCount, builtinSyncText, builtinAddFeedback, recDrawer, recDrawerView, openRecDrawer,
                 shotIntervalEdit, shotIntervalSaving, saveBuiltinShotInterval, shotToggleTip,
                 watermarkEdit, watermarkSaving, saveBuiltinWatermark,
+                highlightEdit, highlightSaving, saveBuiltinHighlight,
+                highlightOnlyEdit, highlightOnlySaving, saveBuiltinHighlightOnly,
                 qualityEdit, qualitySaving, saveBuiltinQuality,
                 maxDurationEdit, maxDurationSaving, saveBuiltinMaxDuration,
                 segmentTimeEdit, segmentTimeSaving, saveBuiltinSegmentTime,

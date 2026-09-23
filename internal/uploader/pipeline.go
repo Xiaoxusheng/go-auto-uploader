@@ -28,6 +28,22 @@ type Pipeline struct {
 	OnUpload      func(ctx context.Context, local, remotePath string, size int64) bool
 	RecordSuccess func(remotePath, name string, size int64)
 	Broadcast     func(typ string, payload any)
+
+	// BeforeRemove 在删除源文件前询问调用方是否放行。
+	//
+	// 返回 false 表示调用方已认领该文件，后续清理由它负责 —— 高光切片需要读到
+	// 原始录像才能产出，而「上传成功即删源」会让它永远读不到（上传流程在切片封口
+	// 后一两分钟内就完成转换+上传+删除，高光的 3 分钟稳定期还没到）。
+	// 为 nil 时一律允许删除，行为与历史一致。
+	BeforeRemove func(path string) bool
+}
+
+// mayRemove 询问 BeforeRemove 是否允许删除该文件；未注入钩子时放行。
+func (p *Pipeline) mayRemove(path string) bool {
+	if p.BeforeRemove == nil {
+		return true
+	}
+	return p.BeforeRemove(path)
 }
 
 // IsTS / IsArtifact re-export convert helpers.
@@ -113,7 +129,11 @@ func (p *Pipeline) HandleFile(ctx context.Context, path string, roots []string) 
 		if p.Broadcast != nil {
 			p.Broadcast("taskDone", map[string]any{"status": "success", "size": info.Size()})
 		}
-		_ = os.Remove(path)
+		// 原 TS 一律删（path 已是内容等价的 MP4，留一份就够）；
+		// 只有 path 本身可能被高光认领，认领后由高光模块分析完自行清理。
+		if p.mayRemove(path) {
+			_ = os.Remove(path)
+		}
 		if originalTS != "" {
 			_ = os.Remove(originalTS)
 		}
@@ -127,7 +147,10 @@ func (p *Pipeline) HandleFile(ctx context.Context, path string, roots []string) 
 	if p.HashDB != nil {
 		p.HashDB.Save(hash)
 	}
-	_ = os.Remove(path)
+	// 同秒传分支：原 TS 直接删，path 需先问过高光是否认领。
+	if p.mayRemove(path) {
+		_ = os.Remove(path)
+	}
 	if originalTS != "" {
 		_ = os.Remove(originalTS)
 	}

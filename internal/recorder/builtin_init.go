@@ -95,7 +95,7 @@ func builtinHotReloadLoop() {
 							// ✨ 优化：采用值拷贝更新状态
 							task := *(existingTask.(*BuiltinTaskStatus))
 							task.IsPaused = false
-							task.Status = "监控中"
+							task.Status = resumeStatusAfterUnpause(task.Status)
 							builtinStatusMap.Store(key, &task)
 						}
 						if p := NewBuiltinPlatform(platformName); p != nil {
@@ -116,6 +116,7 @@ func builtinHotReloadLoop() {
 						}
 						builtinStatusMap.Delete(key)
 						builtinActiveTasks.Delete(key)
+						clearBuiltinDebounce(key)
 					}
 				}
 				return true
@@ -236,6 +237,8 @@ func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 		task.MaxDuration = f.MaxDuration
 		task.SegmentTime = f.SegmentTime
 		task.Window = f.Window
+		task.Highlight = f.Highlight
+		task.HighlightOnly = f.HighlightOnly
 		safeName := sanitizeBuiltinFileName(task.AnchorName)
 		if safeName == "" {
 			safeName = task.RoomID

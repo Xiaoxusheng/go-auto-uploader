@@ -45,6 +45,30 @@ func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 			if c.WatermarkFontColor != "" {
 				b.WatermarkFontColor = c.WatermarkFontColor
 			}
+			// 高光切片参数全部是离线后处理用的，不影响录制会话，直接赋值即可。
+			// 权重用「两者同时为 0 视为未提交」判定，这样 0 仍可作为合法值提交
+			//（只保留单因子）；其余数值项的 0 都不是合法取值，用 > 0 判定。
+			b.HighlightEnable = c.HighlightEnable
+			if c.HighlightMotionW > 0 || c.HighlightAudioW > 0 {
+				b.HighlightMotionW = c.HighlightMotionW
+				b.HighlightAudioW = c.HighlightAudioW
+			}
+			if c.HighlightThreshold > 0 {
+				b.HighlightThreshold = c.HighlightThreshold
+			}
+			if c.HighlightMinDur > 0 {
+				b.HighlightMinDur = c.HighlightMinDur
+			}
+			if c.HighlightMaxDur > 0 {
+				b.HighlightMaxDur = c.HighlightMaxDur
+			}
+			if c.HighlightPerClip > 0 {
+				b.HighlightPerClip = c.HighlightPerClip
+			}
+			if c.HighlightMergeGap > 0 {
+				b.HighlightMergeGap = c.HighlightMergeGap
+			}
+			b.HighlightOnlyUpload = c.HighlightOnlyUpload
 		})
 
 		if err := PersistConfig(); err != nil {
@@ -248,17 +272,19 @@ func apiRecorderAdd(w http.ResponseWriter, r *http.Request) {
 // apiRecorderControl 为列表里的单条项目指派状态机动作（恢复监控、挂起监控、完全剔除、设置录屏/截屏开关等）
 func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Action       string  `json:"action"`
-		Platform     string  `json:"platform"`
-		RoomID       string  `json:"room_id"`
-		Record       *bool   `json:"record"`
-		Screenshot   *bool   `json:"screenshot"`
-		ShotInterval *int    `json:"shot_interval"`
-		Watermark    *int    `json:"watermark"`    // 0=跟随全局 1=强制开 2=强制关
-		Quality      *string `json:"quality"`      // ""=跟随全局 uhd/hd/sd
-		MaxDuration  *int    `json:"max_duration"`  // 单场最长录制时长（分钟），0=不限制
-		SegmentTime  *int    `json:"segment_time"`  // 单主播切片时长（分钟），0=跟随全局
-		Window       *string `json:"window"`        // 录制时段 "HH:MM-HH:MM"，""=全天
+		Action        string  `json:"action"`
+		Platform      string  `json:"platform"`
+		RoomID        string  `json:"room_id"`
+		Record        *bool   `json:"record"`
+		Screenshot    *bool   `json:"screenshot"`
+		ShotInterval  *int    `json:"shot_interval"`
+		Watermark     *int    `json:"watermark"`      // 0=跟随全局 1=强制开 2=强制关
+		Quality       *string `json:"quality"`        // ""=跟随全局 uhd/hd/sd
+		MaxDuration   *int    `json:"max_duration"`   // 单场最长录制时长（分钟），0=不限制
+		SegmentTime   *int    `json:"segment_time"`   // 单主播切片时长（分钟），0=跟随全局
+		Window        *string `json:"window"`         // 录制时段 "HH:MM-HH:MM"，""=全天
+		Highlight     *int    `json:"highlight"`      // 0=跟随全局 1=强制开 2=强制关（离线后处理）
+		HighlightOnly *int    `json:"highlight_only"` // 0=跟随全局 1=只传高光 2=原片与高光都传
 	}
 
 	if err := hookParseEncrypted(r, &req); err != nil {
@@ -303,9 +329,15 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 				cur.Window = v
 			}
 		}
-		// 录屏/截屏开关变化需要重开会话；截图间隔、截图水印与最长录制时长由
-		// 抽帧循环/录制巡检热读取，无需断流；画质决定拉流档位，切片时长决定
-		// ffmpeg 分段参数，两者都只在进程启动时生效，须重开会话
+		if req.Highlight != nil && *req.Highlight >= 0 && *req.Highlight <= 2 {
+			cur.Highlight = *req.Highlight
+		}
+		if req.HighlightOnly != nil && *req.HighlightOnly >= 0 && *req.HighlightOnly <= 2 {
+			cur.HighlightOnly = *req.HighlightOnly
+		}
+		// 录屏/截屏开关变化需要重开会话；截图间隔、截图水印、最长录制时长与高光
+		// 由抽帧循环/录制巡检/离线后处理热读取，无需断流；画质决定拉流档位，
+		// 切片时长决定 ffmpeg 分段参数，两者都只在进程启动时生效，须重开会话
 		modeChanged := cur.Record != prev.Record || cur.Screenshot != prev.Screenshot
 		// 视频水印与拉流画质只在 ffmpeg 启动时生效：变化且正在录屏时须重开会话
 		wmChanged := cur.Watermark != prev.Watermark
@@ -323,6 +355,8 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 			task.MaxDuration = cur.MaxDuration
 			task.SegmentTime = cur.SegmentTime
 			task.Window = cur.Window
+			task.Highlight = cur.Highlight
+			task.HighlightOnly = cur.HighlightOnly
 			builtinStatusMap.Store(key, &task)
 		}
 		if wmChanged {
@@ -343,6 +377,12 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 		}
 		if cur.Window != prev.Window {
 			log.Printf("[BUILTIN] ⏰ 主播 %s（%s）录制时段已切换为 %q（热生效，无需重开）", req.Platform, req.RoomID, cur.Window)
+		}
+		if cur.Highlight != prev.Highlight {
+			log.Printf("[BUILTIN] ✨ 主播 %s（%s）高光切片已切换为 %d（离线后处理，热生效）", req.Platform, req.RoomID, cur.Highlight)
+		}
+		if cur.HighlightOnly != prev.HighlightOnly {
+			log.Printf("[BUILTIN] 📤 主播 %s（%s）只传高光已切换为 %d（上传策略，热生效）", req.Platform, req.RoomID, cur.HighlightOnly)
 		}
 		// 录屏/截屏/画质/水印/切片实际变化 → 直接取消；纯水印或画质变化 → 先打配置重载标记
 		//（让监控循环知道这是配置重开、不是断流，避免误报下播）
@@ -376,7 +416,7 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 			// ✨ 优化：值拷贝避免并发竞争
 			task := *(existing.(*BuiltinTaskStatus))
 			task.IsPaused = false
-			task.Status = "监控中"
+			task.Status = resumeStatusAfterUnpause(task.Status)
 			builtinStatusMap.Store(key, &task)
 		}
 		if p := NewBuiltinPlatform(req.Platform); p != nil {
@@ -390,6 +430,7 @@ func apiRecorderControl(w http.ResponseWriter, r *http.Request) {
 		syncBuiltinAnchorToTxt("delete", req.Platform, req.RoomID, "")
 		builtinStatusMap.Delete(key)
 		builtinActiveTasks.Delete(key)
+		clearBuiltinDebounce(key)
 	}
 	triggerBuiltinBroadcast()
 	hookJSONOK(w, r, nil)
@@ -457,7 +498,7 @@ func apiRecorderControlAll(w http.ResponseWriter, r *http.Request) {
 			// ✨ 优化：安全值拷贝
 			taskVal := *(task)
 			taskVal.IsPaused = false
-			taskVal.Status = "监控中"
+			taskVal.Status = resumeStatusAfterUnpause(taskVal.Status)
 			builtinStatusMap.Store(key, &taskVal)
 			if p := NewBuiltinPlatform(platform); p != nil {
 				wrapperStartMonitorIfNotRunning(p, roomID)

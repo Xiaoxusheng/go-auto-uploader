@@ -115,12 +115,19 @@ func ensurePipeline() *uploader.Pipeline {
 		},
 		RecordSuccess: RecordSuccess,
 		Broadcast:     BroadcastWS,
+		// 删源前先问高光：开了高光的主播，其原片要留给高光分析，
+		// 否则「上传成功即删」会让高光永远读不到文件（详见 highlightClaim）。
+		BeforeRemove: highlightClaim,
 	}
 	return Pipeline
 }
 
 // HandleFile 处理单个本地文件。
 func HandleFile(path string) {
+	// 「只传高光」的主播：原片直接跳过，只放行其「高光」子目录下的产物。
+	if shouldSkipUpload(path) {
+		return
+	}
 	ensurePipeline().HandleFile(context.Background(), path, AppCfg().Dirs)
 }
 
@@ -211,6 +218,7 @@ func Run(opts Options) {
 	go dirStatusPersistLoop()
 	go successLogPersistLoop()
 	go manageWorkers()
+	go highlightLoop()
 	if opts.InitBots != nil {
 		opts.InitBots()
 	}
@@ -368,11 +376,13 @@ func ApplyDataDir() string {
 	SuccessStore.Repath(filepath.Join(dataDir, successLogName))
 	DirStatusStore.Repath(filepath.Join(dataDir, dirStatusName))
 	HashDB.Repath(filepath.Join(dataDir, hashName))
+	resetHighlightState(dataDir)
 	return dataDir
 }
 
 // setupDataDir 解析并创建运行时数据目录（config.dataDir），并把历史散落数据文件搬进去。
-func setupDataDir() string {	dir := AppCfg().DataDirPath()
+func setupDataDir() string {
+	dir := AppCfg().DataDirPath()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		log.Printf("[CONFIG] ⚠️ 无法创建数据目录 %s: %v，回退到当前目录", dir, err)
 		return "."

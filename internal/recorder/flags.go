@@ -29,6 +29,12 @@ type TaskFlags struct {
 	MaxDuration  int
 	SegmentTime  int
 	Window       string
+	// Highlight 为该主播的高光切片三态：0=跟随全局（零值安全），1=强制开，2=强制关；
+	// 名单行内仍写作直观的 高光:1 / 高光:0。
+	Highlight int
+	// HighlightOnly 为该主播「只上传高光」三态：0=跟随全局，1=只传高光（原片不上传），
+	// 2=原片与高光都传；名单行内写作 只传高光:1 / 只传高光:0。
+	HighlightOnly int
 }
 
 // 全局画质档位：与各平台解析器的就近降档逻辑及引擎设置下拉保持一致。
@@ -115,7 +121,8 @@ func StripFlagSuffixes(line string) string {
 		if strings.HasPrefix(tail, "录屏:") || strings.HasPrefix(tail, "截屏:") ||
 			strings.HasPrefix(tail, "截图间隔:") || strings.HasPrefix(tail, "水印:") ||
 			strings.HasPrefix(tail, "画质:") || strings.HasPrefix(tail, "录制时长:") ||
-			strings.HasPrefix(tail, "切片:") || strings.HasPrefix(tail, "时段:") {
+			strings.HasPrefix(tail, "切片:") || strings.HasPrefix(tail, "时段:") ||
+			strings.HasPrefix(tail, "高光:") || strings.HasPrefix(tail, "只传高光:") {
 			line = strings.TrimSpace(line[:idx])
 			continue
 		}
@@ -167,6 +174,22 @@ func ParseFlagsFromLine(line string) TaskFlags {
 			v := strings.TrimSpace(strings.TrimPrefix(part, "时段:"))
 			if s, e, ok := parseRecordWindow(v); ok {
 				flags.Window = formatRecordWindow(s, e)
+			}
+		} else if strings.HasPrefix(part, "高光:") {
+			v := strings.TrimSpace(strings.TrimPrefix(part, "高光:"))
+			switch v {
+			case "1":
+				flags.Highlight = 1
+			case "0":
+				flags.Highlight = 2
+			}
+		} else if strings.HasPrefix(part, "只传高光:") {
+			v := strings.TrimSpace(strings.TrimPrefix(part, "只传高光:"))
+			switch v {
+			case "1":
+				flags.HighlightOnly = 1
+			case "0":
+				flags.HighlightOnly = 2
 			}
 		}
 	}
@@ -286,6 +309,14 @@ func RebuildLineWithFlags(trimmedLine string, flags TaskFlags) string {
 	// 单主播录制时段仅在显式设置且格式合法时写回（空 = 全天可录）
 	if _, _, ok := parseRecordWindow(strings.TrimSpace(flags.Window)); ok {
 		out += ",时段:" + strings.TrimSpace(flags.Window)
+	}
+	// 单主播高光三态仅在强制开/关时写回；0（跟随全局）不写。内部 2 对应行内直观的 高光:0
+	if flags.Highlight == 1 || flags.Highlight == 2 {
+		out += fmt.Sprintf(",高光:%d", flags.Highlight%2)
+	}
+	// 单主播「只传高光」三态，同上
+	if flags.HighlightOnly == 1 || flags.HighlightOnly == 2 {
+		out += fmt.Sprintf(",只传高光:%d", flags.HighlightOnly%2)
 	}
 	return prefix + out
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"upload/internal/app"
+	"upload/internal/auth"
 	"upload/internal/config"
 	"upload/internal/logx"
 	"upload/internal/storage"
@@ -116,11 +117,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.sendJSONError(w, r, http.StatusInternalServerError, "令牌签发失败")
 		return
 	}
-	s.sendJSONSuccess(w, r, map[string]interface{}{"token": token, "expiry": time.Now().Add(authSessionTTL).UnixMilli()})
+	// 令牌同时写进会话 Cookie：封面图反代（<img src>）与日志导出（window.open）
+	// 这类浏览器原生请求带不上 Authorization 头，只能靠同源 Cookie 通过鉴权。
+	auth.SetSessionCookie(w, r, token, auth.SessionTTL)
+	s.sendJSONSuccess(w, r, map[string]interface{}{"token": token, "expiry": time.Now().Add(auth.SessionTTL).UnixMilli()})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.authSessions.Revoke(authTokenFromRequest(r))
+	auth.ClearSessionCookie(w, r)
 	s.sendJSONSuccess(w, r, nil)
 }
 

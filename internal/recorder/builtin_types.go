@@ -89,6 +89,10 @@ type BuiltinTaskStatus struct {
 	SegmentTime int `json:"segment_time"`
 	// Window 单主播录制时段（"HH:MM-HH:MM"）；空 = 全天可录
 	Window string `json:"window"`
+	// Highlight 单主播高光切片三态：0=跟随全局，1=强制开，2=强制关
+	Highlight int `json:"highlight"`
+	// HighlightOnly 单主播「只上传高光」三态：0=跟随全局，1=只传高光（原片不上传），2=原片与高光都传
+	HighlightOnly int `json:"highlight_only"`
 
 	startTime time.Time `json:"-"`
 }

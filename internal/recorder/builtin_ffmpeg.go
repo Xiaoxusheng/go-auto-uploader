@@ -447,7 +447,7 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 
 								data, readErr := os.ReadFile(coverPath)
 								if readErr == nil && len(data) > 0 {
-									imgArchiveDir := filepath.Join(outDir, "Screenshots")
+									imgArchiveDir := filepath.Join(outDir, ScreenshotDirName)
 									os.MkdirAll(imgArchiveDir, os.ModePerm)
 
 									archiveCoverPath := filepath.Join(imgArchiveDir, fmt.Sprintf("%s_%s_cover_%04d.png", safeName, timestamp, coverCount))
