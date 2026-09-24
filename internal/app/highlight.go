@@ -468,6 +468,10 @@ func highlightOptions(b config.BuiltinSettings) highlight.Options {
 	if b.HighlightSmoothWindow > 0 {
 		o.SmoothWindow = b.HighlightSmoothWindow
 	}
+	// 迟滞：仅 (0,1) 时启用；0 = 纯阈值（历史行为）。
+	if b.HighlightExitRatio > 0 && b.HighlightExitRatio < 1 {
+		o.ExitRatio = b.HighlightExitRatio
+	}
 	return o
 }
 

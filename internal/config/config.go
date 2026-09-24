@@ -89,6 +89,10 @@ type BuiltinSettings struct {
 	// ⚠️ 但它同时会缩小 MAD、把 z 分整体放大，所以**必须与 HighlightThreshold 一起改**：
 	// 实测把 5→15 时，阈值要 1.2→1.8 才对应同一档灵敏度（见 docs/highlight-progress.md §13）。
 	HighlightSmoothWindow int `json:"highlight_smooth_window"`
+	// HighlightExitRatio 迟滞退出比：正段内分数降到 Threshold*ExitRatio 以下才退出。
+	// 0 = 关闭（默认，与历史行为一致）；(0,1) 启用，灰度推荐 0.8。
+	// 非法值（<0 或 ≥1）在 applyDefaults 回落 0。见 internal/highlight.Options.ExitRatio。
+	HighlightExitRatio float64 `json:"highlight_exit_ratio"`
 	// HighlightOnlyUpload 为 true 时，开了高光的主播只上传高光片段，原片保留在本地不上传。
 	// 单主播可用「只传高光:1/0」覆盖。
 	HighlightOnlyUpload bool `json:"highlight_only_upload"`
@@ -244,18 +248,25 @@ func (b *BuiltinSettings) ApplyDefaults() {
 	if b.WatermarkFontColor == "" {
 		b.WatermarkFontColor = "white@0.95"
 	}
-	// 高光参数：基于真实素材校准的经验值。
+	// 高光参数：2026-09-24 用 13 条人工标注切片（features_v2）重训的落地候选，
+	// 留一切片 F1 0.842（旧 0.8/0.2 th1.5 仅 0.599），阈值扫描峰在 th≈1.2。
+	// 详见 _diag/train/RETRAIN_2026-09-24.md。
 	// 权重两者同时为 0 才视为「未设置」，这样用户可把音频权重显式设为 0、只保留运动量。
 	if b.HighlightMotionW == 0 && b.HighlightAudioW == 0 {
-		b.HighlightMotionW, b.HighlightAudioW = 0.8, 0.2
+		b.HighlightMotionW, b.HighlightAudioW = 1.0, 0.0
 	}
 	if b.HighlightThreshold <= 0 {
-		b.HighlightThreshold = 1.5
+		b.HighlightThreshold = 1.2
 	}
 	// 平滑窗口默认 5，与改动前 score.go 的常量一致 —— 未配置时行为完全不变。
 	if b.HighlightSmoothWindow <= 0 {
 		b.HighlightSmoothWindow = 5
 	}
+	// 迟滞退出比：0=关（默认）；仅 (0,1) 合法，其它回落 0，避免 Select 收到非法比。
+	if b.HighlightExitRatio < 0 || b.HighlightExitRatio >= 1 {
+		b.HighlightExitRatio = 0
+	}
+	// 迟滞默认关闭（0）。仅 (0,1) 合法；其它值一律回落 0，避免 Select 收到非法 ExitRatio。
 	if b.HighlightMinDur <= 0 {
 		b.HighlightMinDur = 15
 	}

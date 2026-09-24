@@ -77,6 +77,8 @@ func TestSelectMergesFragments(t *testing.T) {
 }
 
 // MergeGap 太小会在候选间隔正好等于 gap 处断链，把一整支舞切成两段。
+// 边界语义：间隔长度**严格小于** MergeGap 才合并（score.go:Select），
+// 所以「缝宽 10」需要 MergeGap≥11；Python 探针若写 `<=gap` 会与线上差 1 秒。
 func TestSelectBreaksWhenMergeGapTooSmall(t *testing.T) {
 	scores := make([]float64, 300)
 	for i := range scores {
@@ -96,9 +98,71 @@ func TestSelectBreaksWhenMergeGapTooSmall(t *testing.T) {
 	if segs := Select(scores, o); len(segs) != 2 {
 		t.Fatalf("gap=10 时应断成 2 段，实际 %d: %+v", len(segs), segs)
 	}
+	o.MergeGap = 11 // 缝宽 10 < 11 → 合并
+	if segs := Select(scores, o); len(segs) != 1 {
+		t.Fatalf("gap=11 时应合并为 1 段，实际 %d: %+v", len(segs), segs)
+	}
 	o.MergeGap = 20 // 放大后应合并
 	if segs := Select(scores, o); len(segs) != 1 {
 		t.Fatalf("gap=20 时应合并为 1 段，实际 %d: %+v", len(segs), segs)
+	}
+}
+
+// 2026-09-24 段级 IoU 导向搜索（tools/train_highlight/select_seg_search.py，
+// 留一切片 + Go 对齐语义）得到的推荐工作点：
+//
+//	MergeGap=12, MinDuration=8, Threshold=1.2, Pad=0
+//
+// train/dev 上段级 F1 0.90（命中 18/18 真值段），而线上旧值
+// MergeGap=20 / MinDuration=15 只有 0.46 —— 后者把真值段中位 23s 的高光
+// 切碎/丢短。本测试钉住「碎片能拼回、8s 段能留下」这两个行为契约；
+// 若有人把 MinDuration 调回 ≥15 或把 MergeGap 收到 <10，段级指标会塌。
+func TestSelectRecommendedWorkPoint(t *testing.T) {
+	// 模拟阈值抖动：真值约 40s 的高光被 3 个 2–4s 的缝切断
+	scores := make([]float64, 120)
+	for i := range scores {
+		scores[i] = 0
+	}
+	for i := 20; i < 60; i++ {
+		scores[i] = 3
+	}
+	for i := 24; i < 27; i++ { // 缝 3s
+		scores[i] = 0
+	}
+	for i := 35; i < 38; i++ { // 缝 3s
+		scores[i] = 0
+	}
+	for i := 48; i < 51; i++ { // 缝 3s
+		scores[i] = 0
+	}
+	// 另有一段 8s 的短高光（MinDuration=8 应保留，=15 会丢）
+	for i := 80; i < 88; i++ {
+		scores[i] = 3
+	}
+
+	o := DefaultOptions()
+	o.Threshold = 1.2
+	o.MergeGap = 12
+	o.MinDuration = 8
+	o.Pad = 0
+	o.MaxDuration = 0
+	o.MaxPerClip = 0
+
+	segs := Select(scores, o)
+	if len(segs) != 2 {
+		t.Fatalf("推荐工作点应产出 2 段（40s 主段 + 8s 短段），实际 %d: %+v", len(segs), segs)
+	}
+	if segs[0].Start != 20 || segs[0].End != 60 {
+		t.Fatalf("抖动缝隙应被 MergeGap=12 拼回 [20,60)，实际 %+v", segs[0])
+	}
+	if segs[1].Start != 80 || segs[1].End != 88 {
+		t.Fatalf("8s 段应在 MinDuration=8 下保留，实际 %+v", segs[1])
+	}
+
+	// 对照：线上旧 MinDuration=15 会丢掉 8s 短段
+	o.MinDuration = 15
+	if segs := Select(scores, o); len(segs) != 1 {
+		t.Fatalf("MinDuration=15 应只留主段，实际 %d: %+v", len(segs), segs)
 	}
 }
 

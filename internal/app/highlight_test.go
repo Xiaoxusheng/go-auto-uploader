@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"upload/internal/config"
 	"upload/internal/highlight"
 )
 
@@ -626,5 +627,26 @@ func TestHighlightSweepRootsKeepsFilesNewerThanCutoff(t *testing.T) {
 	}
 	if _, err := os.Stat(f); err != nil {
 		t.Fatalf("文件不该被删除: %v", err)
+	}
+}
+
+
+// highlightOptions 对 ExitRatio 的契约：0=关（默认），(0,1) 透传，非法不透传。
+// 这是 T2 的「pass-through」验收；回落语义在 config 层另有测试。
+func TestHighlightOptionsExitRatio(t *testing.T) {
+	b := config.BuiltinSettings{}
+	o := highlightOptions(b)
+	if o.ExitRatio != 0 {
+		t.Fatalf("默认 ExitRatio = %v, 期望 0", o.ExitRatio)
+	}
+	b.HighlightExitRatio = 0.8
+	o = highlightOptions(b)
+	if o.ExitRatio != 0.8 {
+		t.Fatalf("0.8 应透传, got %v", o.ExitRatio)
+	}
+	b.HighlightExitRatio = 1.2
+	o = highlightOptions(b)
+	if o.ExitRatio != 0 {
+		t.Fatalf("非法值不应透传, got %v", o.ExitRatio)
 	}
 }

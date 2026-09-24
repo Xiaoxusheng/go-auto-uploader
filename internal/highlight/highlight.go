@@ -21,6 +21,11 @@ type Options struct {
 	AudioWeight  float64
 	// Threshold 综合分阈值，单位是自适应 z 分（不是绝对量）。
 	Threshold float64
+	// ExitRatio 迟滞退出比：正段内分数降到 Threshold*ExitRatio 以下才退出。
+	// 0 表示不用迟滞（单阈值）。实测在含聊天/待机负样本的分布上，
+	// 迟滞（进入 th、退出 0.8*th）比纯调 MinDuration/MergeGap 更能压误检
+	// （train_exp3 / LABEL_2026-09-24）。合法区间约 0.5~0.95。
+	ExitRatio float64
 	// MinDuration 最短高光（秒），短于此丢弃。
 	MinDuration int
 	// MaxDuration 单个高光最长（秒），超长则保留分数最高的窗口。
@@ -51,6 +56,7 @@ func DefaultOptions() Options {
 		MergeGap:     20,
 		SmoothWindow: 5,
 		Pad:          5,
+		ExitRatio:    0,
 		Threads:      2,
 	}
 }

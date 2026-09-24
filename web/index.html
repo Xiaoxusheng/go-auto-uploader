@@ -204,7 +204,7 @@
             border: 1px solid var(--line); background: var(--panel);
             color: var(--t2); cursor: pointer;
             display: inline-flex; align-items: center; justify-content: center;
-            transition: background-color 0.16s ease, color 0.16s ease;
+            transition: background-color 0.16s ease, color 0.16s ease, transform 0.1s ease;
         }
         .icobtn:hover { color: var(--t1); background: var(--panel-2); }
 
@@ -464,6 +464,7 @@
             display: inline-flex; align-items: center; gap: 5px;
             font-size: 11px; font-weight: 600; padding: 2.5px 9px;
             border-radius: 999px; white-space: nowrap;
+            transition: background-color 0.15s ease, color 0.15s ease;
         }
         .tag.blue { background: var(--blue-dim); color: #7ab0ff; }
         .tag.green { background: var(--green-dim); color: var(--green-bright); }
@@ -924,12 +925,57 @@
         /* 过渡动画 */
         .fade-enter-active, .fade-leave-active { transition: opacity 0.22s ease, transform 0.22s ease; }
         .fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(8px); }
-        .drop-enter-active, .drop-leave-active { transition: opacity 0.16s ease, transform 0.16s ease; }
-        .drop-enter-from, .drop-leave-to { opacity: 0; transform: translateY(-5px); }
+        .drop-enter-active, .drop-leave-active { transition: opacity 0.18s cubic-bezier(0.25, 0.6, 0.3, 1), transform 0.18s cubic-bezier(0.25, 0.6, 0.3, 1); }
+        .drop-enter-from, .drop-leave-to { opacity: 0; transform: translateY(-6px) scale(0.985); }
         .mod-enter-active, .mod-leave-active { transition: opacity 0.2s ease; }
         .mod-enter-from, .mod-leave-to { opacity: 0; }
+        /* 弹窗退场：卡片同步缩回，不再"原地消失" */
+        .mod-leave-active .xmod-card { transition: transform 0.18s ease, opacity 0.18s ease; }
+        .mod-leave-to .xmod-card { transform: translateY(10px) scale(0.97); opacity: 0; }
+
+        /* 抽屉退场修复：mask 渐隐 + 面板同步滑出（此前面板无滑出动画，观感为瞬间消失）。
+           根容器无过渡属性，用 :duration="300" 显式声明过渡时长。 */
+        .drw-enter-active .xdrw-mask, .drw-leave-active .xdrw-mask { transition: opacity 0.2s ease; }
+        .drw-enter-from .xdrw-mask, .drw-leave-to .xdrw-mask { opacity: 0; }
+        .drw-enter-active .xdrw, .drw-leave-active .xdrw { transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1); }
+        .drw-enter-from .xdrw, .drw-leave-to .xdrw { transform: translateX(105%); }
         .slide-enter-active, .slide-leave-active { transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1); }
         .slide-enter-from, .slide-leave-to { transform: translateX(100%); }
+
+        /* ===================== 动效层（Motion） =====================
+           原则：动画只服务于 状态变化 / 空间关系 / 操作反馈，120–350ms，ease-out。
+           不做漂浮、发光、粒子等装饰动画。prefers-reduced-motion 全量降级。 */
+        .tabpane.anim { animation: pageIn 0.26s ease; }
+
+        /* 页签切换时子项依次入场（JS 对 .stg 逐个设 animationDelay） */
+        .stg { animation: stgIn 0.3s cubic-bezier(0.25, 0.6, 0.3, 1) backwards; }
+        @keyframes stgIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+        /* 主题切换：toggleTheme 时临时挂到 <html>，300ms 后移除。
+           用 !important 覆盖是为了让散落各处的颜色一次性平滑——窗口很短，可接受。 */
+        html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
+            transition: background-color 0.26s ease, color 0.26s ease,
+                        border-color 0.26s ease, fill 0.26s ease, stroke 0.26s ease !important;
+        }
+
+        /* 弹出层（下拉/菜单）：从触发侧展开，带轻微缩放 */
+        .xsel-pop { transform-origin: top left; }
+        .xsel-pop.up { transform-origin: bottom left; }
+        .xmenu-pop { transform-origin: top right; }
+        .xmenu-pop.up { transform-origin: bottom right; }
+
+        /* 图标按钮按压反馈 */
+        .icobtn:active { transform: scale(0.92); }
+
+        /* 尊重系统「减少动态效果」设置：全部动画/过渡压到不可感知 */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+                scroll-behavior: auto !important;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1114,19 +1160,19 @@
                         <div class="statrow">
                             <div class="stat-card">
                                 <span class="k">等待处理</span>
-                                <span class="v">{{ queueStatus.waiting || 0 }}</span>
+                                <span class="v" v-tween="queueStatus.waiting || 0"></span>
                             </div>
                             <div class="stat-card">
                                 <span class="k">上传中</span>
-                                <span class="v c-blue">{{ queueStatus.uploading || 0 }}</span>
+                                <span class="v c-blue" v-tween="queueStatus.uploading || 0"></span>
                             </div>
                             <div class="stat-card">
                                 <span class="k">成功</span>
-                                <span class="v c-green">{{ queueStatus.success || 0 }}</span>
+                                <span class="v c-green" v-tween="queueStatus.success || 0"></span>
                             </div>
                             <div class="stat-card">
                                 <span class="k">失败</span>
-                                <span class="v c-red">{{ queueStatus.failed || 0 }}</span>
+                                <span class="v c-red" v-tween="queueStatus.failed || 0"></span>
                             </div>
                             <div class="stat-card">
                                 <span class="k" title="当前瞬时网络上行速率，随上传任务实时变化">当前速率</span>
@@ -3261,15 +3307,13 @@
             document.removeEventListener('keydown', this.onKey);
             document.body.style.overflow = '';
         },
-        template: `<transition name="mod">
+        template: `<transition name="drw" :duration="300">
             <div v-if="visible">
                 <div class="xdrw-mask" @click="close()"></div>
-                <transition name="slide" appear>
-                    <div class="xdrw" :style="{width: width}">
-                        <div class="xdrw-body"><slot></slot></div>
-                        <div class="xdrw-foot"><slot name="footer"></slot></div>
-                    </div>
-                </transition>
+                <div class="xdrw" :style="{width: width}">
+                    <div class="xdrw-body"><slot></slot></div>
+                    <div class="xdrw-foot"><slot name="footer"></slot></div>
+                </div>
             </div>
         </transition>`
     };
@@ -3311,6 +3355,30 @@
         </div>`
     };
 
+    /* v-tween：统计数字平滑滚动。值变化时用 rAF 从旧值插值到新值（easeOutCubic，420ms），
+       避免 WS 推送导致大数字瞬间跳变的生硬感。仅用于纯整数展示。 */
+    const vTween = {
+        mounted(el, binding) {
+            el._twVal = Number(binding.value) || 0;
+            el.textContent = String(el._twVal);
+        },
+        updated(el, binding) {
+            const to = Number(binding.value) || 0;
+            const from = el._twVal || 0;
+            el._twVal = to;
+            if (to === from) return;
+            cancelAnimationFrame(el._twRaf);
+            const dur = 420, t0 = performance.now();
+            const step = (t) => {
+                const p = Math.min(1, (t - t0) / dur);
+                const eased = 1 - Math.pow(1 - p, 3);
+                el.textContent = String(Math.round(from + (to - from) * eased));
+                if (p < 1) el._twRaf = requestAnimationFrame(step);
+            };
+            el._twRaf = requestAnimationFrame(step);
+        }
+    };
+
     const app = createApp({
         errorHandler(err, instance, info) {
             console.error('[前端渲染异常]', info, err);
@@ -3345,9 +3413,14 @@
             };
 
             const toggleTheme = () => {
+                // 临时挂 .theme-anim 让全部颜色 0.26s 平滑过渡，结束后移除（见动效层 CSS）
+                document.documentElement.classList.add('theme-anim');
                 isDarkMode.value = !isDarkMode.value;
                 localStorage.setItem('upload_system_theme', isDarkMode.value ? 'dark' : 'light');
                 applyTheme();
+                setTimeout(() => {
+                    document.documentElement.classList.remove('theme-anim');
+                }, 300);
                 setTimeout(() => {
                     renderChart();
                     renderTrendChart();
@@ -3371,6 +3444,36 @@
             const switchTab = (key) => {
                 activeTab.value = key;
             };
+
+            /* ---- 视图切换动效 ----
+               v-show 切换是瞬间显隐，观感生硬。这里在切换后对可见 section 重放入场动画，
+               并让其中的统计块 / 录制卡片依次 stagger 入场（每项 +35ms，封顶 350ms）。
+               动画只在切换瞬间发生，数据轮询刷新不会触发。 */
+            const replayPaneAnim = () => {
+                let pane = null;
+                document.querySelectorAll('.page > section').forEach((p) => {
+                    if (p.style.display !== 'none') pane = p;
+                });
+                if (!pane) return;
+                pane.classList.remove('anim');
+                void pane.offsetWidth;              // 强制 reflow，重放 animation
+                pane.classList.add('anim');
+
+                const items = pane.querySelectorAll(':scope > .statrow > .stat-card, :scope .rec-grid > .rec-card');
+                if (!items.length) return;
+                const done = [];
+                items.forEach((el, i) => {
+                    el.classList.remove('stg');
+                    void el.offsetWidth;
+                    el.style.animationDelay = Math.min(i * 35, 350) + 'ms';
+                    el.classList.add('stg');
+                    done.push(el);
+                });
+                setTimeout(() => {
+                    done.forEach((el) => { el.classList.remove('stg'); el.style.animationDelay = ''; });
+                }, 950);
+            };
+            watch(activeTab, () => nextTick(replayPaneAnim));
 
             const wsStatus = ref('connecting');
             const wsStats = reactive({msgCount: 0, lastEvent: '-', pulse: false});
@@ -3555,9 +3658,9 @@
                 watermark_font_size: 38,
                 watermark_font_color: '#FFFFFFE6',
                 highlight_enable: false,
-                highlight_motion_weight: 0.8,
-                highlight_audio_weight: 0.2,
-                highlight_threshold: 1.5,
+                highlight_motion_weight: 1.0,
+                highlight_audio_weight: 0.0,
+                highlight_threshold: 1.2,
                 highlight_min_duration: 15,
                 highlight_max_duration: 180,
                 highlight_merge_gap: 20,
@@ -4258,9 +4361,9 @@
                         // 高光切片参数：后端未返回时回落到与后端一致的默认值。
                         // 权重用 ?? 而非 ||，因为 0 是合法值（只保留单因子）。
                         builtinSettings.value.highlight_enable = res1.data.highlight_enable || false;
-                        builtinSettings.value.highlight_motion_weight = res1.data.highlight_motion_weight ?? 0.8;
-                        builtinSettings.value.highlight_audio_weight = res1.data.highlight_audio_weight ?? 0.2;
-                        builtinSettings.value.highlight_threshold = res1.data.highlight_threshold || 1.5;
+                        builtinSettings.value.highlight_motion_weight = res1.data.highlight_motion_weight ?? 1.0;
+                        builtinSettings.value.highlight_audio_weight = res1.data.highlight_audio_weight ?? 0.0;
+                        builtinSettings.value.highlight_threshold = res1.data.highlight_threshold || 1.2;
                         builtinSettings.value.highlight_min_duration = res1.data.highlight_min_duration || 15;
                         builtinSettings.value.highlight_max_duration = res1.data.highlight_max_duration || 180;
                         builtinSettings.value.highlight_merge_gap = res1.data.highlight_merge_gap || 20;
@@ -5605,6 +5708,7 @@
     app.component('x-modal', XModal);
     app.component('x-drawer', XDrawer);
     app.component('x-menu', XMenu);
+    app.directive('tween', vTween);
     app.mount('#app');
 </script>
 </body>

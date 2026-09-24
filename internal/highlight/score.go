@@ -131,14 +131,65 @@ func RawSegments(scores []float64, threshold float64) []Segment {
 	return out
 }
 
+// HysteresisMask 迟滞门限：score>enter 进入，score<exit 才退出。
+// exit<=0 时退化为单阈值 enter。返回 0/1 掩码，长度与 scores 相同。
+//
+// 跳舞/聊天边界上分数会在阈值附近抖动，单阈值会切出大量 1~2s 毛刺；
+// 迟滞让「已经算高光」的段有惯性，实测比单纯加大 MergeGap 更能压误检
+// 且不丢真段（LABEL_2026-09-24 / train_exp3）。
+func HysteresisMask(scores []float64, enter, exit float64) []int {
+	if exit > 0 && exit < enter {
+		// ok
+	} else {
+		exit = enter
+	}
+	mask := make([]int, len(scores))
+	on := 0
+	for i, s := range scores {
+		if on == 1 {
+			if s < exit {
+				on = 0
+			}
+		} else if s > enter {
+			on = 1
+		}
+		mask[i] = on
+	}
+	return mask
+}
+
+// MaskSegments 把 0/1 掩码收成连续段（等价于阈值切分的区间）。
+func MaskSegments(mask []int) []Segment {
+	var out []Segment
+	for i := 0; i < len(mask); {
+		if mask[i] == 0 {
+			i++
+			continue
+		}
+		j := i
+		for j < len(mask) && mask[j] != 0 {
+			j++
+		}
+		out = append(out, Segment{Start: i, End: j})
+		i = j
+	}
+	return out
+}
+
 // Select 从分数曲线挑出高光段：
-// 阈值切分 → 合并邻近 → 丢弃过短 → 限长 → 补边 → 取分数最高的前 N 个。
+// 阈值（或迟滞）切分 → 合并邻近 → 丢弃过短 → 限长 → 补边 → 取分数最高的前 N 个。
 //
 // 合并是「链式」的：只要相邻命中段的间隔小于 MergeGap 就不断往后串，
 // 因此跳舞时分数在阈值附近抖动切出的大量碎片会被重新拼回一整段。
 func Select(scores []float64, o Options) []Segment {
+	var raw []Segment
+	if o.ExitRatio > 0 && o.ExitRatio < 1 {
+		raw = MaskSegments(HysteresisMask(scores, o.Threshold, o.Threshold*o.ExitRatio))
+	} else {
+		raw = RawSegments(scores, o.Threshold)
+	}
 	var merged []Segment
-	for _, s := range RawSegments(scores, o.Threshold) {
+	for _, s := range raw {
 		if n := len(merged); n > 0 && s.Start-merged[n-1].End < o.MergeGap {
 			merged[n-1].End = s.End
 			continue

@@ -3,14 +3,15 @@
 // 刻意做成独立二进制，不参与主程序构建：
 // 它要跑 ffmpeg 全量解码（分钟级），只适合离线批量使用，绝不能进线上链路。
 //
-// 分工：Go 侧只做「重」的事（解码 + 特征提取 + 导出），
-// 指标计算、超参搜索、模型训练都在 Python 侧（tools/train_highlight/），
-// 因为那部分需要频繁改算法，用 Python 迭代成本远低于重新编译。
+// 分工：Go 侧负责「要进系统、会反复跑」的能力（解码 + 特征提取 + 导出 +
+// 指标评估）。Python 只作探索期脚本；算法定型后迁入本包，避免与
+// Select/robustZ 语义分叉。
 //
 // 用法：
 //
 //	hleval probe  -src <视频> [-cache <json>] [-ffmpeg <path>] [-force]
 //	hleval export -labels <标注.jsonl> -cache-dir <目录> -out <csv>
+//	hleval metrics -csv <features.csv> [-mw 1] [-aw 0] [-th 1.2] [-ml 8] [-gap 12]
 package main
 
 import (
@@ -37,6 +38,8 @@ func main() {
 		cmdProbe(os.Args[2:])
 	case "export":
 		cmdExport(os.Args[2:])
+	case "metrics":
+		cmdMetrics(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -51,6 +54,7 @@ func usage() {
 子命令:
   probe   对视频跑全字段特征提取并写缓存
   export  把标注 + 特征缓存导出成训练用 CSV
+  metrics 在 features CSV 上评估打分+Select（秒级 + 段级 IoU + hn误检）
 
 probe 参数:
   -src <视频>        必填
@@ -63,6 +67,12 @@ export 参数:
   -labels <jsonl>    标注文件（一行一个切片）
   -cache-dir <目录>  特征缓存目录（probe 的输出）
   -out <csv>         输出 CSV
+
+metrics 参数:
+  -csv <features>    export 产出的 CSV
+  -mw/-aw/-th        权重与阈值（默认 1.0/0.0/1.2）
+  -ml/-gap/-pad      Select 后处理（默认 8/12/0）
+  -smooth            滑动窗口，默认 5
 
 标注 JSONL 格式（一行一个切片）:
   {"clip":"a.mp4","streamer":"某主播","scene":"dance","duration":899,
