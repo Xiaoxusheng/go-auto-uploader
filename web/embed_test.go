@@ -45,14 +45,17 @@ func TestIndexHasNoPublicCDN(t *testing.T) {
 	}
 	for _, ref := range []string{
 		"/vendor/vue.global.prod.js",
-		"/vendor/arco-vue.min.js",
-		"/vendor/arco-vue-icon.min.js",
 		"/vendor/axios.min.js",
 		"/vendor/echarts.min.js",
-		"/vendor/arco.min.css",
 	} {
 		if !strings.Contains(IndexHTML, ref) {
 			t.Fatalf("index.html 缺少自托管引用: %s", ref)
+		}
+	}
+	// 重设计后前端为纯手写组件，不再加载 Arco（避免 ~800KB 无用解析开销）
+	for _, stale := range []string{"arco-vue.min.js", "arco.min.css", "ArcoVue."} {
+		if strings.Contains(IndexHTML, stale) {
+			t.Fatalf("index.html 不应再引用 Arco: %s", stale)
 		}
 	}
 }

@@ -146,6 +146,9 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string,
 	// 先用 -skip_frame nokey 只解码关键帧重试（出图同样来自干净 I 帧），
 	// 仍取不到关键帧时再去掉 skip_frame 抽首帧兜底
 	if err != nil {
+		// 诊断日志：抽帧失败绝不静默——把 ffmpeg stderr 尾部打出来，否则排障只能靠猜
+		log.Printf("[BUILTIN] ⚠️ 抽帧首试失败 %s: %v | ffmpeg: %s",
+			coverPath, err, tailStr(stderrBuf.String(), 240))
 		vfRetry := "null"
 		if watermarkOn {
 			if drawtext, textFile, werr := prepareBuiltinDrawtextFilter(anchorName, "shot2", false); werr == nil {
@@ -199,6 +202,17 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string,
 	}
 
 	return true
+}
+
+// tailStr 取字符串尾部若干字符，用于压缩超长的 ffmpeg stderr 输出（保留最贴近退出原因的行）
+func tailStr(s string, n int) string {
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "\r\n", " | ")
+	s = strings.ReplaceAll(s, "\n", " | ")
+	if len(s) <= n {
+		return s
+	}
+	return "…" + s[len(s)-n:]
 }
 
 // normalizeFFmpegFontColor 将前端十六进制色（含 #RRGGBB / #RRGGBBAA）归一为 drawtext 可识别的 0x 形式
@@ -421,8 +435,55 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 			coverCount := 1
 			filePrefix := fmt.Sprintf("%s_%s", safeName, timestamp)
 
+			// 抽帧成功后的统一收尾：归档截图 + 刷新任务头像并广播
+			// （ticker 与起步快速重试两条路径共用，保证行为一致）
+			onExtracted := func(extracted bool) {
+				if !extracted {
+					return
+				}
+				info, err := os.Stat(coverPath)
+				if err != nil || info.Size() == 0 {
+					return
+				}
+				modTime := info.ModTime()
+				if !modTime.After(lastModTime) {
+					return
+				}
+				lastModTime = modTime
+
+				data, readErr := os.ReadFile(coverPath)
+				if readErr == nil && len(data) > 0 {
+					imgArchiveDir := filepath.Join(outDir, ScreenshotDirName)
+					os.MkdirAll(imgArchiveDir, os.ModePerm)
+
+					archiveCoverPath := filepath.Join(imgArchiveDir, fmt.Sprintf("%s_%s_cover_%04d.png", safeName, timestamp, coverCount))
+					_ = os.WriteFile(archiveCoverPath, data, 0644)
+					coverCount++
+				}
+
+				key := platformName + "_" + roomID
+				if existing, ok := builtinStatusMap.Load(key); ok {
+					task := *(existing.(*BuiltinTaskStatus))
+					task.Avatar = fmt.Sprintf("/covers/%s?t=%d", fileName, time.Now().UnixMilli())
+					builtinStatusMap.Store(key, &task)
+					triggerBuiltinBroadcast()
+				}
+			}
+
 			time.Sleep(5 * time.Second)
-			extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath, anchorName, builtinWatermarkOn(flags, Config().WatermarkEnable))
+			// 起步快速重试：新录制分片的尾部暂时抽不出干净 I 帧，常规 20s 节拍下
+			// 头几张会静默失败，前端要等 3~5 分钟才见到首图。这里改为每 5s 重试
+			// 直至首张成功（上限 60s），成功后交由下方 ticker 按常规节拍续拍
+			for i := 0; i < 12; i++ {
+				if recordCtx.Err() != nil {
+					return
+				}
+				onExtracted(extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath, anchorName, builtinWatermarkOn(flags, Config().WatermarkEnable)))
+				if !lastModTime.IsZero() {
+					break
+				}
+				time.Sleep(5 * time.Second)
+			}
 
 			for {
 				select {
@@ -438,39 +499,10 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 					}
 					watermarkOn := builtinWatermarkOn(curFlags, Config().WatermarkEnable)
 					extracted := extractBuiltinCoverFromLocalFile(outDir, filePrefix, coverPath, anchorName, watermarkOn)
+					onExtracted(extracted)
 
-					if extracted {
-						if info, err := os.Stat(coverPath); err == nil && info.Size() > 0 {
-							modTime := info.ModTime()
-							if modTime.After(lastModTime) {
-								lastModTime = modTime
-
-								data, readErr := os.ReadFile(coverPath)
-								if readErr == nil && len(data) > 0 {
-									imgArchiveDir := filepath.Join(outDir, ScreenshotDirName)
-									os.MkdirAll(imgArchiveDir, os.ModePerm)
-
-									archiveCoverPath := filepath.Join(imgArchiveDir, fmt.Sprintf("%s_%s_cover_%04d.png", safeName, timestamp, coverCount))
-									_ = os.WriteFile(archiveCoverPath, data, 0644)
-									coverCount++
-								}
-
-								key := platformName + "_" + roomID
-								if existing, ok := builtinStatusMap.Load(key); ok {
-									task := *(existing.(*BuiltinTaskStatus))
-									task.Avatar = fmt.Sprintf("/covers/%s?t=%d", fileName, time.Now().UnixMilli())
-									builtinStatusMap.Store(key, &task)
-									triggerBuiltinBroadcast()
-								}
-
-								// 仅截屏模式：抽帧成功后清理已冷却的临时 TS
-								if !flags.Record {
-									cleanupScreenshotTempSegments(outDir, filePrefix, false)
-								}
-							}
-						}
-					} else if !flags.Record {
-						// 抽帧失败也要清冷却片，避免整场直播堆积临时 TS
+					// 仅截屏模式：抽帧后清理已冷却的临时 TS（无论本次抽帧成败）
+					if !flags.Record {
 						cleanupScreenshotTempSegments(outDir, filePrefix, false)
 					}
 				}

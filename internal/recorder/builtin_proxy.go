@@ -69,6 +69,11 @@ func apiProxyImage(w http.ResponseWriter, r *http.Request) {
 	for k, v := range resp.Header {
 		w.Header()[k] = v
 	}
+	// 防缓存投毒：上游（平台图床）可能对失效/风控请求返回 200+空体且带超长 max-age，
+	// 若原样透传，浏览器会把空图缓存一年，之后即使网络恢复也永远显示占位图。
+	// 这里强制覆盖为短缓存，过期后自动重新拉取（真图/新签名 URL 均能自愈）。
+	w.Header().Set("Cache-Control", "max-age=60")
+	w.Header().Del("Expires")
 	// 安全审计修复：限制代理回源体积，防止超大响应拖垮进程内存
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, io.LimitReader(resp.Body, 10<<20))
