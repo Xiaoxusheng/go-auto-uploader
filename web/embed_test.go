@@ -80,3 +80,18 @@ func TestIndexBindsHighlightGrayFields(t *testing.T) {
 		}
 	}
 }
+
+// 「姿态训练」页签：菜单项 / 页面区 / API 调用三处齐全，防止误删导致页签空白
+func TestIndexBindsPoseTrainingPage(t *testing.T) {
+	for _, marker := range []string{
+		`{key: 'pose_training', icon: 'i-grid', label: '姿态训练'}`,
+		`activeTab === 'pose_training'`,
+		`/pose_training/summary`,
+		`/pose_training/clips`,
+		`/pose_training/thumb?clip=`,
+	} {
+		if !strings.Contains(IndexHTML, marker) {
+			t.Fatalf("姿态训练页缺少标记: %s", marker)
+		}
+	}
+}

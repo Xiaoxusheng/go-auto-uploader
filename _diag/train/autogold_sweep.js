@@ -58,3 +58,14 @@ for (const r of rows) {
   if (predDance === r.goldDance) agree++;
 }
 console.log(`\n自动标签 dance/非舞 二分类一致率: ${(100 * agree / rows.length).toFixed(1)}%（阈值 vis${best.V}/face${best.F}/det${best.D}）`);
+
+// 机器可读结果（控制台「姿态训练」页读取）
+fs.writeFileSync('D:/upload/_diag/train/autogold_result.json', JSON.stringify({
+  generated_at: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }),
+  windows: rows.length,
+  dance_windows: rows.filter(r => r.goldDance).length,
+  gold_clips: Object.keys(gold).length,
+  best: { vis: best.V, face: best.F, det: best.D, P: +best.P.toFixed(3), R: +best.R.toFixed(3), F1: +best.F1.toFixed(3) },
+  agree_pct: +(100 * agree / rows.length).toFixed(1),
+  top: all.slice(0, 10).map(r => ({ vis: r.V, face: r.F, det: r.D, P: +r.P.toFixed(3), R: +r.R.toFixed(3), F1: +r.F1.toFixed(3) })),
+}, null, 1));

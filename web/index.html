@@ -207,6 +207,7 @@
             transition: background-color 0.16s ease, color 0.16s ease, transform 0.1s ease;
         }
         .icobtn:hover { color: var(--t1); background: var(--panel-2); }
+        .icobtn .spin { animation: spin 0.9s linear infinite; }
 
         .chip {
             display: inline-flex; align-items: center; gap: 6px;
@@ -496,9 +497,27 @@
         /* ===================== 页面：B站投稿 ===================== */
         /* 统计卡：设计稿加大数值层级 */
         .bili-page .statrow { gap: 14px; margin-bottom: 16px; }
-        .bili-page .stat-card { padding: 15px 18px 14px; gap: 8px; }
+        .bili-page .stat-card { padding: 15px 18px 14px; gap: 8px; transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease; }
+        .bili-page .stat-card:hover { transform: translateY(-2px); border-color: var(--line-strong); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.16); }
         .bili-page .stat-card .v { font-size: 30px; letter-spacing: -0.02em; }
         .bili-page .stat-card .aside { font-size: 11.5px; font-weight: 500; margin-left: 2px; }
+
+        /* ===================== 页面：姿态训练 ===================== */
+        .pose-thumb { width: 58px; height: 34px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); display: block; transition: transform 0.15s ease, border-color 0.15s ease; }
+        .pose-thumb:hover { transform: scale(1.08); border-color: var(--line-strong); }
+        .pose-logs { font: 12px/1.75 ui-monospace, Consolas, monospace; color: var(--t2); padding: 14px 16px; margin: 0; max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+
+        /* 动效：页签切入的级联入场（v-show 从 display:none 恢复时自动重放） */
+        .bili-page > .pg-head { animation: biliFade 0.3s ease backwards; }
+        .bili-page .statrow .stat-card { animation: biliRise 0.38s cubic-bezier(0.22, 0.61, 0.36, 1) backwards; }
+        .bili-page .statrow .stat-card:nth-child(2) { animation-delay: 0.05s; }
+        .bili-page .statrow .stat-card:nth-child(3) { animation-delay: 0.1s; }
+        .bili-page .statrow .stat-card:nth-child(4) { animation-delay: 0.15s; }
+        .bili-page .statrow .stat-card:nth-child(5) { animation-delay: 0.2s; }
+        .bili-page > .card { animation: biliRise 0.38s cubic-bezier(0.22, 0.61, 0.36, 1) 0.22s backwards; }
+        .bili-page > .card.tbl-card { animation-delay: 0.3s; }
+        @keyframes biliRise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+        @keyframes biliFade { from { opacity: 0; } to { opacity: 1; } }
 
         /* 表单跨列：SESSDATA 占 2/3，模板类占整行 */
         .f-item.span2 { grid-column: span 2; }
@@ -526,6 +545,14 @@
         .bili-live i { display: block; height: 100%; width: 42%; border-radius: 999px; background: linear-gradient(90deg, #22c55e, #4ade80); animation: biliSlide 1.5s ease-in-out infinite; }
         @keyframes biliSlide { 0% { transform: translateX(-110%); } 100% { transform: translateX(360%); } }
 
+        /* 动效：队列行入场（筛选、新增、排序时重放） */
+        .bili-page .tbl tbody tr { animation: biliRowIn 0.26s ease backwards; }
+        @keyframes biliRowIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+        /* 动效：「投稿中」状态的呼吸点 */
+        .bili-dot-live { width: 6px; height: 6px; border-radius: 50%; background: #7ab0ff; flex-shrink: 0; animation: biliPulse 1.5s ease infinite; }
+        @keyframes biliPulse { 0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.45); } 70% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); } 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); } }
+
         .bili-bv { display: inline-flex; align-items: center; gap: 5px; color: var(--green-bright); font-size: 12px; font-variant-numeric: tabular-nums; text-decoration: none; }
         .bili-bv:hover { text-decoration: underline; }
         .bili-bv .ic { width: 12px; height: 12px; }
@@ -543,7 +570,8 @@
         /* 弹窗：封面候选（选中态 = 绿描边 + 光晕） */
         .bili-cover-meta { font-size: 12.5px; color: var(--t3); margin-bottom: 13px; }
         .bili-cover-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-        .bili-cover-item { border: 2px solid transparent; border-radius: 11px; padding: 5px; background: transparent; cursor: pointer; text-align: center; transition: border-color 0.15s ease, background-color 0.15s ease; }
+        .bili-cover-item { border: 2px solid transparent; border-radius: 11px; padding: 5px; background: transparent; cursor: pointer; text-align: center; transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease; }
+        .bili-cover-item:active { transform: scale(0.97); }
         .bili-cover-item:hover { background: color-mix(in srgb, var(--panel-2) 60%, transparent); }
         .bili-cover-item.sel { border-color: rgba(34, 197, 94, 0.65); background: var(--green-dim); }
         .bili-cover-item img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 7px; display: block; background: var(--panel-2); }
@@ -551,6 +579,24 @@
         .bili-cover-item.sel .cap { color: var(--green-bright); font-weight: 600; }
         .bili-cover-tools { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
         .bili-cover-tools .num-inp { width: 110px; }
+
+        /* 动效：弹窗内容级联入场（v-if 每次打开重放） */
+        .xmod-body .bili-cand-row, .xmod-body .bili-cover-item { animation: biliRise 0.32s cubic-bezier(0.22, 0.61, 0.36, 1) backwards; }
+        .xmod-body .bili-cand-row:nth-child(2) { animation-delay: 0.04s; }
+        .xmod-body .bili-cand-row:nth-child(3) { animation-delay: 0.08s; }
+        .xmod-body .bili-cand-row:nth-child(4) { animation-delay: 0.12s; }
+        .xmod-body .bili-cand-row:nth-child(5) { animation-delay: 0.16s; }
+        .xmod-body .bili-cand-row:nth-child(6) { animation-delay: 0.2s; }
+        .xmod-body .bili-cand-row:nth-child(7) { animation-delay: 0.24s; }
+        .xmod-body .bili-cand-row:nth-child(8) { animation-delay: 0.28s; }
+        .xmod-body .bili-cover-item:nth-child(2) { animation-delay: 0.05s; }
+        .xmod-body .bili-cover-item:nth-child(3) { animation-delay: 0.1s; }
+
+        @media (prefers-reduced-motion: reduce) {
+            .bili-page > .pg-head, .bili-page .statrow .stat-card, .bili-page > .card,
+            .bili-page .tbl tbody tr, .bili-page .bili-live i, .bili-page .bili-dot-live,
+            .xmod-body .bili-cand-row, .xmod-body .bili-cover-item { animation: none !important; }
+        }
 
         @media (max-width: 600px) {
             .f-item.span2 { grid-column: auto; }
@@ -1004,6 +1050,9 @@
         .drop-enter-from, .drop-leave-to { opacity: 0; transform: translateY(-6px) scale(0.985); }
         .mod-enter-active, .mod-leave-active { transition: opacity 0.2s ease; }
         .mod-enter-from, .mod-leave-to { opacity: 0; }
+        /* 弹窗入场：卡片同步浮入（与退场的下沉对称） */
+        .mod-enter-active .xmod-card { transition: transform 0.2s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.2s ease; }
+        .mod-enter-from .xmod-card { transform: translateY(12px) scale(0.985); opacity: 0; }
         /* 弹窗退场：卡片同步缩回，不再"原地消失" */
         .mod-leave-active .xmod-card { transition: transform 0.18s ease, opacity 0.18s ease; }
         .mod-leave-to .xmod-card { transform: translateY(10px) scale(0.97); opacity: 0; }
@@ -2484,19 +2533,19 @@
                             </div>
                             <div class="pg-tools">
                                 <span class="chip" :class="{good: biliStatus.enable}"><span class="dot" :class="biliStatus.enable ? 'run' : 'gray'"></span> {{ biliStatus.enable ? '自动投稿已开启' : '自动投稿已关闭' }}</span>
-                                <button class="icobtn" title="刷新状态与队列" @click="fetchBili"><svg class="ic"><use href="#i-refresh"/></svg></button>
+                                <button class="icobtn" title="刷新状态与队列" @click="biliManualRefresh"><svg class="ic" :class="{spin: biliRefreshing}"><use href="#i-refresh"/></svg></button>
                             </div>
                         </div>
 
                         <div class="statrow">
                             <div class="stat-card">
                                 <span class="k">今日已投</span>
-                                <span class="v">{{ biliStatus.today || 0 }}<span class="aside">/ 今日上限 {{ biliStatus.dailyLimit || '-' }}</span></span>
+                                <span class="v"><span v-tween="biliStatus.today || 0"></span><span class="aside">/ 今日上限 {{ biliStatus.dailyLimit || '-' }}</span></span>
                             </div>
-                            <div class="stat-card"><span class="k">待投稿</span><span class="v">{{ biliCounts.pending }}</span></div>
-                            <div class="stat-card"><span class="k">投稿中</span><span class="v c-blue">{{ biliCounts.uploading }}</span></div>
-                            <div class="stat-card"><span class="k">已发布</span><span class="v c-green">{{ biliCounts.done }}</span></div>
-                            <div class="stat-card"><span class="k">失败</span><span class="v c-red">{{ biliCounts.failed }}</span></div>
+                            <div class="stat-card"><span class="k">待投稿</span><span class="v" v-tween="biliCounts.pending"></span></div>
+                            <div class="stat-card"><span class="k">投稿中</span><span class="v c-blue" v-tween="biliCounts.uploading"></span></div>
+                            <div class="stat-card"><span class="k">已发布</span><span class="v c-green" v-tween="biliCounts.done"></span></div>
+                            <div class="stat-card"><span class="k">失败</span><span class="v c-red" v-tween="biliCounts.failed"></span></div>
                         </div>
 
                         <div class="card">
@@ -2648,7 +2697,7 @@
                                         <td><div class="fname">{{ row.file_name }}</div></td>
                                         <td class="num">{{ row.segments }} 段 · {{ biliTc(row.duration) }}</td>
                                         <td>
-                                            <span class="tag" :class="biliStatusMeta(row.status).cls">{{ biliStatusMeta(row.status).text }}<template v-if="row.status === 'failed' && row.tries > 0"> · 已试 {{ row.tries }} 次</template></span>
+                                            <span class="tag" :class="biliStatusMeta(row.status).cls"><span v-if="row.status === 'uploading'" class="bili-dot-live" aria-hidden="true"></span>{{ biliStatusMeta(row.status).text }}<template v-if="row.status === 'failed' && row.tries > 0"> · 已试 {{ row.tries }} 次</template></span>
                                             <div v-if="row.status === 'uploading'" class="bili-live" aria-hidden="true"><i></i></div>
                                             <div v-else-if="row.tries > 0 && row.status !== 'failed'" class="bili-tries">已试 {{ row.tries }} 次</div>
                                         </td>
@@ -2725,6 +2774,131 @@
                                 <div class="frm-help">点击候选画面即保存；正式投稿时按此时间点截帧上传封面</div>
                             </div>
                         </x-modal>
+                    </section>
+
+                    <!-- ============ 姿态训练 ============ -->
+                    <section v-show="activeTab === 'pose_training'">
+                        <div class="pg-head">
+                            <div>
+                                <h1>姿态训练</h1>
+                                <div class="sub">姿态门全自动训练管线 · 入池 / 重定标 / 指标 一屏总览</div>
+                            </div>
+                            <div class="pg-tools">
+                                <span class="chip" :class="{good: poseT.summary.gate && poseT.summary.gate.enable}"><span class="dot" :class="poseT.summary.gate && poseT.summary.gate.enable ? 'run' : 'warn'"></span> {{ poseT.summary.gate && poseT.summary.gate.enable ? '姿态门已启用' : '姿态门未启用' }}</span>
+                                <button class="icobtn" title="刷新" @click="poseManualRefresh"><svg class="ic" :class="{spin: poseRefreshing}"><use href="#i-refresh"/></svg></button>
+                            </div>
+                        </div>
+
+                        <div class="statrow">
+                            <div class="stat-card"><span class="k">训练池</span><span class="v"><span v-tween="poseT.summary.pool || 0"></span><span class="aside">片</span></span></div>
+                            <div class="stat-card"><span class="k">姿态特征</span><span class="v"><span v-tween="poseT.summary.features || 0"></span><span class="aside">片</span></span></div>
+                            <div class="stat-card"><span class="k">用户金标</span><span class="v"><span v-tween="poseT.summary.gold_clips || 0"></span><span class="aside">片</span></span></div>
+                            <div class="stat-card"><span class="k">自动标签一致率</span><span class="v c-green">{{ poseT.sweep.agree_pct != null ? poseT.sweep.agree_pct + '%' : '-' }}</span></div>
+                            <div class="stat-card"><span class="k">重定标最优 F1</span><span class="v c-blue">{{ poseT.sweep.best ? poseT.sweep.best.F1.toFixed(3) : '-' }}</span></div>
+                            <div class="stat-card"><span class="k">磁盘剩余</span><span class="v" :class="(poseT.summary.disk_free_gb || 99) < 20 ? 'c-red' : ''">{{ poseT.summary.disk_free_gb != null ? poseT.summary.disk_free_gb.toFixed(1) + ' GB' : '-' }}</span></div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-head">
+                                <div class="card-title">
+                                    <svg class="ic"><use href="#i-sliders"/></svg>
+                                    姿态门参数（生产实值）
+                                </div>
+                                <span class="sub" v-if="poseT.sweep.generated_at">重定标：{{ poseT.sweep.generated_at }} · {{ poseT.sweep.windows }} 窗 / {{ poseT.sweep.gold_clips }} 片金标</span>
+                            </div>
+                            <div class="frm-grid" v-if="poseT.summary.gate">
+                                <div class="f-item"><label>检出率下限 det_min</label><input class="inp" :value="poseT.summary.gate.det_min" readonly></div>
+                                <div class="f-item"><label>可见度下限 vis_min</label><input class="inp" :value="poseT.summary.gate.vis_min" readonly></div>
+                                <div class="f-item"><label>面部占比上限 face_max</label><input class="inp" :value="poseT.summary.gate.face_max" readonly></div>
+                                <div class="f-item"><label>保留比下限 keep_ratio</label><input class="inp" :value="poseT.summary.gate.keep_ratio" readonly></div>
+                                <div class="f-item"><label>抽帧率 fps</label><input class="inp" :value="poseT.summary.gate.fps || 5" readonly></div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-head">
+                                <div class="card-title">
+                                    <svg class="ic"><use href="#i-grid"/></svg>
+                                    重定标阈值网格 TOP10（按 F1）
+                                </div>
+                            </div>
+                            <div class="tbl-scroll" v-if="poseT.sweep.top && poseT.sweep.top.length">
+                                <table class="tbl">
+                                    <thead>
+                                    <tr><th>vis</th><th>face</th><th>detmin</th><th>精确率 P</th><th>召回率 R</th><th>F1</th></tr>
+                                    </thead>
+                                    <tbody>
+                                    <tr v-for="(row, i) in poseT.sweep.top" :key="i" :style="i === 0 ? 'background:var(--accent-weak, rgba(64,158,255,.08));' : ''">
+                                        <td>{{ row.vis.toFixed(2) }}</td>
+                                        <td>{{ row.face.toFixed(2) }}</td>
+                                        <td>{{ row.det.toFixed(2) }}</td>
+                                        <td>{{ (row.P * 100).toFixed(1) }}%</td>
+                                        <td>{{ (row.R * 100).toFixed(1) }}%</td>
+                                        <td><b>{{ row.F1.toFixed(3) }}</b></td>
+                                    </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div v-else class="tbl-empty" style="padding:30px 10px;">暂无重定标结果 —— 夜训守护每 30 分钟自动运行</div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-head">
+                                <div class="card-title">
+                                    <svg class="ic"><use href="#i-disc"/></svg>
+                                    训练片池（{{ poseT.total }} 片 · 新入池在前）
+                                </div>
+                                <div class="pg-tools">
+                                    <input class="inp" style="width:200px;" v-model="poseT.q" placeholder="搜索主播 / 片名" @input="poseSearchDebounced">
+                                </div>
+                            </div>
+                            <div class="tbl-scroll" v-if="poseT.items.length">
+                                <table class="tbl">
+                                    <thead>
+                                    <tr><th style="width:70px;">预览</th><th style="width:38%;">片名</th><th>时长</th><th>舞段</th><th>非舞</th><th>来源</th></tr>
+                                    </thead>
+                                    <tbody>
+                                    <tr v-for="c in poseT.items" :key="c.clip">
+                                        <td>
+                                            <img v-if="c.thumb" :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(c.clip)" loading="lazy" class="pose-thumb" @click="poseBig = c" style="cursor:zoom-in;" alt="">
+                                            <span v-else class="sub">无帧</span>
+                                        </td>
+                                        <td><div class="fname" :title="c.clip">{{ c.clip }}</div></td>
+                                        <td>{{ Math.floor(c.seconds / 60) }}分{{ c.seconds % 60 }}秒</td>
+                                        <td><span class="tag orange">{{ c.dance }}s</span></td>
+                                        <td><span class="tag gray">{{ c.closeup + c.none + c.other }}s</span></td>
+                                        <td><span class="sub">{{ c.model ? '自动预标' : '人工' }}</span></td>
+                                    </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div v-else class="tbl-empty" style="padding:30px 10px;">没有匹配的片</div>
+                            <div class="pg-tools" style="padding:12px; justify-content:space-between;">
+                                <span class="sub">第 {{ poseT.offset + 1 }}-{{ Math.min(poseT.offset + poseT.limit, poseT.total) }} / {{ poseT.total }}</span>
+                                <span style="display:flex; gap:8px;">
+                                    <button class="icobtn" :disabled="poseT.offset <= 0" @click="posePage(-1)" title="上一页"><svg class="ic"><use href="#i-chev-l"/></svg></button>
+                                    <button class="icobtn" :disabled="poseT.offset + poseT.limit >= poseT.total" @click="posePage(1)" title="下一页"><svg class="ic"><use href="#i-chev-r"/></svg></button>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-head">
+                                <div class="card-title">
+                                    <svg class="ic"><use href="#i-terminal"/></svg>
+                                    近期训练活动
+                                </div>
+                            </div>
+                            <pre class="pose-logs" v-if="poseT.summary.logs && poseT.summary.logs.length">{{ poseT.summary.logs.join('\n') }}</pre>
+                            <div v-else class="tbl-empty" style="padding:30px 10px;">暂无日志</div>
+                        </div>
+
+                        <div v-if="poseBig" @click="poseBig = null" style="position:fixed; inset:0; background:rgba(0,0,0,.74); z-index:90; display:flex; align-items:center; justify-content:center; cursor:zoom-out;">
+                            <div style="text-align:center;">
+                                <img :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(poseBig.clip)" style="max-width:min(860px, 86vw); max-height:76vh; border-radius:14px;" alt="">
+                                <div class="sub" style="margin-top:10px;">{{ poseBig.clip }} · 点击任意处关闭</div>
+                            </div>
+                        </div>
                     </section>
 
                     <!-- ============ 外部引擎凭证 ============ -->
@@ -3794,6 +3968,7 @@
                 {key: 'logs', icon: 'i-terminal', label: '系统终端日志'},
                 {key: 'settings', icon: 'i-sliders', label: '上传参数'},
                 {key: 'bilibili', icon: 'i-upload', label: 'B站投稿'},
+                {key: 'pose_training', icon: 'i-grid', label: '姿态训练'},
                 {key: 'cookies', icon: 'i-key', label: '外部引擎凭证'}
             ];
             const switchTab = (key) => {
@@ -6023,7 +6198,18 @@
                     biliJobs.value = (res.data && res.data.jobs) || [];
                 } catch (e) {}
             };
-            const fetchBili = () => { fetchBiliStatus(); fetchBiliQueue(); };
+            const fetchBili = () => Promise.all([fetchBiliStatus(), fetchBiliQueue()]);
+            // 手动刷新：图标旋转直至数据就绪；10s 轮询走 fetchBili，不打扰
+            const biliRefreshing = ref(false);
+            const biliManualRefresh = async () => {
+                if (biliRefreshing.value) return;
+                biliRefreshing.value = true;
+                try {
+                    await fetchBili();
+                } finally {
+                    setTimeout(() => { biliRefreshing.value = false; }, 450);
+                }
+            };
             const doBiliAct = async (action, row, dir) => {
                 biliBusy.value = true;
                 try {
@@ -6140,11 +6326,56 @@
                 if (activeTab.value === 'bilibili' && isLoggedIn.value) fetchBili();
             }, 10000);
 
+            /* ===================== 姿态训练页 ===================== */
+            const poseT = reactive({summary: {}, sweep: {}, items: [], total: 0, offset: 0, limit: 20, q: ''});
+            const poseRefreshing = ref(false);
+            const poseBig = ref(null);
+            const fetchPoseSummary = async () => {
+                try {
+                    const res = await api.get('/pose_training/summary');
+                    Object.assign(poseT.summary, res.data || {});
+                    if (res.data && res.data.sweep) poseT.sweep = res.data.sweep;
+                } catch (e) {}
+            };
+            const fetchPoseClips = async () => {
+                try {
+                    const res = await api.get('/pose_training/clips', {params: {offset: poseT.offset, limit: poseT.limit, q: poseT.q}});
+                    poseT.items = (res.data && res.data.items) || [];
+                    poseT.total = (res.data && res.data.total) || 0;
+                } catch (e) {}
+            };
+            const fetchPose = () => Promise.all([fetchPoseSummary(), fetchPoseClips()]);
+            const poseManualRefresh = async () => {
+                if (poseRefreshing.value) return;
+                poseRefreshing.value = true;
+                try {
+                    await fetchPose();
+                } finally {
+                    setTimeout(() => { poseRefreshing.value = false; }, 450);
+                }
+            };
+            const posePage = (dir) => {
+                const off = poseT.offset + dir * poseT.limit;
+                if (off < 0 || off >= poseT.total) return;
+                poseT.offset = off;
+                fetchPoseClips();
+            };
+            let poseSearchTimer = null;
+            const poseSearchDebounced = () => {
+                clearTimeout(poseSearchTimer);
+                poseSearchTimer = setTimeout(() => { poseT.offset = 0; fetchPoseClips(); }, 300);
+            };
+            // 驻留时 30s 轮询进度卡（片池列表只在进入页签/翻页/搜索时拉取）
+            setInterval(() => {
+                if (activeTab.value === 'pose_training' && isLoggedIn.value) fetchPoseSummary();
+            }, 30000);
+
             watch(activeTab, (newTab) => {
                 if (newTab === 'logs') fetchLogs();
                 if (newTab === 'history') fetchHistory();
                 if (newTab === 'cookies') fetchCookies();
                 if (newTab === 'bilibili') fetchBili();
+                if (newTab === 'pose_training') fetchPose();
                 if (newTab === 'streamers') {
                     fetchRecorderStatus();
                     fetchStreamers();
@@ -6183,7 +6414,8 @@
                 logQuery, logData, logExportLimit, fetchLogs, downloadLogs, configForm, configDirsString,
                 configSaving, lastConfigSave, fetchConfig, saveConfig,
                 biliStatus, biliCounts, biliJobs, biliJobsFiltered, biliFilter, biliBusy, biliLoginText,
-                biliStatusMeta, biliAct, fetchBili, biliCoverEnable,
+                biliStatusMeta, biliAct, fetchBili, biliManualRefresh, biliRefreshing, biliCoverEnable,
+                poseT, poseRefreshing, poseBig, poseManualRefresh, posePage, poseSearchDebounced,
                 biliCand, biliCandShow, biliCandLoading, biliOpenCandidates, biliCandPoster, biliAddCand,
                 biliCoverRow, biliCoverShow, biliCoverCustom, biliCoverOptions, biliCoverActive, biliOpenCover, biliPickCover,
                 biliPosterSrc, biliPosterAt, biliTc,

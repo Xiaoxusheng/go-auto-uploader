@@ -45,6 +45,7 @@ const (
 var cookieAuthPaths = map[string]bool{
 	"/api/v1/builtin_recorder/proxy_image": true,
 	"/api/v1/logs/download":                true,
+	"/api/v1/pose_training/thumb":          true, // 训练片池缩略图（<img> 只读）
 }
 
 // sessionFile 会话落盘结构。

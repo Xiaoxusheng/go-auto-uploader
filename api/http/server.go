@@ -2,7 +2,6 @@
 package httpapi
 
 import (
-	"upload/internal/procutil"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"upload/internal/procutil"
 
 	"github.com/gorilla/websocket"
 
@@ -179,6 +179,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 		Streamers: s.handleStreamers, ActiveStreamers: s.handleActiveStreamers, Cookies: s.handleCookies,
 		BilibiliStatus: s.handleBilibiliStatus, BilibiliQueue: s.handleBilibiliQueue,
 		BilibiliCandidates: s.handleBilibiliCandidates, BilibiliPoster: s.handleBilibiliPoster,
+		PoseTrainingSummary: s.handlePoseTrainingSummary, PoseTrainingClips: s.handlePoseTrainingClips, PoseTrainingThumb: s.handlePoseTrainingThumb,
 		RecorderStatus: s.handleRecorderStatus, RecorderControl: s.handleRecorderControl, RecorderLogs: s.handleRecorderLogs,
 		WebSocket: s.handleWebSocket,
 		Vendor:    s.vendor,
@@ -301,8 +302,8 @@ func getFFmpegMemoryStd() int64 {
 	var totalMem int64
 	if runtime.GOOS == "windows" {
 		cmdTask := exec.Command("tasklist", "/FI", "IMAGENAME eq ffmpeg.exe", "/FO", "CSV", "/NH")
-	procutil.HideWindow(cmdTask)
-	out, err := cmdTask.Output()
+		procutil.HideWindow(cmdTask)
+		out, err := cmdTask.Output()
 		if err != nil {
 			return 0
 		}
