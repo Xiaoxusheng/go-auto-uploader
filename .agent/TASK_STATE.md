@@ -49,8 +49,20 @@
 - 注：服务器上训练页数据为空（训练数据只在本机 D:/upload/_diag/train）——属预期，页面显示空态；
   训练进度页只在 8080 控制台有数据
 
+## 手机端问题修复（07:4x，用户实机反馈）
+- 用户手机访问服务器训练页：①片池 500 报错弹窗 ②门显示未启用
+- 根因 1：poseReadClips 数据缺失时返回 500 → 改为优雅空池 + train_ready 标记 +
+  前端提示 chip「本机无训练数据 · 训练管线在录制机 8080」；磁盘余量回落进程所在卷
+- 根因 2：当时 set -e 中断导致门配置从未写入；且服务器 node 不可用（GLIBCXX 太老，
+  改用拉回本地编辑再推回）。本次按「先停进程→再改配置→再启动」顺序，门成功启用
+- footgun 防御：handleConfig PUT 对 incoming HighlightPoseGate==nil 回填现值，
+  控制台保存设置不再静默清门
+- 验证：服务器 summary 返回 gate enable:true 全参数 + train_ready:false 空态；
+  8888 200；提交 0235838
+- 服务器 node 教训写入 runbook 备忘（CentOS 7 无 GLIBCXX_3.4.21，脚本一律本地编辑）
+
 ## 移交事项（按优先级）
-1. ✅ 服务器部署完成（2026-09-26 06:5x，外网 8888 HTTP 200，firewalld 已放行）
+1. ✅ 服务器部署完成（2026-09-26 07:4x，姿态门启用 + 训练页空态正常）
 2. 磁盘长期治理：enableUpload（上传后删源）或定期删非冻结源片——待用户定
 3. 冻结 #5：姿态门 out-of-sample 终验（资产已备齐）
 4. 代码改动未提交 git（本轮：traj-scan、门诊断日志、review-ingest 增量、det 0.3），需要时打一个收官 commit
