@@ -2784,6 +2784,7 @@
                                 <div class="sub">姿态门全自动训练管线 · 入池 / 重定标 / 指标 一屏总览</div>
                             </div>
                             <div class="pg-tools">
+                                <span v-if="poseT.summary.train_ready === false" class="chip"><span class="dot gray"></span> 本机无训练数据 · 训练管线在录制机 8080</span>
                                 <span class="chip" :class="{good: poseT.summary.gate && poseT.summary.gate.enable}"><span class="dot" :class="poseT.summary.gate && poseT.summary.gate.enable ? 'run' : 'warn'"></span> {{ poseT.summary.gate && poseT.summary.gate.enable ? '姿态门已启用' : '姿态门未启用' }}</span>
                                 <button class="icobtn" title="刷新" @click="poseManualRefresh"><svg class="ic" :class="{spin: poseRefreshing}"><use href="#i-refresh"/></svg></button>
                             </div>

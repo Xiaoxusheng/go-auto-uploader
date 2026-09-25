@@ -314,6 +314,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		prev := app.AppCfg()
 		newConfig.DashboardUser = prev.DashboardUser
 		newConfig.DashboardPass = prev.DashboardPass
+		// 姿态门配置不在设置表单里：UI 整包提交时 incoming 恒为 nil，
+		// 不回填会把已启用的门静默清掉（同 GOLIVE_READINESS 里 exit_ratio 的教训）
+		if newConfig.Builtin.HighlightPoseGate == nil {
+			newConfig.Builtin.HighlightPoseGate = prev.Builtin.HighlightPoseGate
+		}
 		app.CfgStore.Replace(newConfig)
 		app.SaveConfigToFile()
 		log.Printf("[CONTROL] ⚙️ 用户保存了新配置，目标扫描目录已变更为: [%s]，加密模式: %v，上传开关: %v，TS转MP4: %v",

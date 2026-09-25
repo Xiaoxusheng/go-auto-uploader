@@ -53,10 +53,14 @@ type poseClip struct {
 }
 
 // poseReadClips 读片池配置（mtime 缓存，ingest 每片原子落盘，读侧容忍偶尔失败）。
+// 训练数据不存在（如服务器上没有训练管线）→ 返回空池而非报错，页面走空态。
 func poseReadClips() ([]poseClip, error) {
 	path := filepath.Join(poseTrainRoot, "_pose_pilot", "clips_config.json")
 	st, err := os.Stat(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []poseClip{}, nil
+		}
 		return nil, err
 	}
 	poseClipsMu.Lock()
@@ -191,12 +195,24 @@ func poseTailLogs(n int) []string {
 // handlePoseTrainingSummary 训练进度总览（进度卡 + 重定标结果 + 门参数）。
 func (s *Server) handlePoseTrainingSummary(w http.ResponseWriter, r *http.Request) {
 	clips, _ := poseReadClips()
+	// 本机没有训练产物（如服务器只负责录制/上传）→ train_ready=false，页面显示空态提示
+	clipsPath := filepath.Join(poseTrainRoot, "_pose_pilot", "clips_config.json")
+	trainReady := false
+	if _, err := os.Stat(clipsPath); err == nil {
+		trainReady = true
+	}
+	// 磁盘余量：训练根目录存在取该卷；否则回落进程所在卷（服务器场景）
+	diskPath := poseTrainRoot
+	if !trainReady {
+		diskPath = "."
+	}
 	summary := map[string]any{
 		"pool":         len(clips),
 		"features":     poseCountFeatures(),
 		"gold_clips":   poseCountGold(),
+		"train_ready":  trainReady,
 		"gate":         app.AppCfg().Builtin.HighlightPoseGate,
-		"disk_free_gb": float64(getDiskFreeSpaceStd(poseTrainRoot)) / 1073741824,
+		"disk_free_gb": float64(getDiskFreeSpaceStd(diskPath)) / 1073741824,
 		"logs":         poseTailLogs(30),
 	}
 	if b, err := os.ReadFile(filepath.Join(poseTrainRoot, "autogold_result.json")); err == nil {
