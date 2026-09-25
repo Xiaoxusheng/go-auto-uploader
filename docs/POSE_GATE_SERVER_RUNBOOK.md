@@ -10,6 +10,10 @@
 | `main` | **无姿态门**（纯 Go 构建，internal/pose 桩自动关门） | （历史基线保留） |
 | `pose-gate` | **含姿态门** + 全自动训练管线 + hleval 工具 | 本机 8080 + 服务器 8888 |
 
+> ⚠️ **推送红线（用户 2026-09-26 明确要求）**：`pose-gate` 分支**仅限本地**，
+> **禁止 merge / rebase / push 到 main**，远程 origin/main 保持不动。
+> 部署只从本地 pose-gate 分支构建，不经过 GitHub。
+
 姿态门代码用构建标签隔离：`internal/pose/pose_cgo.go`（cgo 构建才编译）
 vs `pose_nocgo.go`（纯 Go 桩）。所以**同一份 pose-gate 分支源码**：
 `CGO_ENABLED=1` 构建 = 带门；`CGO_ENABLED=0` = 不带门。门代码进不进二进制由构建开关决定。

@@ -31,6 +31,18 @@
 - 回退：把 .restart_args.txt 首行改回 /home/upload/uploader + 换回备份二进制即可
 - 8888 防火墙：曾放行又按用户要求撤销（内网访问策略不变）
 
+## 训练页 + 分支（2026-09-26 07:5x，用户三连指令）
+1. **分支就位**：`pose-gate` 分支两笔提交（e7172fe 姿态门+训练管线基线 42 文件；8d9a54c 训练页签）。
+   **main 保持 0ffffce 无姿态门**（用户要求：main=无姿态门版，pose-gate 分支=带门版）。
+   **⚠️ 推送红线：pose-gate 仅限本地，禁止 merge/push 到 main，origin/main 不动（用户 09-26 明确要求）**
+2. **runbook 文档**：docs/POSE_GATE_SERVER_RUNBOOK.md（sysroot 原理/服务器路径/更新流程/回退/踩坑）
+3. **控制台「姿态训练」页签上线**（本地 8080 已重启交付）：
+   - 后端 api/http/pose_training.go 三端点（summary/clips/thumb），mtime 缓存；sweep 结果 JSON 化
+   - 前端深色页签：进度卡 6 项 / 门参数只读 / 重定标 TOP10 / 片池分页表+缩略图 lightbox / 训练活动日志
+   - internal/auth 白名单加 thumb（<img> 原生请求带不了 Bearer，走会话 Cookie）
+   - 浏览器级验收通过：进度卡数字正确、TOP10 表格、片池 573 片缩略图 20/20 加载
+4. 夜训守护 07:30 到点自然结束；片池已涨至 573 片（夜间自动入池），D 盘 27.8GB
+
 ## 移交事项（按优先级）
 1. ✅ 服务器部署完成（2026-09-26 06:5x，外网 8888 HTTP 200，firewalld 已放行）
 2. 磁盘长期治理：enableUpload（上传后删源）或定期删非冻结源片——待用户定
