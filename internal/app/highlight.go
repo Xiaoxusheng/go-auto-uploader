@@ -15,6 +15,7 @@ import (
 	"upload/internal/config"
 	"upload/internal/hashstore"
 	"upload/internal/highlight"
+	"upload/internal/pose"
 	"upload/internal/recorder"
 )
 
@@ -50,6 +51,11 @@ type highlightEntry struct {
 	Err        string `json:"err,omitempty"`
 	// Attempts 累计失败次数，只在 Err 非空时有意义；达到上限才彻底放弃。
 	Attempts int `json:"attempts,omitempty"`
+	// —— 投稿扩展字段（B 站自动投稿）：裁切成功时补记首段/末段秒数与最高段评分，
+	// 供投稿队列渲染标题简介。旧状态文件没有这些字段，反序列化即零值，天然兼容。
+	StartSec int     `json:"start_sec,omitempty"`
+	EndSec   int     `json:"end_sec,omitempty"`
+	Score    float64 `json:"score,omitempty"`
 }
 
 var (
@@ -301,6 +307,9 @@ func highlightRecordFailure(src string, err error) int {
 	prev.Size = 0
 	prev.Err = err.Error()
 	prev.Attempts++
+	prev.StartSec = 0
+	prev.EndSec = 0
+	prev.Score = 0
 	highlightStateSet(src, prev)
 	return prev.Attempts
 }
@@ -472,6 +481,24 @@ func highlightOptions(b config.BuiltinSettings) highlight.Options {
 	if b.HighlightExitRatio > 0 && b.HighlightExitRatio < 1 {
 		o.ExitRatio = b.HighlightExitRatio
 	}
+	if b.HighlightMinAC1 > 0 && b.HighlightMinAC1 < 1 {
+		o.MinAC1 = b.HighlightMinAC1
+	}
+	// 姿态语义门：enable=true 才启用；参数已在 config applyDefaults 回落定标区间。
+	if g := b.HighlightPoseGate; g != nil && g.Enable {
+		o.PoseGate = &highlight.PoseGateParams{
+			Enabled:   true,
+			DetMin:    g.DetMin,
+			VisMin:    g.VisMin,
+			FaceMax:   g.FaceMax,
+			ExtMin:    g.ExtMin,
+			ExtMax:    g.ExtMax,
+			KeepRatio: g.KeepRatio,
+			FPS:       g.FPS,
+			DllPath:   g.OnnxDll,
+			ModelPath: g.OnnxModel,
+		}
+	}
 	return o
 }
 
@@ -629,11 +656,42 @@ func analyzeClip(src, outDir string, opts highlight.Options) {
 		return
 	}
 
-	segs := highlight.Select(highlight.Score(series, opts), opts)
+	segs := highlight.SelectWithBlocks(highlight.Score(series, opts), series.Motion, nil, opts)
 	if len(segs) == 0 {
 		log.Printf("[HIGHLIGHT] ⚪ %s 未检出高光段（整段都很平）", base)
 		highlightStateSet(src, highlightEntry{})
 		return
+	}
+
+	// 姿态语义门（§19）：砍「近景聊天/连麦/无人特效」类误检段。
+	// 纯 Go 构建或未启用时 FilterSegments 原样放行；异常时放行全部段（不误杀）。
+	if opts.PoseGate != nil && opts.PoseGate.Enabled {
+		spans := make([][2]int, len(segs))
+		for i, sg := range segs {
+			spans[i] = [2]int{sg.Start, sg.End}
+		}
+		kept, dropped, gerr := pose.FilterSegments(ffmpegBin, src, spans, pose.GateOptions{
+			DetMin:    opts.PoseGate.DetMin,
+			VisMin:    opts.PoseGate.VisMin,
+			FaceMax:   opts.PoseGate.FaceMax,
+			ExtMin:    opts.PoseGate.ExtMin,
+			ExtMax:    opts.PoseGate.ExtMax,
+			KeepRatio: opts.PoseGate.KeepRatio,
+		}, opts.PoseGate.DllPath, opts.PoseGate.ModelPath)
+		if gerr != nil {
+			log.Printf("[HIGHLIGHT] ⚠️ %s 姿态门异常（放行全部段）: %v", base, gerr)
+		} else {
+			log.Printf("[HIGHLIGHT] 🧍 %s 姿态门: %d 段 → %d 段（砍 %d）", base, len(segs), len(kept), dropped)
+			segs = segs[:0]
+			for _, sp := range kept {
+				segs = append(segs, highlight.Segment{Start: sp[0], End: sp[1]})
+			}
+		}
+		if len(segs) == 0 {
+			log.Printf("[HIGHLIGHT] ⚪ %s 姿态门后无残留段（判定为非舞蹈内容）", base)
+			highlightStateSet(src, highlightEntry{})
+			return
+		}
 	}
 
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -655,9 +713,24 @@ func analyzeClip(src, outDir string, opts highlight.Options) {
 	for _, s := range segs {
 		total += s.Duration()
 	}
+	top := segs[0]
+	for _, s := range segs {
+		if s.Score > top.Score {
+			top = s
+		}
+	}
 	log.Printf("[HIGHLIGHT] ✨ %s → %s | %d 段 / 共 %s | 耗时 %s",
 		base, filepath.Base(out), len(segs), highlightFormatDur(total), time.Since(start).Truncate(time.Second))
-	highlightStateSet(src, highlightEntry{Segments: len(segs), Output: filepath.Base(out), Size: size})
+	highlightStateSet(src, highlightEntry{
+		Segments: len(segs),
+		Output:   filepath.Base(out),
+		Size:     size,
+		StartSec: segs[0].Start,
+		EndSec:   segs[len(segs)-1].End,
+		Score:    top.Score,
+	})
+	// B 站自动投稿：总开关关闭时内部直接忽略，这里无条件触发即可。
+	publishEnqueueHighlight(out, segs)
 }
 
 // highlightStateGet 查询某切片是否已分析过（含失败与未检出，避免反复重试）。
@@ -667,6 +740,29 @@ func highlightStateGet(path string) (highlightEntry, bool) {
 	defer highlightMu.Unlock()
 	e, ok := highlightState[path]
 	return e, ok
+}
+
+// highlightOutputs 列出所有「已产出且仍在盘上」的高光产物绝对路径（B 站投稿候选用）。
+func highlightOutputs() []string {
+	highlightStateLoad()
+	highlightMu.Lock()
+	paths := make([]string, 0, len(highlightState))
+	for src, e := range highlightState {
+		if e.Output == "" {
+			continue
+		}
+		// 产物与源片同日期目录：<主播>/<日期>/高光/<原片名>_highlight.mp4
+		paths = append(paths, filepath.Join(filepath.Dir(src), recorder.HighlightDirName, e.Output))
+	}
+	highlightMu.Unlock()
+	existing := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			existing = append(existing, p)
+		}
+	}
+	sort.Strings(existing)
+	return existing
 }
 
 // highlightStateSet 记录分析结果并落盘。

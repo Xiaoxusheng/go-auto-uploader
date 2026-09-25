@@ -6,6 +6,7 @@ require (
 	github.com/chromedp/chromedp v0.14.2
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.2-0.20221020003552-4126fa611266
 	github.com/gorilla/websocket v1.5.3
+	golang.org/x/sys v0.34.0
 )
 
 require (
@@ -15,5 +16,5 @@ require (
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
-	golang.org/x/sys v0.34.0 // indirect
+	github.com/yalue/onnxruntime_go v1.36.0 // indirect
 )

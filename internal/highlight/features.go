@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"upload/internal/procutil"
+
 )
 
 // 全字段特征提取 —— 供离线训练与评估使用，主链路暂不依赖。
@@ -110,6 +112,7 @@ func ExtractFeatures(ctx context.Context, ffmpegBin, src string, threads int) (*
 	)
 
 	cmd := exec.CommandContext(ctx, ffmpegBin, args...)
+	procutil.HideWindow(cmd)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return nil, fmt.Errorf("获取 ffmpeg 输出失败: %w", err)

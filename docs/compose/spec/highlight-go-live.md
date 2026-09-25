@@ -3,7 +3,7 @@ feature: highlight-go-live
 status: delivered
 updated: 2026-09-24
 branch: main  # worktree add blocked by session isolation; see Report
-commits: 5a45c50..working-tree (uncommitted)
+commits: 5a45c50..0ffffce
 ---
 
 # Highlight Go-Live（迟滞配置化 + 冻结验收 + 上线打包）

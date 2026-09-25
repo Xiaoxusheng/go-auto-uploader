@@ -1061,3 +1061,15 @@ EOF
 
 **目标口径（跳舞）明显改善，混合口径略降**（SOOP 那批偏好短平滑）。
 配置改一行就能回退，`backup-deploy-hl2-*` 里也留了原文件。
+
+---
+
+## 21. 空间 bstd 进 Go + 扩样本证伪（2026-09-24，详见 `docs/highlight-spatial-de.md`）
+
+1. **`internal/highlight/spatial.go`**：`WindowBStd` / `SuppressByBStd` / `SelectWithBlocks` /
+   `ExtractBlocks`，`Options.MinBStd`（默认 0=关）。单测与 `go test ./...` 全绿。
+2. `hleval export` 补 `hard_neg`；`metrics -minbstd` 读 `b0..b8`。
+3. grid_probe 6→18；`features_dance_spatial_only.csv`（9 片）。
+4. **否定**：bstd AUC 扩样本后 0.917→**0.593**（n=48）/人工金标 0.705，**未达 0.85**。
+   MinBStd 门槛在空间子集上压不住 hn（0–6 档误检纹丝不动）。
+5. **MinBStd 不上线**。下一步：找回干净 D/E 源片或补确认金标，再换块向量/相关统计量。

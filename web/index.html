@@ -443,6 +443,8 @@
 
         /* ===================== 表格 ===================== */
         .tbl-card { padding: 0; overflow: hidden; }
+        /* 表格卡片标题与表头 16px 对齐（padding:0 会吞掉 card 的内边距） */
+        .tbl-card > .card-head { padding: 16px 16px 0; margin-bottom: 12px; }
         .tbl-scroll { overflow-x: auto; }
         table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 720px; }
         .tbl thead th {
@@ -491,6 +493,73 @@
         .tbl-empty .t { font-size: 13.5px; color: var(--t2); }
         .tbl-empty .s { font-size: 12px; color: var(--t4); margin-top: 4px; }
 
+        /* ===================== 页面：B站投稿 ===================== */
+        /* 统计卡：设计稿加大数值层级 */
+        .bili-page .statrow { gap: 14px; margin-bottom: 16px; }
+        .bili-page .stat-card { padding: 15px 18px 14px; gap: 8px; }
+        .bili-page .stat-card .v { font-size: 30px; letter-spacing: -0.02em; }
+        .bili-page .stat-card .aside { font-size: 11.5px; font-weight: 500; margin-left: 2px; }
+
+        /* 表单跨列：SESSDATA 占 2/3，模板类占整行 */
+        .f-item.span2 { grid-column: span 2; }
+        .f-item.span3 { grid-column: 1 / -1; }
+
+        /* 自动投稿策略：横向开关行（开关在左、文案在右） */
+        .bili-strategy { display: flex; align-items: center; gap: 12px 30px; flex-wrap: wrap; padding-top: 2px; }
+        .bili-tgl { display: inline-flex; align-items: center; gap: 10px; font-size: 13px; color: var(--t2); user-select: none; }
+        .bili-tgl .lb { cursor: pointer; transition: color 0.15s ease; }
+        .bili-tgl .lb:hover { color: var(--t1); }
+        .bili-tgl.push { margin-left: auto; }
+
+        /* 保存行：主按钮 + 右侧说明 */
+        .bili-save-row { display: flex; align-items: center; justify-content: space-between; gap: 12px 16px; margin-top: 20px; flex-wrap: wrap; }
+        .bili-save-note { font-size: 11.5px; color: var(--t4); text-align: right; max-width: 560px; line-height: 1.7; }
+
+        /* 队列：大缩略图 + 状态 pill + 进行中动画 */
+        .bili-thumb { width: 92px; height: 52px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); cursor: pointer; display: block; background: var(--panel-2); transition: border-color 0.15s ease, filter 0.15s ease, transform 0.15s ease; }
+        .bili-thumb:hover { border-color: rgba(34, 197, 94, 0.5); filter: brightness(1.1); transform: translateY(-1px); }
+        .bili-thumb.is-bad { display: flex; align-items: center; justify-content: center; font-size: 10.5px; color: var(--t4); }
+        .bili-thumb.is-bad:hover { transform: none; filter: none; border-color: var(--line); }
+
+        .bili-tries { margin-top: 6px; font-size: 11px; color: var(--t4); }
+        .bili-live { margin-top: 8px; width: 148px; height: 5px; border-radius: 999px; background: var(--panel-3); overflow: hidden; }
+        .bili-live i { display: block; height: 100%; width: 42%; border-radius: 999px; background: linear-gradient(90deg, #22c55e, #4ade80); animation: biliSlide 1.5s ease-in-out infinite; }
+        @keyframes biliSlide { 0% { transform: translateX(-110%); } 100% { transform: translateX(360%); } }
+
+        .bili-bv { display: inline-flex; align-items: center; gap: 5px; color: var(--green-bright); font-size: 12px; font-variant-numeric: tabular-nums; text-decoration: none; }
+        .bili-bv:hover { text-decoration: underline; }
+        .bili-bv .ic { width: 12px; height: 12px; }
+        .bili-err { color: var(--red-bright); font-size: 12px; display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+        .bili-none { color: var(--t4); }
+        .bili-ops { display: flex; gap: 5px; flex-wrap: nowrap; justify-content: flex-end; }
+
+        /* 弹窗：候选高光行 */
+        .bili-cand-row { display: flex; align-items: center; gap: 13px; border: 1px solid var(--line); border-radius: 11px; padding: 10px 12px; transition: border-color 0.15s ease, background-color 0.15s ease; }
+        .bili-cand-row:hover { border-color: var(--line-strong); background: color-mix(in srgb, var(--panel-2) 55%, transparent); }
+        .bili-cand-row img { width: 86px; height: 50px; object-fit: cover; border-radius: 7px; flex: none; background: var(--panel-2); }
+        .bili-cand-row .name { color: var(--t1); font-size: 12.5px; font-weight: 500; word-break: break-all; }
+        .bili-cand-row .meta { font-size: 11.5px; color: var(--t3); margin-top: 3px; }
+
+        /* 弹窗：封面候选（选中态 = 绿描边 + 光晕） */
+        .bili-cover-meta { font-size: 12.5px; color: var(--t3); margin-bottom: 13px; }
+        .bili-cover-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+        .bili-cover-item { border: 2px solid transparent; border-radius: 11px; padding: 5px; background: transparent; cursor: pointer; text-align: center; transition: border-color 0.15s ease, background-color 0.15s ease; }
+        .bili-cover-item:hover { background: color-mix(in srgb, var(--panel-2) 60%, transparent); }
+        .bili-cover-item.sel { border-color: rgba(34, 197, 94, 0.65); background: var(--green-dim); }
+        .bili-cover-item img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 7px; display: block; background: var(--panel-2); }
+        .bili-cover-item .cap { margin-top: 7px; font-size: 11.5px; color: var(--t3); font-variant-numeric: tabular-nums; }
+        .bili-cover-item.sel .cap { color: var(--green-bright); font-weight: 600; }
+        .bili-cover-tools { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+        .bili-cover-tools .num-inp { width: 110px; }
+
+        @media (max-width: 600px) {
+            .f-item.span2 { grid-column: auto; }
+            .bili-tgl.push { margin-left: 0; }
+            .bili-save-note { text-align: left; }
+            .bili-cover-grid { grid-template-columns: 1fr; }
+            .bili-live { width: 120px; }
+        }
+
         /* ===================== 页面：实时上传任务 ===================== */
         .lv-meta { font-size: 12px; color: var(--t3); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
         .lv-meta b { color: var(--t2); font-weight: 600; }
@@ -521,6 +590,10 @@
             transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
         }
         .rec-card:hover { border-color: var(--line-strong); transform: translateY(-2px); box-shadow: var(--shadow); }
+        /* 菜单展开时抬升整卡层级：弹层 z-index 会被卡片的 transform 悬浮层困在卡片自身的
+           层叠上下文里，导致「查看详情」等菜单被下方相邻卡片盖住（移动端尤其明显）。
+           由 x-menu 组件在开合时同步挂/摘 .menu-open 类 */
+        .rec-card.menu-open { position: relative; z-index: 80; }
         .rec-cv { position: relative; aspect-ratio: 16/9; background: linear-gradient(160deg, #0d1622, #0a1017); overflow: hidden; }
         html[data-theme='light'] .rec-cv { background: linear-gradient(160deg, #dbe5ee, #cbd7e2); }
         .rec-cv img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -751,6 +824,7 @@
         .frm-help { font-size: 11.5px; color: var(--t4); margin: 8px 2px 0; line-height: 1.7; }
         .frm-help a { color: var(--green-bright); text-decoration: none; }
         .frm-switches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 16px; }
+        .frm-switches.c4 { grid-template-columns: repeat(4, 1fr); }
         .fsw {
             display: flex; align-items: center; justify-content: space-between; gap: 10px;
             background: var(--panel-2); border: 1px solid var(--line);
@@ -887,6 +961,7 @@
             .statrow { grid-template-columns: repeat(3, 1fr); }
             .dirgrid { grid-template-columns: repeat(2, 1fr); }
             .frm-grid, .frm-grid.c4 { grid-template-columns: repeat(2, 1fr); }
+            .frm-switches.c4 { grid-template-columns: repeat(2, 1fr); }
             .grid-main { grid-template-columns: 1fr; }
         }
         @media (max-width: 900px) {
@@ -916,7 +991,7 @@
         }
         @media (max-width: 600px) {
             .rec-grid { grid-template-columns: 1fr; }
-            .frm-grid, .frm-grid.c4, .frm-switches { grid-template-columns: 1fr; }
+            .frm-grid, .frm-grid.c2, .frm-grid.c4, .frm-switches, .frm-switches.c4 { grid-template-columns: 1fr; }
             .statrow, .statrow.c4 { grid-template-columns: repeat(2, 1fr); }
             .pg-head h1 { font-size: 19px; }
             .toolbar .btns { width: 100%; }
@@ -2400,6 +2475,258 @@
                         </div>
                     </section>
 
+                    <!-- ============ B站自动投稿 ============ -->
+                    <section v-show="activeTab === 'bilibili'" class="bili-page">
+                        <div class="pg-head">
+                            <div>
+                                <h1>B站投稿</h1>
+                                <div class="sub">高光切片自动投稿 · Cookie 登录态 · 队列限速防风控</div>
+                            </div>
+                            <div class="pg-tools">
+                                <span class="chip" :class="{good: biliStatus.enable}"><span class="dot" :class="biliStatus.enable ? 'run' : 'gray'"></span> {{ biliStatus.enable ? '自动投稿已开启' : '自动投稿已关闭' }}</span>
+                                <button class="icobtn" title="刷新状态与队列" @click="fetchBili"><svg class="ic"><use href="#i-refresh"/></svg></button>
+                            </div>
+                        </div>
+
+                        <div class="statrow">
+                            <div class="stat-card">
+                                <span class="k">今日已投</span>
+                                <span class="v">{{ biliStatus.today || 0 }}<span class="aside">/ 今日上限 {{ biliStatus.dailyLimit || '-' }}</span></span>
+                            </div>
+                            <div class="stat-card"><span class="k">待投稿</span><span class="v">{{ biliCounts.pending }}</span></div>
+                            <div class="stat-card"><span class="k">投稿中</span><span class="v c-blue">{{ biliCounts.uploading }}</span></div>
+                            <div class="stat-card"><span class="k">已发布</span><span class="v c-green">{{ biliCounts.done }}</span></div>
+                            <div class="stat-card"><span class="k">失败</span><span class="v c-red">{{ biliCounts.failed }}</span></div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-head">
+                                <div class="card-title">
+                                    <svg class="ic"><use href="#i-key"/></svg>
+                                    登录态与投稿参数
+                                </div>
+                                <span class="chip" :class="{good: biliStatus.login && biliStatus.login.ok}">
+                                    <span class="dot" :class="biliStatus.login && biliStatus.login.ok ? 'run' : 'warn'"></span>
+                                    {{ biliLoginText }}
+                                </span>
+                            </div>
+
+                            <template v-if="configForm.bilibili">
+                                <div class="frm-grid">
+                                    <div class="f-item span2">
+                                        <label>SESSDATA（F12 → Application → Cookies 复制）</label>
+                                        <input class="inp" type="password" v-model="configForm.bilibili.sessdata" placeholder="约一个月有效，过期需重新复制">
+                                    </div>
+                                    <div class="f-item">
+                                        <label>bili_jct（即 csrf）</label>
+                                        <input class="inp" type="password" v-model="configForm.bilibili.bili_jct" placeholder="bili_jct 的 Cookie 值">
+                                    </div>
+
+                                    <div class="f-item">
+                                        <label>DedeUserID（UID，可选）</label>
+                                        <input class="inp" v-model="configForm.bilibili.dedeuserid" placeholder="例: 12345678">
+                                    </div>
+                                    <div class="f-item">
+                                        <label>投稿分区 ID（tid）</label>
+                                        <input type="number" class="inp num-inp" v-model.number="configForm.bilibili.tid" min="1" placeholder="129 = 舞蹈">
+                                    </div>
+                                    <div class="f-item">
+                                        <label>标签（逗号分隔）</label>
+                                        <input class="inp" v-model="configForm.bilibili.tag" placeholder="例: 录播,直播回放,高光">
+                                    </div>
+
+                                    <div class="f-item">
+                                        <label>投稿最小间隔（分钟）</label>
+                                        <input type="number" class="inp num-inp" v-model.number="configForm.bilibili.min_interval_minutes" min="1">
+                                    </div>
+                                    <div class="f-item">
+                                        <label>每日投稿上限</label>
+                                        <input type="number" class="inp num-inp" v-model.number="configForm.bilibili.daily_limit" min="1">
+                                    </div>
+                                    <div class="f-item">
+                                        <label>单任务重试上限</label>
+                                        <input type="number" class="inp num-inp" v-model.number="configForm.bilibili.max_retry" min="1" max="10">
+                                    </div>
+
+                                    <div class="f-item span3">
+                                        <label>标题模板（占位符：{name} 主播 · {date} 日期 · {time} 时刻 · {segments} 段数 · {duration} 总时长；{streamer} 同 {name}）</label>
+                                        <input class="inp" v-model="configForm.bilibili.titleTemplate" placeholder="【{name}】直播高光 {date} {time}">
+                                    </div>
+                                    <div class="f-item span3">
+                                        <label>简介模板（支持同一组占位符，留空则不填简介）</label>
+                                        <textarea class="inp" rows="3" v-model="configForm.bilibili.desc" placeholder="自动裁切的高光片段，来自 {name} {date} 的直播。"></textarea>
+                                    </div>
+
+                                    <div class="f-item span2">
+                                        <label>转载来源（仅转载类型必填，支持占位符）</label>
+                                        <input class="inp" v-model="configForm.bilibili.source" placeholder="例: https://live.bilibili.com/xxxx">
+                                    </div>
+                                    <div class="f-item">
+                                        <label>同步动态文案（留空不发动态）</label>
+                                        <input class="inp" v-model="configForm.bilibili.dynamic" placeholder="例: 【{name}】的高光片段已发布~">
+                                    </div>
+                                </div>
+
+                                <div class="frm-divider">自动投稿策略</div>
+                                <div class="bili-strategy">
+                                    <div class="bili-tgl">
+                                        <x-switch v-model="configForm.bilibili.enable"></x-switch>
+                                        <span class="lb" @click="configForm.bilibili.enable = !configForm.bilibili.enable">自动投稿总开关</span>
+                                    </div>
+                                    <div class="bili-tgl" title="自动从高光视频截取一帧上传为封面；关闭则使用默认封面">
+                                        <x-switch v-model="biliCoverEnable"></x-switch>
+                                        <span class="lb" @click="biliCoverEnable = !biliCoverEnable">自动截帧封面</span>
+                                    </div>
+                                    <div class="bili-tgl">
+                                        <x-switch v-model="configForm.bilibili.no_reprint"></x-switch>
+                                        <span class="lb" @click="configForm.bilibili.no_reprint = !configForm.bilibili.no_reprint">声明禁止转载</span>
+                                    </div>
+                                    <div class="bili-tgl push" title="自制稿件无需来源；转载类型必须在上方填写来源">
+                                        <span>稿件类型</span>
+                                        <x-select v-model="configForm.bilibili.copyright" :options="[
+                                            {value: 1, label: '自制'},
+                                            {value: 2, label: '转载'}
+                                        ]" style="min-width:104px;"></x-select>
+                                    </div>
+                                </div>
+
+                                <div class="bili-save-row">
+                                    <button class="pill primary" :disabled="configSaving" @click="saveConfig">
+                                        <svg v-if="configSaving" class="ic spin"><use href="#i-refresh"/></svg>
+                                        <svg v-else class="ic"><use href="#i-save"/></svg>
+                                        保存投稿配置
+                                    </button>
+                                    <span class="bili-save-note">与「上传参数」共用同一份 config.json，保存后热生效；投稿间隔与每日上限是防风控安全阀</span>
+                                </div>
+                            </template>
+                        </div>
+
+                        <div class="card tbl-card" style="margin-top:14px;">
+                            <div class="card-head">
+                                <div class="card-title">
+                                    <svg class="ic"><use href="#i-file"/></svg>
+                                    投稿队列
+                                    <span class="mini">从上到下依次发布</span>
+                                </div>
+                                <div class="pg-tools">
+                                    <button class="pill primary sm" @click="biliOpenCandidates">
+                                        <svg class="ic"><use href="#i-plus"/></svg> 添加高光
+                                    </button>
+                                    <x-select v-model="biliFilter" :options="[
+                                        {value: '', label: '全部状态'},
+                                        {value: 'pending', label: '等待中'},
+                                        {value: 'uploading', label: '投稿中'},
+                                        {value: 'done', label: '已发布'},
+                                        {value: 'failed', label: '失败'}
+                                    ]" style="min-width:104px;"></x-select>
+                                </div>
+                            </div>
+                            <div class="tbl-scroll">
+                                <table class="tbl">
+                                    <thead>
+                                    <tr>
+                                        <th style="width:8%;">预览</th>
+                                        <th style="width:10%;">入队时间</th>
+                                        <th style="width:7%;">主播</th>
+                                        <th style="width:19%;">文件名</th>
+                                        <th style="width:9%;">内容</th>
+                                        <th style="width:12%;">状态</th>
+                                        <th style="width:9%;">稿件</th>
+                                        <th style="width:9%;">错误详情</th>
+                                        <th style="width:16%; text-align:right;">操作</th>
+                                    </tr>
+                                    </thead>
+                                    <tbody>
+                                    <tr v-for="row in biliJobsFiltered" :key="row.id">
+                                        <td>
+                                            <img v-if="!row._bad" class="bili-thumb" :src="biliPosterSrc(row)" loading="lazy"
+                                                 alt="封面预览" title="点击选择封面画面" @click="biliOpenCover(row)" @error="row._bad = true">
+                                            <span v-else class="bili-thumb is-bad" title="点击选择封面画面" @click="biliOpenCover(row)">无预览</span>
+                                        </td>
+                                        <td class="num">{{ (row.created_at || '').slice(5, 16) }}</td>
+                                        <td>{{ row.streamer }}</td>
+                                        <td><div class="fname">{{ row.file_name }}</div></td>
+                                        <td class="num">{{ row.segments }} 段 · {{ biliTc(row.duration) }}</td>
+                                        <td>
+                                            <span class="tag" :class="biliStatusMeta(row.status).cls">{{ biliStatusMeta(row.status).text }}<template v-if="row.status === 'failed' && row.tries > 0"> · 已试 {{ row.tries }} 次</template></span>
+                                            <div v-if="row.status === 'uploading'" class="bili-live" aria-hidden="true"><i></i></div>
+                                            <div v-else-if="row.tries > 0 && row.status !== 'failed'" class="bili-tries">已试 {{ row.tries }} 次</div>
+                                        </td>
+                                        <td>
+                                            <a v-if="row.bvid" class="bili-bv" :href="'https://www.bilibili.com/video/' + row.bvid" target="_blank" rel="noopener">
+                                                {{ row.bvid }} <svg class="ic"><use href="#i-external"/></svg>
+                                            </a>
+                                            <span v-else class="bili-none">—</span>
+                                        </td>
+                                        <td>
+                                            <span v-if="row.err" class="bili-err" :title="row.err">{{ row.err.length > 60 ? row.err.slice(0, 60) + '…' : row.err }}</span>
+                                            <span v-else class="bili-none">—</span>
+                                        </td>
+                                        <td>
+                                            <div class="bili-ops">
+                                                <button class="pill xs" title="上移：更早发布" :disabled="biliBusy || row.status === 'uploading'" @click="biliAct('move', row, -1)">↑</button>
+                                                <button class="pill xs" title="下移：更晚发布" :disabled="biliBusy || row.status === 'uploading'" @click="biliAct('move', row, 1)">↓</button>
+                                                <button class="pill xs" :disabled="biliBusy || row.status === 'uploading'" @click="biliAct('retry', row)">重试</button>
+                                                <button class="pill xs danger" :disabled="biliBusy || row.status === 'uploading'" @click="biliAct('delete', row)">删除</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    </tbody>
+                                </table>
+                                <div v-if="biliJobsFiltered.length === 0" class="tbl-empty">
+                                    <svg class="ic big"><use href="#i-upload"/></svg>
+                                    <div class="t">暂无投稿任务</div>
+                                    <div class="s">开启自动投稿后，新产出的高光切片会自动进入此队列；也可点右上角「添加高光」手动入队</div>
+                                </div>
+                            </div>
+                            <div class="tbl-foot"><span>共 {{ biliJobs.length }} 条任务</span></div>
+                        </div>
+
+                        <!-- 弹窗：添加高光（候选列表） -->
+                        <x-modal :visible="biliCandShow" @update:visible="biliCandShow = $event" title="添加高光到投稿队列" width="640px">
+                            <div v-if="biliCandLoading" class="tbl-empty" style="padding:36px 16px;">
+                                <div class="t">加载中…</div>
+                            </div>
+                            <div v-else-if="biliCand.length === 0" class="tbl-empty" style="padding:36px 16px;">
+                                <div class="t">没有可添加的候选</div>
+                                <div class="s">已产出且在盘上的高光切片都已入队</div>
+                            </div>
+                            <div v-else style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow:auto;">
+                                <div v-for="c in biliCand" :key="c.id" class="bili-cand-row">
+                                    <img :src="biliCandPoster(c)" alt="封面预览" loading="lazy" @error="$event.target.style.visibility='hidden'">
+                                    <div style="flex:1;min-width:0;">
+                                        <div class="name">{{ c.file_name }}</div>
+                                        <div class="meta">{{ c.streamer }} · {{ c.clip_date }} {{ c.clip_time }} · {{ formatSize(c.file_size) }}</div>
+                                    </div>
+                                    <button class="pill primary sm" :disabled="biliBusy" @click="biliAddCand(c)">加入</button>
+                                </div>
+                            </div>
+                        </x-modal>
+
+                        <!-- 弹窗：选择封面画面 -->
+                        <x-modal :visible="biliCoverShow" @update:visible="biliCoverShow = $event" title="选择封面画面" width="720px">
+                            <div v-if="biliCoverRow">
+                                <div class="bili-cover-meta">
+                                    {{ biliCoverRow.file_name }} · 时长 {{ biliTc(biliCoverRow.duration) }}
+                                    <template v-if="biliCoverActive > 0"> · 当前封面第 {{ biliCoverActive }} 秒</template>
+                                </div>
+                                <div class="bili-cover-grid">
+                                    <div v-for="opt in biliCoverOptions" :key="opt.label" class="bili-cover-item" :class="{sel: opt.t === biliCoverActive}"
+                                         role="button" tabindex="0" @click="biliPickCover(opt.t)" @keydown.enter="biliPickCover(opt.t)">
+                                        <img :src="biliPosterAt(biliCoverRow, opt.t)" alt="候选封面画面" loading="lazy" @error="$event.target.style.visibility='hidden'">
+                                        <div class="cap">{{ biliTc(opt.t) }} · {{ opt.label }}</div>
+                                    </div>
+                                </div>
+                                <div class="bili-cover-tools">
+                                    <input type="number" class="inp num-inp" v-model.number="biliCoverCustom" min="0" placeholder="秒" aria-label="自定义封面秒数">
+                                    <button class="pill sm" :disabled="biliBusy || !(biliCoverCustom > 0)" @click="biliPickCover(biliCoverCustom)">自定义秒数设为封面</button>
+                                    <button class="pill sm" :disabled="biliBusy" @click="biliPickCover(0)">恢复默认（30% 处）</button>
+                                </div>
+                                <div class="frm-help">点击候选画面即保存；正式投稿时按此时间点截帧上传封面</div>
+                            </div>
+                        </x-modal>
+                    </section>
+
                     <!-- ============ 外部引擎凭证 ============ -->
                     <section v-show="activeTab === 'cookies'">
                         <div class="pg-head">
@@ -2601,12 +2928,26 @@
                             <input type="number" class="inp" v-model.number="builtinSettings.highlight_per_clip" min="1" max="20">
                         </div>
                     </div>
-                    <div class="frm-grid">
+                    <div class="frm-grid" style="margin-bottom:6px;">
                         <div class="f-item">
                             <label>合并间隔 (秒)</label>
                             <input type="number" class="inp" v-model.number="builtinSettings.highlight_merge_gap" min="0" max="300">
                         </div>
+                        <div class="f-item">
+                            <label>平滑窗口 (秒)</label>
+                            <input type="number" class="inp" v-model.number="builtinSettings.highlight_smooth_window" min="1" max="60">
+                        </div>
                         <div class="f-item"></div>
+                    </div>
+                    <div class="frm-grid">
+                        <div class="f-item">
+                            <label>迟滞退出比 (0关)</label>
+                            <input type="number" class="inp" step="0.05" v-model.number="builtinSettings.highlight_exit_ratio" min="0" max="0.95">
+                        </div>
+                        <div class="f-item">
+                            <label>时序门槛 min_ac1 (0关)</label>
+                            <input type="number" class="inp" step="0.05" v-model.number="builtinSettings.highlight_min_ac1" min="0" max="0.95">
+                        </div>
                         <div class="f-item"></div>
                     </div>
                 </template>
@@ -2905,6 +3246,8 @@
         el.className = 'toast ' + (type || 'info');
         el.innerHTML = (_UI_ICONS[type] || _UI_ICONS.info) + '<span></span>';
         el.querySelector('span').textContent = String(text || '');
+        el.title = '点击关闭';
+        el.onclick = () => { el.classList.add('out'); setTimeout(() => el.remove(), 300); };
         host.appendChild(el);
         setTimeout(() => {
             el.classList.add('out');
@@ -2926,13 +3269,13 @@
         hd.className = 'hd';
         hd.innerHTML = (_UI_ICONS[level] || _UI_ICONS.info) + '<span class="tt"></span>';
         hd.querySelector('.tt').textContent = String(opts.title || '');
-        if (opts.duration !== 0) {
-            const xb = document.createElement('button');
-            xb.className = 'x';
-            xb.textContent = '×';
-            xb.onclick = () => dismiss();
-            hd.appendChild(xb);
-        }
+        // 关闭按钮恒常显示：duration=0 的常驻通知（如系统告警）此前没有 X，永远关不掉
+        const xb = document.createElement('button');
+        xb.className = 'x';
+        xb.setAttribute('aria-label', '关闭');
+        xb.textContent = '×';
+        xb.onclick = () => dismiss();
+        hd.appendChild(xb);
         const bd = document.createElement('div');
         bd.className = 'bd';
         bd.textContent = String(opts.content || '');
@@ -3322,7 +3665,15 @@
         name: 'XMenu',
         emits: [],
         data() { return {open: false, dropUp: false}; },
+        watch: {
+            // 开合同步抬升/还原宿主卡片的层级，保证弹层不被相邻卡片盖住
+            open() { this.syncHostCard(); }
+        },
         methods: {
+            syncHostCard() {
+                const card = (this.$el && this.$el.closest) ? this.$el.closest('.rec-card') : null;
+                if (card) card.classList.toggle('menu-open', this.open);
+            },
             toggle() {
                 this.open = !this.open;
                 if (this.open) {
@@ -3346,7 +3697,10 @@
             }
         },
         mounted() { document.addEventListener('click', this.onDocClick); },
-        unmounted() { document.removeEventListener('click', this.onDocClick); },
+        unmounted() {
+            document.removeEventListener('click', this.onDocClick);
+            if (this.open) { this.open = false; } // 触发 watch 还原宿主卡片层级
+        },
         template: `<div class="xmenu" @click.stop>
             <span @click="toggle"><slot name="trigger"></slot></span>
             <transition name="drop">
@@ -3439,6 +3793,7 @@
                 {key: 'history', icon: 'i-clock', label: '历史记录'},
                 {key: 'logs', icon: 'i-terminal', label: '系统终端日志'},
                 {key: 'settings', icon: 'i-sliders', label: '上传参数'},
+                {key: 'bilibili', icon: 'i-upload', label: 'B站投稿'},
                 {key: 'cookies', icon: 'i-key', label: '外部引擎凭证'}
             ];
             const switchTab = (key) => {
@@ -3665,6 +4020,9 @@
                 highlight_max_duration: 180,
                 highlight_merge_gap: 20,
                 highlight_per_clip: 3,
+                highlight_smooth_window: 5,
+                highlight_exit_ratio: 0,
+                highlight_min_ac1: 0,
                 highlight_only_upload: false
             });
             const builtinCookies = ref({douyin: '', kuaishou: '', soop: '', bilibili: '', twitch: ''});
@@ -4368,6 +4726,10 @@
                         builtinSettings.value.highlight_max_duration = res1.data.highlight_max_duration || 180;
                         builtinSettings.value.highlight_merge_gap = res1.data.highlight_merge_gap || 20;
                         builtinSettings.value.highlight_per_clip = res1.data.highlight_per_clip || 3;
+                        // 0 合法（关）必须用 ??；smooth_window 0 非法回落 5
+                        builtinSettings.value.highlight_smooth_window = res1.data.highlight_smooth_window || 5;
+                        builtinSettings.value.highlight_exit_ratio = res1.data.highlight_exit_ratio ?? 0;
+                        builtinSettings.value.highlight_min_ac1 = res1.data.highlight_min_ac1 ?? 0;
                         builtinSettings.value.highlight_only_upload = res1.data.highlight_only_upload || false;
                     }
                     const res2 = await api.get('/builtin_recorder/cookies');
@@ -5622,10 +5984,167 @@
                 window.removeEventListener('keydown', handleGlobalKeydown);
             });
 
+            /* ---- B站自动投稿 ---- */
+            const biliStatus = reactive({enable: false, cookieReady: false, today: 0, dailyLimit: 0, counts: {}, login: {}});
+            const biliJobs = ref([]);
+            const biliFilter = ref('');
+            const biliBusy = ref(false);
+            const biliCounts = computed(() => biliStatus.counts || {pending: 0, uploading: 0, done: 0, failed: 0});
+            const biliLoginText = computed(() => {
+                const l = biliStatus.login || {};
+                if (l.ok) return '已登录：' + (l.uname || ('UID ' + l.mid));
+                return l.err ? ('登录异常：' + l.err) : '登录态未知';
+            });
+            const biliStatusMeta = (s) => ({
+                pending:   {text: '等待中', cls: 'gray'},
+                uploading: {text: '投稿中', cls: 'blue'},
+                done:      {text: '已发布', cls: 'green'},
+                failed:    {text: '失败', cls: 'red'}
+            }[s] || {text: s || '-', cls: 'gray'});
+            // 队列/封面用的时间码（mm:ss），比 formatDurationSeconds 更贴近投稿平台展示
+            const biliTc = (sec) => {
+                sec = Math.max(0, Math.floor(Number(sec) || 0));
+                const m = Math.floor(sec / 60), s = sec % 60;
+                return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+            };
+            const biliJobsFiltered = computed(() => {
+                if (!biliFilter.value) return biliJobs.value;
+                return biliJobs.value.filter(j => j.status === biliFilter.value);
+            });
+            const fetchBiliStatus = async () => {
+                try {
+                    const res = await api.get('/bilibili/status');
+                    Object.assign(biliStatus, res.data || {});
+                } catch (e) {}
+            };
+            const fetchBiliQueue = async () => {
+                try {
+                    const res = await api.get('/bilibili/queue');
+                    biliJobs.value = (res.data && res.data.jobs) || [];
+                } catch (e) {}
+            };
+            const fetchBili = () => { fetchBiliStatus(); fetchBiliQueue(); };
+            const doBiliAct = async (action, row, dir) => {
+                biliBusy.value = true;
+                try {
+                    await api.post('/bilibili/queue', {action, id: row.id, dir: dir || 0, sec: 0});
+                    const tips = {
+                        retry: ['任务已重试', '已跳过等待，马上处理'],
+                        delete: ['任务已删除', row.file_name],
+                        move: ['顺序已调整', '队列从上到下依次发布'],
+                        add: ['已加入队列', row.file_name]
+                    }[action];
+                    if (tips) {
+                        window.uiNotify('success', {title: tips[0], content: tips[1], duration: 2600});
+                    }
+                    fetchBili();
+                } catch (e) {
+                } finally {
+                    biliBusy.value = false;
+                }
+            };
+            const biliAct = (action, row, dir) => {
+                if (action === 'delete') {
+                    Modal.confirm({
+                        title: '删除投稿任务？',
+                        content: `将从队列移除「${row.file_name}」。不影响本地文件与已发布的稿件。`,
+                        okText: '删除',
+                        cancelText: '取消',
+                        onOk: () => doBiliAct(action, row, dir)
+                    });
+                    return;
+                }
+                doBiliAct(action, row, dir);
+            };
+
+            /* ---- 队列可视化：候选入队 + 封面选择 ---- */
+            const biliCand = ref([]);
+            const biliCandShow = ref(false);
+            const biliCandLoading = ref(false);
+            const biliCoverRow = ref(null);
+            const biliCoverShow = ref(false);
+            const biliCoverCustom = ref('');
+            // 预览帧是二进制直出的 JPEG（不走加密信封），鉴权靠登录会话 Cookie
+            const biliPosterAt = (id, t) => '/api/v1/bilibili/poster?id=' + encodeURIComponent(id) + '&t=' + t;
+            const biliPosterSrc = (row) => biliPosterAt(row.id, row.cover_at > 0 ? row.cover_at : Math.max(1, Math.floor((row.duration || 1) * 0.3)));
+            const biliCandPoster = (c) => biliPosterAt(c.id, 1);
+            const biliOpenCandidates = async () => {
+                biliCandShow.value = true;
+                biliCandLoading.value = true;
+                try {
+                    const res = await api.get('/bilibili/candidates');
+                    biliCand.value = (res.data && res.data.candidates) || [];
+                } catch (e) {
+                } finally {
+                    biliCandLoading.value = false;
+                }
+            };
+            const biliAddCand = async (c) => {
+                biliBusy.value = true;
+                try {
+                    await api.post('/bilibili/queue', {action: 'add', id: c.id});
+                    window.uiNotify('success', {title: '已加入队列', content: c.file_name, duration: 2600});
+                    biliCand.value = biliCand.value.filter(x => x.id !== c.id);
+                    fetchBili();
+                    if (biliCand.value.length === 0) biliCandShow.value = false;
+                } catch (e) {
+                } finally {
+                    biliBusy.value = false;
+                }
+            };
+            const biliCoverOptions = computed(() => {
+                const r = biliCoverRow.value;
+                if (!r) return [];
+                const d = r.duration || 1;
+                return [
+                    {t: 1, label: '开头'},
+                    {t: Math.max(1, Math.floor(d * 0.3)), label: '30% 处'},
+                    {t: Math.max(2, Math.floor(d * 0.96)), label: '结尾'}
+                ];
+            });
+            // 当前生效的封面秒数：cover_at 为 0 表示跟随默认（30% 处）
+            const biliCoverActive = computed(() => {
+                const r = biliCoverRow.value;
+                if (!r) return -1;
+                return r.cover_at > 0 ? r.cover_at : Math.max(1, Math.floor((r.duration || 1) * 0.3));
+            });
+            const biliOpenCover = (row) => {
+                biliCoverRow.value = row;
+                biliCoverCustom.value = '';
+                biliCoverShow.value = true;
+            };
+            const biliPickCover = async (t) => {
+                if (!biliCoverRow.value || !(t >= 0)) return;
+                biliBusy.value = true;
+                try {
+                    await api.post('/bilibili/queue', {action: 'cover', id: biliCoverRow.value.id, sec: t});
+                    window.uiNotify('success', {
+                        title: '封面已更新',
+                        content: t > 0 ? `投稿时将截取第 ${t} 秒画面` : '已恢复默认封面（视频 30% 处）',
+                        duration: 3000
+                    });
+                    biliCoverShow.value = false;
+                    fetchBili();
+                } catch (e) {
+                } finally {
+                    biliBusy.value = false;
+                }
+            };
+            // cover_enable 后端是指针字段：undefined = 默认开启；反向出一个普通开关
+            const biliCoverEnable = computed({
+                get: () => { const b = configForm.value.bilibili; return !b || b.cover_enable !== false; },
+                set: (v) => { if (configForm.value.bilibili) configForm.value.bilibili.cover_enable = v; }
+            });
+            // 驻留本页时 10s 轻量轮询登录态与队列
+            setInterval(() => {
+                if (activeTab.value === 'bilibili' && isLoggedIn.value) fetchBili();
+            }, 10000);
+
             watch(activeTab, (newTab) => {
                 if (newTab === 'logs') fetchLogs();
                 if (newTab === 'history') fetchHistory();
                 if (newTab === 'cookies') fetchCookies();
+                if (newTab === 'bilibili') fetchBili();
                 if (newTab === 'streamers') {
                     fetchRecorderStatus();
                     fetchStreamers();
@@ -5662,7 +6181,13 @@
                 liveTotalSize, completedPage, completedPageSize, completedPaged,
                 control, historyQuery, historyData, fetchHistory, onPageChange,
                 logQuery, logData, logExportLimit, fetchLogs, downloadLogs, configForm, configDirsString,
-                configSaving, lastConfigSave, fetchConfig, saveConfig, streamers, newStreamer, activeStreamersCount, fetchStreamers,
+                configSaving, lastConfigSave, fetchConfig, saveConfig,
+                biliStatus, biliCounts, biliJobs, biliJobsFiltered, biliFilter, biliBusy, biliLoginText,
+                biliStatusMeta, biliAct, fetchBili, biliCoverEnable,
+                biliCand, biliCandShow, biliCandLoading, biliOpenCandidates, biliCandPoster, biliAddCand,
+                biliCoverRow, biliCoverShow, biliCoverCustom, biliCoverOptions, biliCoverActive, biliOpenCover, biliPickCover,
+                biliPosterSrc, biliPosterAt, biliTc,
+                streamers, newStreamer, activeStreamersCount, fetchStreamers,
                 saveStreamers, addStreamer, confirmRemoveStreamer, removeStreamer, activeRecordingStreamers, onlineStreamersCount,
                 pagedStreamers, streamerPage, streamersPages, filteredStreamers,
                 showBatchAddModal, batchAddText, batchAddLoading, handleBatchAdd, cookiesForm, cookiesLoading, extCookiePlatforms,

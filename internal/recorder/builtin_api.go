@@ -68,11 +68,18 @@ func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 			if c.HighlightMergeGap > 0 {
 				b.HighlightMergeGap = c.HighlightMergeGap
 			}
+			if c.HighlightSmoothWindow > 0 {
+				b.HighlightSmoothWindow = c.HighlightSmoothWindow
+			}
 			// ExitRatio 的 0 是合法值（关闭迟滞），不能用 >0 当「未提交」，
 			// 否则 API 一旦打开就关不掉（审查 critical）。非法值夹到 0。
 			b.HighlightExitRatio = c.HighlightExitRatio
 			if b.HighlightExitRatio < 0 || b.HighlightExitRatio >= 1 {
 				b.HighlightExitRatio = 0
+			}
+			b.HighlightMinAC1 = c.HighlightMinAC1
+			if b.HighlightMinAC1 < 0 || b.HighlightMinAC1 >= 1 {
+				b.HighlightMinAC1 = 0
 			}
 			b.HighlightOnlyUpload = c.HighlightOnlyUpload
 		})

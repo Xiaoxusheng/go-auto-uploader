@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	"upload/internal/app"
 	"upload/internal/auth"
+	"upload/internal/bilibili"
 	"upload/internal/config"
 	"upload/internal/logx"
 	"upload/internal/storage"
@@ -643,4 +645,140 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+}
+
+// ---------- B 站自动投稿 ----------
+
+// bilibiliLoginSnapshot 登录态检查结果快照（带 5 分钟缓存）。
+type bilibiliLoginSnapshot struct {
+	Checked   bool      `json:"checked"`
+	OK        bool      `json:"ok"`
+	Mid       int64     `json:"mid"`
+	Uname     string    `json:"uname"`
+	Err       string    `json:"err,omitempty"`
+	CheckedAt time.Time `json:"-"`
+}
+
+// bilibiliLoginCached 查询登录态；缓存命中直接返回，未配置 Cookie 不打真实请求。
+func (s *Server) bilibiliLoginCached() bilibiliLoginSnapshot {
+	s.biliNavMu.Lock()
+	defer s.biliNavMu.Unlock()
+	if s.biliNavCache != nil && time.Since(s.biliNavCache.CheckedAt) < 5*time.Minute {
+		return *s.biliNavCache
+	}
+	snap := bilibiliLoginSnapshot{Checked: true, CheckedAt: time.Now()}
+	cfg := app.AppCfg().Bilibili
+	switch {
+	case !cfg.Enable:
+		snap.Err = "投稿未开启"
+	case cfg.SessData == "" || cfg.BiliJct == "":
+		snap.Err = "未配置 Cookie"
+	default:
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		info, err := bilibili.NewClient(cfg.SessData, cfg.BiliJct, cfg.DedeUserID).Nav(ctx)
+		if err != nil {
+			snap.Err = err.Error()
+		} else {
+			snap.OK = info.IsLogin
+			snap.Mid = info.Mid
+			snap.Uname = info.Uname
+		}
+	}
+	s.biliNavCache = &snap
+	return snap
+}
+
+// handleBilibiliStatus 投稿总览：开关、Cookie 状态、登录态（缓存）、队列计数。
+func (s *Server) handleBilibiliStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.sendJSONError(w, r, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	cfg := app.AppCfg().Bilibili
+	stats, today := app.PublishStats()
+	s.sendJSONSuccess(w, r, map[string]interface{}{
+		"enable":             cfg.Enable,
+		"cookieReady":        cfg.SessData != "" && cfg.BiliJct != "",
+		"tid":                cfg.Tid,
+		"tag":                cfg.Tag,
+		"minIntervalMinutes": cfg.MinIntervalMinutes,
+		"dailyLimit":         cfg.DailyLimit,
+		"today":              today,
+		"counts":             stats,
+		"login":              s.bilibiliLoginCached(),
+	})
+}
+
+// handleBilibiliQueue 投稿队列：GET 全量列表 / POST 单条操作
+//（action = retry|delete|move|cover|add，move 带 dir，cover 带 sec，add 的 id 为候选文件路径）。
+func (s *Server) handleBilibiliQueue(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.sendJSONSuccess(w, r, map[string]interface{}{"jobs": app.PublishSnapshot()})
+	case http.MethodPost:
+		var req struct {
+			Action string `json:"action"`
+			ID     string `json:"id"`
+			Dir    int    `json:"dir"`
+			Sec    int    `json:"sec"`
+		}
+		if err := s.parseEncryptedRequest(r, &req); err != nil {
+			s.sendJSONError(w, r, http.StatusBadRequest, "请求体解析失败")
+			return
+		}
+		if req.ID == "" {
+			s.sendJSONError(w, r, http.StatusBadRequest, "id 必填")
+			return
+		}
+		switch req.Action {
+		case "retry", "delete", "move", "cover", "add":
+		default:
+			s.sendJSONError(w, r, http.StatusBadRequest, "action 必须为 retry/delete/move/cover/add")
+			return
+		}
+		ok, msg := app.PublishQueueAction(req.Action, req.ID, req.Dir, req.Sec)
+		if !ok {
+			if msg == "" {
+				msg = "任务不存在或当前状态不允许该操作"
+			}
+			s.sendJSONError(w, r, http.StatusConflict, msg)
+			return
+		}
+		s.sendJSONSuccess(w, r, nil)
+	default:
+		s.sendJSONError(w, r, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+// handleBilibiliCandidates 列出可手动入队的候选高光（已产出、在盘上、未入队）。
+func (s *Server) handleBilibiliCandidates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.sendJSONError(w, r, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	s.sendJSONSuccess(w, r, map[string]interface{}{"candidates": app.PublishCandidates()})
+}
+
+// handleBilibiliPoster 输出某视频指定秒数的预览帧（JPEG 二进制直出，
+// 不走 JSON/加密信封；<img> 经登录会话 Cookie 鉴权）。
+func (s *Server) handleBilibiliPoster(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.sendJSONError(w, r, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	id := r.URL.Query().Get("id")
+	sec, _ := strconv.Atoi(r.URL.Query().Get("t"))
+	if id == "" {
+		s.sendJSONError(w, r, http.StatusBadRequest, "id 必填")
+		return
+	}
+	jpg, err := app.PublishPosterFor(id, sec)
+	if err != nil {
+		s.sendJSONError(w, r, http.StatusNotFound, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	http.ServeFile(w, r, jpg)
 }

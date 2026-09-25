@@ -24,6 +24,11 @@ type Routes struct {
 	ActiveStreamers http.HandlerFunc
 	Cookies         http.HandlerFunc
 
+	BilibiliStatus     http.HandlerFunc
+	BilibiliQueue      http.HandlerFunc
+	BilibiliCandidates http.HandlerFunc
+	BilibiliPoster     http.HandlerFunc
+
 	CtlStart, CtlPause, CtlStop, CtlRelogin, CtlRescan http.HandlerFunc
 	CtlClearFail, CtlRetryFail, CtlClearSuccess        http.HandlerFunc
 
@@ -65,6 +70,10 @@ func Register(mux *http.ServeMux, r Routes) {
 	mux.HandleFunc("/api/v1/recorder/control", r.RecorderControl)
 	mux.HandleFunc("/api/v1/recorder/logs", r.RecorderLogs)
 	mux.HandleFunc("/api/v1/cookies", r.Cookies)
+	mux.HandleFunc("/api/v1/bilibili/status", r.BilibiliStatus)
+	mux.HandleFunc("/api/v1/bilibili/queue", r.BilibiliQueue)
+	mux.HandleFunc("/api/v1/bilibili/candidates", r.BilibiliCandidates)
+	mux.HandleFunc("/api/v1/bilibili/poster", r.BilibiliPoster)
 	mux.HandleFunc("/ws/live", r.WebSocket)
 	if r.Extra != nil {
 		r.Extra(mux)

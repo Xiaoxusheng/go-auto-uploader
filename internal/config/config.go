@@ -54,11 +54,28 @@ type Config struct {
 	// Builtin 内置录制引擎配置（原 builtin_config.json + builtin_cookies.json）
 	Builtin BuiltinSettings `json:"builtin"`
 
-	// Bilibili 预留：原 bilibili_config.json（当前代码未消费，仅保留数据不丢）
+	// Bilibili B 站自动投稿配置（原 bilibili_config.json 合并而来）
 	Bilibili BilibiliSettings `json:"bilibili"`
 }
 
 // BuiltinSettings 内置录制引擎参数（字段名与原 builtin_config.json 完全兼容）。
+// HighlightPoseGateConfig 姿态语义门配置（docs/highlight-spatial-de.md §18c/§19/§21）。
+type HighlightPoseGateConfig struct {
+	Enable    bool    `json:"enable"`
+	DetMin    float64 `json:"det_min"`
+	// FPS 段内抽帧率，默认 5（奈奎斯特 2.5Hz，覆盖舞曲节拍 1.7~2.3Hz，
+	// 为将来节拍耦合特征免重抽）。非法值（<1 或 >30）回落 5。
+	FPS       int     `json:"fps,omitempty"`
+	VisMin    float64 `json:"vis_min"`
+	FaceMax   float64 `json:"face_max"`
+	ExtMin    float64 `json:"ext_min"`
+	ExtMax    float64 `json:"ext_max"`
+	KeepRatio float64 `json:"keep_ratio"`
+	// OnnxDll/OnnxModel 运行库与模型路径；空 = exe 同目录默认文件名。
+	OnnxDll   string `json:"onnx_dll,omitempty"`
+	OnnxModel string `json:"onnx_model,omitempty"`
+}
+
 type BuiltinSettings struct {
 	Quality              string `json:"quality"`
 	SegmentTime          int    `json:"segment_time"`
@@ -93,6 +110,16 @@ type BuiltinSettings struct {
 	// 0 = 关闭（默认，与历史行为一致）；(0,1) 启用，灰度推荐 0.8。
 	// 非法值（<0 或 ≥1）在 applyDefaults 回落 0。见 internal/highlight.Options.ExitRatio。
 	HighlightExitRatio float64 `json:"highlight_exit_ratio"`
+	// HighlightMinAC1 段级时序门槛：候选段运动量 lag-1 自相关低于此值则丢弃
+	// （压礼物特效等短促爆发）。0=关闭；(0,1) 启用，灰度推荐 0.15。
+	// 见 internal/highlight.Options.MinAC1 与 docs/highlight-spatial-de.md。
+	HighlightMinAC1 float64 `json:"highlight_min_ac1"`
+	// HighlightPoseGate 姿态语义门（det-aware v3）：候选段抽帧跑人体姿态，
+	// det_rate 低=无人场直接拒，检出秒按 vis/face 判舞蹈，段内通过占比 ≥keep 保留。
+	// 整对象为空或 enable=false 时关闭（默认）。
+	// 段级模拟：非舞秒砍 89% @ 真舞秒损 13%（docs/highlight-spatial-de.md §19）。
+	// 纯 Go 构建下推理不可用，门自动失效（段照常保留）。
+	HighlightPoseGate *HighlightPoseGateConfig `json:"highlight_pose_gate"`
 	// HighlightOnlyUpload 为 true 时，开了高光的主播只上传高光片段，原片保留在本地不上传。
 	// 单主播可用「只传高光:1/0」覆盖。
 	HighlightOnlyUpload bool `json:"highlight_only_upload"`
@@ -119,7 +146,9 @@ type BuiltinCookies struct {
 	Twitch   string `json:"twitch"`
 }
 
-// BilibiliSettings 原 bilibili_config.json 的完整字段（保持兼容，暂未消费）。
+// BilibiliSettings B 站投稿配置（原 bilibili_config.json 的完整字段 + 自动投稿扩展参数）。
+// Cookie 三件套从浏览器 F12 复制：SESSDATA / bili_jct（即 csrf）/ DedeUserID。
+// SESSDATA 有效期约一个月，过期后 worker 会跳过投稿并在控制台提示重登。
 type BilibiliSettings struct {
 	Enable        bool   `json:"enable"`
 	SessData      string `json:"sessdata"`
@@ -129,6 +158,56 @@ type BilibiliSettings struct {
 	Tag           string `json:"tag"`
 	TitleTemplate string `json:"titleTemplate"`
 	Desc          string `json:"desc"`
+
+	// —— 自动投稿参数（占位符支持 {streamer} {date} {time} {segments} {duration}）——
+	// Copyright 1=自制 2=转载；转载时 B 站校验 Source 必填。
+	Copyright int `json:"copyright"`
+	// Source 转载来源链接/说明模板。
+	Source string `json:"source"`
+	// Dynamic 同步发一条动态的文案模板；空 = 不填动态。
+	Dynamic string `json:"dynamic"`
+	// NoReprint 是否声明「禁止转载」。
+	NoReprint bool `json:"no_reprint"`
+	// MinIntervalMinutes 两次投稿的最小间隔（分钟）。B 站对网页投稿接口有频控
+	//（code 601 临时频控），限速是全自动投稿的安全阀。
+	MinIntervalMinutes int `json:"min_interval_minutes"`
+	// DailyLimit 每日投稿上限；0 或负值回落默认 20（要更宽就显式调大，
+	// 不提供「无限」档——全自动场景下没有上限等于把账号交给风控）。
+	DailyLimit int `json:"daily_limit"`
+	// MaxRetry 单个高光最多投稿尝试次数，退避间隔随次数翻倍。
+	MaxRetry int `json:"max_retry"`
+	// CoverEnable 自动从高光视频截帧上传封面；nil = 开启（默认）。
+	// 用指针是为了区分「未配置」（默认开）与「显式关闭」。
+	CoverEnable *bool `json:"cover_enable,omitempty"`
+}
+
+// CoverEnabled 返回是否自动截帧封面（未配置 = 开启）。
+func (b BilibiliSettings) CoverEnabled() bool { return b.CoverEnable == nil || *b.CoverEnable }
+
+// ApplyDefaults 补足 B 站投稿配置缺省值（兼容旧 config.json 缺失字段）。
+// 默认分区取舞蹈区（129）：本系统实测场景是跳舞直播；其它场景在控制台改即可。
+func (b *BilibiliSettings) ApplyDefaults() {
+	if b.Tid <= 0 {
+		b.Tid = 129
+	}
+	if b.Tag == "" {
+		b.Tag = "直播,高光"
+	}
+	if b.TitleTemplate == "" {
+		b.TitleTemplate = "【{streamer}】直播高光 {date} {time}"
+	}
+	if b.Copyright != 1 && b.Copyright != 2 {
+		b.Copyright = 1
+	}
+	if b.MinIntervalMinutes <= 0 {
+		b.MinIntervalMinutes = 10
+	}
+	if b.DailyLimit <= 0 {
+		b.DailyLimit = 20
+	}
+	if b.MaxRetry <= 0 {
+		b.MaxRetry = 3
+	}
 }
 
 // CLI 是启动参数快照，仅在 config.json 不存在时用于生成默认配置。
@@ -220,6 +299,7 @@ func (c *Config) applyDefaults() {
 		c.MailSMTPPort = 587
 	}
 	c.Builtin.ApplyDefaults()
+	c.Bilibili.ApplyDefaults()
 }
 
 // ApplyDefaults 补足内置引擎配置缺省值（兼容旧文件缺失字段）。
@@ -265,6 +345,33 @@ func (b *BuiltinSettings) ApplyDefaults() {
 	// 迟滞退出比：0=关（默认）；仅 (0,1) 合法，其它回落 0，避免 Select 收到非法比。
 	if b.HighlightExitRatio < 0 || b.HighlightExitRatio >= 1 {
 		b.HighlightExitRatio = 0
+	}
+	// MinAC1: 0=off; only (0,1) legal
+	if b.HighlightMinAC1 < 0 || b.HighlightMinAC1 >= 1 {
+		b.HighlightMinAC1 = 0
+	}
+	// 姿态门：未配置→保持 nil（关闭）；enable=false 也视为关闭。开启时逐项回落到定标值。
+	if b.HighlightPoseGate != nil {
+		g := b.HighlightPoseGate
+		if !g.Enable {
+			b.HighlightPoseGate = nil
+		} else {
+			set := func(v, def, lo, hi float64) float64 {
+				if v < lo || v > hi {
+					return def
+				}
+				return v
+			}
+			g.DetMin = set(g.DetMin, 0.2, 0.05, 0.5)
+			g.VisMin = set(g.VisMin, 0.6, 0.3, 0.9)
+			g.FaceMax = set(g.FaceMax, 0.14, 0.05, 0.3)
+			g.ExtMin = set(g.ExtMin, 0.5, 0.2, 0.8)
+			g.ExtMax = set(g.ExtMax, 1.0, 0.9, 2.0)
+			g.KeepRatio = set(g.KeepRatio, 0.5, 0.2, 0.9)
+			if g.FPS < 1 || g.FPS > 30 {
+				g.FPS = 5
+			}
+		}
 	}
 	// 迟滞默认关闭（0）。仅 (0,1) 合法；其它值一律回落 0，避免 Select 收到非法 ExitRatio。
 	if b.HighlightMinDur <= 0 {

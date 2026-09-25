@@ -40,8 +40,44 @@ type Options struct {
 	SmoothWindow int
 	// Pad 每段前后各扩几秒，让高光有头有尾。
 	Pad int
+	// MinBStd 段级空间门槛：候选段 bstd（3×3 块间 std）低于此值则丢弃。
+	// 用于压礼物特效/切近景/空镜等伪运动（缺陷 D/E）。0=关闭。
+	// 需配套 Blocks 数据（SelectWithBlocks / ExtractBlocks）。
+	MinBStd float64
+	// MinAC1 段级时序门槛：运动量 lag-1 自相关低于此值则丢弃（压礼物短促爆发）。
+	// 0=关闭。grid_de：dance vs gift AUC 0.87，不依赖空间块。
+	MinAC1 float64
+	// MinClose 段级中心集中度门槛：WindowCenterRatio 低于此值则丢弃。
+	// 0=关闭，需 Blocks。与 MinAC1 秩组合在金标上 dance vs D/E AUC 0.92。
+	MinClose float64
+	// PoseGate 姿态语义门（可空）：对候选段抽帧跑人体姿态（internal/pose），
+	// 砍掉「近景聊天 / 连麦 / 无人特效」类误检段。段级模拟：
+	// 非舞秒砍 89% @ 真舞秒损 13%（docs/highlight-spatial-de.md §19）。
+	// nil=关闭；纯 Go 构建下姿态推理不可用，门自动失效（段照常保留）。
+	PoseGate *PoseGateParams
 	// Threads ffmpeg 解码线程数，用于限制对录制进程的 CPU 抢占；<=0 表示交给 ffmpeg 自动。
 	Threads int
+}
+
+// PoseGateParams 姿态语义门参数（纯数据载体；推理在 internal/pose，cgo 构建才有实现）。
+type PoseGateParams struct {
+	// Enabled 总开关（config highlight_pose_gate.enable）。
+	Enabled bool
+	// DetMin 段内姿态检出率下限：低于视为无人/特效场，整段拒。
+	DetMin float64
+	// VisMin 关键点置信度均值下限（全身入镜才是舞）。
+	VisMin float64
+	// FaceMax 双眼间距/帧宽上限（脸大=近景聊天）。
+	FaceMax float64
+	// ExtMin/ExtMax 人体纵向跨度占帧高的上下限（蹲坐矮、超长条异常）。
+	ExtMin, ExtMax float64
+	// KeepRatio 段内通过秒占比达到该值才保留段。
+	KeepRatio float64
+	// FPS 段内抽帧率（默认 5：奈奎斯特 2.5Hz，覆盖舞曲节拍 1.7~2.3Hz，
+	// 为将来节拍耦合特征免重抽）。
+	FPS int
+	// DllPath/ModelPath onnxruntime.dll 与 yolov8n-pose.onnx 路径（空=exe 同目录默认名）。
+	DllPath, ModelPath string
 }
 
 // DefaultOptions 返回经验默认值（基于真实素材校准，勿随意改动阈值方向）。

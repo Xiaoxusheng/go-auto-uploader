@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"upload/internal/procutil"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -56,6 +57,11 @@ type Server struct {
 	cachedFFMem  int64
 	sysStatsMu   sync.RWMutex
 	maxKeyPoolSz int
+
+	// biliNavCache B 站登录态的短缓存（5 分钟）：nav 接口每次现打要 1~2 秒，
+	// 控制台轮询没必要每次都打真实请求。
+	biliNavMu    sync.Mutex
+	biliNavCache *bilibiliLoginSnapshot
 }
 
 // New 创建服务。
@@ -171,6 +177,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 		DirsStatus:      s.handleDirsStatus, Config: s.handleConfig,
 		Logs: s.handleLogs, LogsDownload: s.handleLogsDownload,
 		Streamers: s.handleStreamers, ActiveStreamers: s.handleActiveStreamers, Cookies: s.handleCookies,
+		BilibiliStatus: s.handleBilibiliStatus, BilibiliQueue: s.handleBilibiliQueue,
+		BilibiliCandidates: s.handleBilibiliCandidates, BilibiliPoster: s.handleBilibiliPoster,
 		RecorderStatus: s.handleRecorderStatus, RecorderControl: s.handleRecorderControl, RecorderLogs: s.handleRecorderLogs,
 		WebSocket: s.handleWebSocket,
 		Vendor:    s.vendor,
@@ -285,49 +293,16 @@ func (s *Server) sendJSONError(w http.ResponseWriter, r *http.Request, statusCod
 
 // ---------- sys stats ----------
 
-func getDiskFreeSpaceStd(pathStr string) int64 {
-	if pathStr == "" {
-		pathStr = "."
-	}
-	absPath, err := filepath.Abs(pathStr)
-	if err != nil {
-		absPath = pathStr
-	}
-	if runtime.GOOS == "windows" {
-		vol := filepath.VolumeName(absPath)
-		if vol == "" {
-			vol = "C:"
-		}
-		out, err := exec.Command("wmic", "logicaldisk", "where", fmt.Sprintf("DeviceID='%s'", vol), "get", "FreeSpace").Output()
-		if err == nil {
-			lines := strings.Split(string(out), "\n")
-			if len(lines) >= 2 {
-				if freeBytes, err := strconv.ParseInt(strings.TrimSpace(lines[1]), 10, 64); err == nil {
-					return freeBytes
-				}
-			}
-		}
-		return 0
-	}
-	out, err := exec.Command("df", "-k", absPath).Output()
-	if err == nil {
-		lines := strings.Split(string(out), "\n")
-		if len(lines) >= 2 {
-			fields := strings.Fields(lines[1])
-			if len(fields) >= 4 {
-				if freeKb, err := strconv.ParseInt(fields[3], 10, 64); err == nil {
-					return freeKb * 1024
-				}
-			}
-		}
-	}
-	return 0
-}
+// getDiskFreeSpaceStd 按平台分文件实现：
+//   - windows: disk_windows.go（Win32 GetDiskFreeSpaceEx）
+//   - 其他:    disk_unix.go（statfs）
 
 func getFFmpegMemoryStd() int64 {
 	var totalMem int64
 	if runtime.GOOS == "windows" {
-		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq ffmpeg.exe", "/FO", "CSV", "/NH").Output()
+		cmdTask := exec.Command("tasklist", "/FI", "IMAGENAME eq ffmpeg.exe", "/FO", "CSV", "/NH")
+	procutil.HideWindow(cmdTask)
+	out, err := cmdTask.Output()
 		if err != nil {
 			return 0
 		}

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"upload/internal/procutil"
+
 )
 
 // Cut 把高光段从源文件抽出并拼接为一个 mp4。
@@ -91,6 +93,7 @@ func Cut(ctx context.Context, ffmpegBin, src, outPath string, segs []Segment) er
 // runFFmpeg 执行 ffmpeg，失败时把 stderr 尾部带进错误信息（截断，避免刷屏）。
 func runFFmpeg(ctx context.Context, bin string, args []string) error {
 	cmd := exec.CommandContext(ctx, bin, args...)
+	procutil.HideWindow(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

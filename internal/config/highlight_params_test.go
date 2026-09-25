@@ -104,6 +104,39 @@ func TestHighlightSmoothWindowDefaultsToFive(t *testing.T) {
 
 // 迟滞退出比契约：0=关（默认/回落），仅 (0,1) 合法。
 // 非法值必须回落 0，否则 Select 会走错分支或行为未定义。
+// MinAC1: 0=off (default/clamp), only (0,1) legal. Grey recommend 0.15.
+func TestHighlightMinAC1DefaultAndClamp(t *testing.T) {
+	c, err := Load(writeCfg(t, `{"builtin":{}}`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := c.Builtin.HighlightMinAC1; got != 0 {
+		t.Errorf("default min_ac1 = %v, want 0", got)
+	}
+
+	c2, err := Load(writeCfg(t, `{"builtin":{"highlight_min_ac1":0.15}}`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := c2.Builtin.HighlightMinAC1; got != 0.15 {
+		t.Errorf("0.15 should pass, got %v", got)
+	}
+
+	for _, body := range []string{
+		`{"builtin":{"highlight_min_ac1":-0.2}}`,
+		`{"builtin":{"highlight_min_ac1":1.0}}`,
+		`{"builtin":{"highlight_min_ac1":2}}`,
+	} {
+		c3, err := Load(writeCfg(t, body))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got := c3.Builtin.HighlightMinAC1; got != 0 {
+			t.Errorf("%s illegal should clamp 0, got %v", body, got)
+		}
+	}
+}
+
 func TestHighlightExitRatioDefaultAndClamp(t *testing.T) {
 	c, err := Load(writeCfg(t, `{"builtin":{}}`))
 	if err != nil {
@@ -133,5 +166,39 @@ func TestHighlightExitRatioDefaultAndClamp(t *testing.T) {
 		if got := c3.Builtin.HighlightExitRatio; got != 0 {
 			t.Errorf("%s → %v, 期望回落 0", body, got)
 		}
+	}
+}
+
+// 姿态门（§19）：enable=false 时整对象必须被回落为 nil（门关闭，行为与未配置一致）；
+// enable=true 时非法参数回落到定标值，合法参数原样保留。
+// 门槛方向与回落值见 docs/highlight-spatial-de.md §18c/§19。
+func TestHighlightPoseGateDefaultsAndClamp(t *testing.T) {
+	p := writeCfg(t, `{"builtin":{
+		"highlight_min_ac1":0.15,
+		"highlight_pose_gate":{"enable":false,"vis_min":9.9}}}`)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Builtin.HighlightPoseGate != nil {
+		t.Fatalf("enable=false 时姿态门应为 nil（关闭），得到 %+v", c.Builtin.HighlightPoseGate)
+	}
+
+	p2 := writeCfg(t, `{"builtin":{
+		"highlight_pose_gate":{"enable":true,"vis_min":9.9,"face_max":0.14,
+		"ext_min":0.5,"ext_max":1.0,"keep_ratio":0.5}}}`)
+	c2, err := Load(p2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	g := c2.Builtin.HighlightPoseGate
+	if g == nil || !g.Enable {
+		t.Fatal("enable=true 时姿态门应保留")
+	}
+	if g.VisMin != 0.6 {
+		t.Errorf("vis_min 非法值 9.9 应回落 0.6，得到 %v", g.VisMin)
+	}
+	if g.FaceMax != 0.14 || g.ExtMin != 0.5 || g.ExtMax != 1.0 || g.KeepRatio != 0.5 {
+		t.Errorf("合法参数被改动: %+v", g)
 	}
 }

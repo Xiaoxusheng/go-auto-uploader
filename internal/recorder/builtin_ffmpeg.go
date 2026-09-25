@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"upload/internal/procutil"
+
 )
 
 type builtinTailBuffer struct {
@@ -117,6 +119,7 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string,
 		"-f", "image2",
 		coverPath,
 	)
+	procutil.HideWindow(cmd)
 
 	// 挂载错误日志捕获缓冲池
 	var stderrBuf bytes.Buffer
@@ -168,6 +171,7 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string,
 				coverPath,
 			)
 			retry := exec.Command(builtinFfmpegPath, retryArgs...)
+			procutil.HideWindow(retry)
 			var retryErr bytes.Buffer
 			retry.Stderr = &retryErr
 			stdin2, pipeErr := retry.StdinPipe()
@@ -405,6 +409,7 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 	defer cancelRecord()
 
 	cmd := exec.Command(builtinFfmpegPath, args...)
+	procutil.HideWindow(cmd)
 
 	var stderrBuf builtinTailBuffer
 	cmd.Stderr = &stderrBuf

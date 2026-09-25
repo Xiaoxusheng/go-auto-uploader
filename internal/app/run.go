@@ -219,6 +219,7 @@ func Run(opts Options) {
 	go successLogPersistLoop()
 	go manageWorkers()
 	go highlightLoop()
+	go publishLoop()
 	if opts.InitBots != nil {
 		opts.InitBots()
 	}
@@ -377,6 +378,7 @@ func ApplyDataDir() string {
 	DirStatusStore.Repath(filepath.Join(dataDir, dirStatusName))
 	HashDB.Repath(filepath.Join(dataDir, hashName))
 	resetHighlightState(dataDir)
+	resetPublishState(dataDir)
 	return dataDir
 }
 

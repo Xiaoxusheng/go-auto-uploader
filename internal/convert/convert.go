@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"upload/internal/procutil"
+
 )
 
 // IsTS 判断是否为 .ts 直播切片（大小写不敏感）。
@@ -50,6 +52,7 @@ func TSToMP4(tsPath, ffmpegBin string) (string, error) {
 	for i, args := range attempts {
 		start := time.Now()
 		cmd := exec.Command(ffmpegBin, args...)
+	procutil.HideWindow(cmd)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {

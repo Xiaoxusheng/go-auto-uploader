@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"upload/internal/procutil"
+
 )
 
 type sample struct {
@@ -56,6 +58,7 @@ func Probe(ctx context.Context, ffmpegBin, src string, threads int) (*Series, er
 	)
 
 	cmd := exec.CommandContext(ctx, ffmpegBin, args...)
+	procutil.HideWindow(cmd)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return nil, fmt.Errorf("获取 ffmpeg 输出失败: %w", err)

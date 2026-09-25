@@ -66,3 +66,17 @@ func TestViewportAllowsZoom(t *testing.T) {
 		t.Fatal("viewport 不应禁用缩放")
 	}
 }
+
+// 高光灰度参数必须在 UI 有绑定：整包保存 /builtin_recorder/config 时，
+// 若表单缺字段而后端「始终赋值」，config 里的灰度值会被静默打回 0
+// （GOLIVE_READINESS.md 的 footgun）。要求模板 v-model 绑定 + 脚本侧状态读写两处齐全。
+func TestIndexBindsHighlightGrayFields(t *testing.T) {
+	for _, field := range []string{"highlight_exit_ratio", "highlight_min_ac1"} {
+		if !strings.Contains(IndexHTML, `v-model.number="builtinSettings.`+field+`"`) {
+			t.Fatalf("%s 缺少 v-model 绑定输入框，整包保存会把灰度参数静默清零", field)
+		}
+		if !strings.Contains(IndexHTML, "builtinSettings.value."+field) {
+			t.Fatalf("%s 缺少脚本侧状态读写（builtinSettings.value.%s）", field, field)
+		}
+	}
+}
