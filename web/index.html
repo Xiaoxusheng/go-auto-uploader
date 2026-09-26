@@ -552,7 +552,7 @@
         .pose-rail { position: relative; height: 92px; margin-top: 8px; }
         .pose-rail::before { content: ''; position: absolute; top: 50%; left: 3%; right: 3%; height: 1px; background: var(--line); }
         .pose-cart { position: absolute; top: 4px; width: 150px; height: 84px; transform: translateX(-50%); transition: left 0.4s ease; border-radius: var(--r-sm); overflow: hidden; border: 1px solid var(--line); background: var(--panel-2); cursor: zoom-in; animation: poseCartIn 0.35s ease backwards; }
-        .pose-cart.on { border-color: rgba(34, 197, 94, 0.5); }
+        .pose-cart.on { border-color: rgba(34, 197, 94, 0.5); box-shadow: 0 6px 18px rgba(34, 197, 94, 0.16); }
         .pose-cart img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .pose-cart .scan { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 0%, rgba(34, 197, 94, 0.16) 50%, transparent 100%); animation: poseScan 1.8s ease-in-out infinite; pointer-events: none; }
         @keyframes poseScan { 0% { transform: translateY(-110%); } 100% { transform: translateY(110%); } }
@@ -564,14 +564,22 @@
         .pose-live-side { min-width: 0; flex: none; max-width: 300px; display: flex; flex-direction: column; gap: 3px; font-size: 13px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel-2); transition: border-color 0.25s ease, background 0.25s ease; }
         .pose-live-side.flash { border-color: rgba(34, 197, 94, 0.55); background: var(--green-dim); }
         /* 已入池缩略图列：新完成的片在此进入 */
-        .pose-done-strip { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+        .pose-done-strip { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
         .pose-done-strip .dlabel { font-size: 12px; color: var(--green); font-weight: 700; flex: none; }
         .pose-done-strip .dthumb { position: relative; width: 64px; height: 38px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); cursor: zoom-in; animation: poseFadeUp 0.24s ease backwards; flex: none; background: var(--panel-2); }
         .pose-done-strip .dthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .pose-done-strip .dthumb .dname { position: absolute; right: 0; bottom: 0; left: 0; font-size: 10px; color: #fff; background: rgba(0, 0, 0, 0.55); padding: 1px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pose-term-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 5px; font-size: 11.5px; color: var(--t3); }
+        .pose-belt-empty { padding: 30px 0 34px; text-align: center; border: 1px dashed var(--line); border-radius: var(--r-md); margin: 4px 0 12px; }
         .pose-done-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 7px 10px; background: var(--panel-2); border-radius: var(--r-sm); border: 1px solid var(--line); font-size: 12.5px; }
-        .pose-queue { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+        .pose-queue { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 14px; }
+        .pose-queue .sep { display: inline-block; width: 1px; height: 10px; background: var(--line); margin: 0 2px; }
         .pose-queue .qchip { font-size: 11.5px; color: var(--t3); background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; animation: poseFadeUp 0.24s ease backwards; }
+        .tick { display: inline-block; animation: poseTick 0.3s ease; }
+        @keyframes poseTick { 0% { transform: translateY(-5px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+        /* 传送带：运行中虚线流动，示意带子在走 */
+        .pose-belt-wrap.flow .pose-rail::before { background: repeating-linear-gradient(90deg, rgba(34, 197, 94, 0.5) 0 7px, transparent 7px 14px); animation: beltFlow 0.9s linear infinite; }
+        @keyframes beltFlow { to { background-position-x: 14px; } }
         @keyframes poseFadeUp { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
         /* 片池详情弹窗 */
         .pose-frame-view { text-align: center; }
@@ -2889,7 +2897,14 @@
                                 </div>
                                 <span class="chip" :class="{good: poseLive.running}"><span class="dot" :class="poseLive.running ? 'run pulse' : 'gray'"></span> {{ poseLive.running ? '管线运行中' : (poseLive.last_activity ? '待机 · 上轮 ' + poseLive.last_activity : '待机') }}</span>
                             </div>
-                            <div class="pose-belt-wrap" v-if="poseCart.clip">
+                            <div class="pose-queue" v-if="poseLive.queue_remaining != null">
+                                <span class="sub">待入池 <b class="tick" :key="'q' + poseLive.queue_remaining">{{ poseLive.queue_remaining }}</b> 片<i class="sep"></i>池内 <b class="tick" :key="'p' + poseLive.pool">{{ poseLive.pool }}</b> 片<i class="sep"></i>磁盘剩 <b class="tick" :key="'d' + poseLive.disk_free_gb">{{ (poseLive.disk_free_gb || 0).toFixed(1) }}</b> GB</span>
+                                <span class="tag orange" v-if="!poseLive.running && poseLive.queue_remaining > 0 && (poseLive.disk_free_gb || 99) < 10" title="训练守护每轮会检查磁盘，低于 10GB 时跳过入池、仅重定标">磁盘偏低 · 入池被守护跳过</span>
+                                <span class="sub" v-else-if="!poseLive.running && poseLive.queue_remaining > 0">等待下轮自动训练（上轮 {{ poseLive.last_activity || '—' }}）</span>
+                                <span class="qchip" v-for="(q, i) in poseQueueChips" :key="q.clip" :title="q.clip" :style="{animationDelay: (i * 60) + 'ms'}">{{ q.name }}{{ q.n > 1 ? ' ×' + q.n : '' }}</span>
+                                <span class="sub" v-if="poseLive.queue_remaining > (poseLive.queue_head || []).length">…等 {{ poseLive.queue_remaining - (poseLive.queue_head || []).length }} 片</span>
+                            </div>
+                            <div class="pose-belt-wrap" :class="{flow: poseLive.running}" v-if="poseCart.clip">
                                 <div class="pose-belt">
                                     <div class="pose-pipeline">
                                         <div class="pstage" v-for="(st, i) in poseStages" :key="st.name"
@@ -2923,15 +2938,8 @@
                                     <div class="sub" v-if="poseCart.detail">{{ poseCart.detail }}</div>
                                 </div>
                             </div>
-                            <div class="pose-live-meta" v-if="!poseCart.clip">
+                            <div class="pose-belt-empty" v-if="!poseCart.clip">
                                 <span class="sub">暂无入池记录 · 等待管线首轮运行</span>
-                            </div>
-                            <div class="pose-queue" v-if="poseLive.queue_remaining != null">
-                                <span class="sub">待入池 <b>{{ poseLive.queue_remaining }}</b> 片 · 池内 <b>{{ poseLive.pool }}</b> 片 · 磁盘剩 <b>{{ (poseLive.disk_free_gb || 0).toFixed(1) }}</b> GB</span>
-                                <span class="tag orange" v-if="!poseLive.running && poseLive.queue_remaining > 0 && (poseLive.disk_free_gb || 99) < 10" title="训练守护每轮会检查磁盘，低于 10GB 时跳过入池、仅重定标">磁盘偏低 · 入池被守护跳过</span>
-                                <span class="sub" v-else-if="!poseLive.running && poseLive.queue_remaining > 0">等待下轮自动训练（上轮 {{ poseLive.last_activity || '—' }}）</span>
-                                <span class="qchip" v-for="(q, i) in poseLive.queue_head" :key="q.clip" :title="q.clip" :style="{animationDelay: (i * 60) + 'ms'}">{{ q.streamer || q.clip }}</span>
-                                <span class="sub" v-if="poseLive.queue_remaining > (poseLive.queue_head || []).length">…等 {{ poseLive.queue_remaining - (poseLive.queue_head || []).length }} 片</span>
                             </div>
                             <div class="pose-done-strip" v-if="(poseLive.recent_done || []).length">
                                 <span class="dlabel">✓ 已入池</span>
@@ -2941,7 +2949,11 @@
                                     <span class="dname">{{ c.streamer || c.clip }}</span>
                                 </div>
                             </div>
-                            <div class="term pose-term" style="height:150px;" v-if="poseLive.logs && poseLive.logs.length">
+                            <div class="pose-term-head" v-if="poseLive.logs && poseLive.logs.length">
+                                <span>训练日志 · 自动滚动到最新</span>
+                                <span class="dot" :class="poseLive.running ? 'run' : ''"></span>
+                            </div>
+                            <div class="term pose-term" style="height:150px;" ref="logTerm" v-if="poseLive.logs && poseLive.logs.length">
                                 <div class="lg-line" v-for="(l, i) in poseLive.logs" :key="i"><span class="src">{{ l.split(' │ ')[0].replace(/_/g, ' ') }}</span>{{ l.split(' │ ').slice(1).join(' │ ') }}</div>
                             </div>
                         </div>
@@ -6565,10 +6577,12 @@
             const framesGrowing = ref(false);
             const poolFlash = ref(false);
             const recalibFlash = ref(false);
+            const logTerm = ref(null);
             const fetchPoseLive = async () => {
                 try {
                     const res = await api.get('/pose_training/live');
                     const d = res.data || {};
+                    const prevLen = (poseLive.logs || []).length;
                     poseLive.running = !!d.running;
                     poseLive.last_done = d.last_done || {};
                     poseLive.current = d.current || {};
@@ -6583,6 +6597,12 @@
                     framesGrowing.value = !!(cur.clip && cur.clip === prevFrames.clip && prevFrames.n >= 0 && cur.frames > prevFrames.n);
                     prevFrames.clip = cur.clip || '';
                     prevFrames.n = cur.frames || 0;
+                    // 日志终端始终滚到最新一行
+                    if (logTerm.value && (poseLive.logs.length !== prevLen || !logTerm.value._scrolled)) {
+                        await nextTick();
+                        if (logTerm.value) logTerm.value.scrollTop = logTerm.value.scrollHeight;
+                        logTerm.value._scrolled = true;
+                    }
                 } catch (e) {}
             };
             setInterval(() => {
@@ -6663,6 +6683,17 @@
                 if (!cur.clip || cur.clip === ld.clip) return 2;
                 return framesGrowing.value ? 0 : 1;
             });
+            /* 队头同名主播合并（如「年年 ×2」），避免重复 chip 堆噪音 */
+            const poseQueueChips = computed(() => {
+                const out = [];
+                for (const q of (poseLive.queue_head || [])) {
+                    const name = q.streamer || q.clip;
+                    const last = out[out.length - 1];
+                    if (last && last.name === name) last.n++;
+                    else out.push({ name, n: 1, clip: q.clip });
+                }
+                return out;
+            });
             const poseCart = computed(() => {
                 const now = poseLiveNow.value;
                 if (!now.clip) return {};
@@ -6727,7 +6758,7 @@
                 biliStatus, biliCounts, biliJobs, biliJobsFiltered, biliFilter, biliBusy, biliLoginText,
                 biliStatusMeta, biliAct, fetchBili, biliManualRefresh, biliRefreshing, biliCoverEnable,
                 poseT, poseRefreshing, poseManualRefresh, posePageNum, onPosePage, poseDancePct, poseSearchDebounced,
-                poseLive, fetchPoseLive, poseLiveNow, poseStages, poseCart, poolFlash, recalibFlash, poseDetailShow, poseDetail, poseOpenDetail, poseSecIdx, poseSecData,
+                poseLive, fetchPoseLive, poseLiveNow, poseStages, poseCart, poseQueueChips, logTerm, poolFlash, recalibFlash, poseDetailShow, poseDetail, poseOpenDetail, poseSecIdx, poseSecData,
                 biliCand, biliCandShow, biliCandLoading, biliOpenCandidates, biliCandPoster, biliAddCand,
                 biliCoverRow, biliCoverShow, biliCoverCustom, biliCoverOptions, biliCoverActive, biliOpenCover, biliPickCover,
                 biliPosterSrc, biliPosterAt, biliTc,
