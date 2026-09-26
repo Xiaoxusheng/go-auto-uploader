@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"upload/internal/app"
+	"upload/internal/pose"
 )
 
 var poseTrainRoot = func() string {
@@ -143,6 +145,75 @@ func toInt(v any) int {
 		return n
 	}
 	return 0
+}
+
+// poseClipRe 片名「主播_日期_时间_序号」中的固定日期段（主播名可含下划线/emoji，按日期格式切分）。
+var poseClipRe = regexp.MustCompile(`^(.+)_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_\d+$`)
+
+// poseClipStreamer 从片名解析主播名（不匹配返回空串，调用方回退片名展示）。
+func poseClipStreamer(clip string) string {
+	if m := poseClipRe.FindStringSubmatch(clip); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// poseCurrentClip frames 下 mtime 最新的片目录：入池时抽帧先落盘、随后逐帧推理，
+// 推理期间目录不再变化，故管线活跃时它就是正在处理的片。
+// 返回片名、目录 mtime、已抽帧数（供前端区分抽帧/推理阶段）。
+func poseCurrentClip() (string, time.Time, int) {
+	entries, err := os.ReadDir(filepath.Join(poseTrainRoot, "_pose_pilot", "frames"))
+	if err != nil {
+		return "", time.Time{}, 0
+	}
+	var newestName string
+	var newest time.Time
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if fi, err := e.Info(); err == nil && fi.ModTime().After(newest) {
+			newest, newestName = fi.ModTime(), e.Name()
+		}
+	}
+	if newestName == "" {
+		return "", time.Time{}, 0
+	}
+	frames, _ := filepath.Glob(filepath.Join(poseTrainRoot, "_pose_pilot", "frames", newestName, "f_*.jpg"))
+	return newestName, newest, len(frames)
+}
+
+// poseQueueHead 扫描 downloads 待入池原片：返回剩余总数 + 最旧的 n 片（先来先处理）。
+func poseQueueHead(dl string, configured map[string]bool, n int) (int, []map[string]any) {
+	type pendItem struct {
+		clip string
+		mod  time.Time
+	}
+	remaining, pending := 0, []pendItem{}
+	_ = filepath.Walk(dl, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(info.Name()), ".ts") || strings.Contains(info.Name(), "高光") {
+			return nil
+		}
+		clip := strings.TrimSuffix(info.Name(), filepath.Ext(info.Name()))
+		if configured[clip] {
+			return nil
+		}
+		remaining++
+		pending = append(pending, pendItem{clip: clip, mod: info.ModTime()})
+		return nil
+	})
+	sort.Slice(pending, func(i, j int) bool { return pending[i].mod.Before(pending[j].mod) })
+	head := make([]map[string]any, 0, n)
+	for i, it := range pending {
+		if i >= n {
+			break
+		}
+		head = append(head, map[string]any{"clip": it.clip, "streamer": poseClipStreamer(it.clip)})
+	}
+	return remaining, head
 }
 
 // poseCountFeatures 姿态特征 JSON 键数（文件大，按 mtime 缓存计数结果）。
@@ -417,19 +488,29 @@ func (s *Server) handlePoseTrainingLive(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	clips, _ := poseReadClips()
+	if clip, ok := lastDone["clip"].(string); ok {
+		lastDone["streamer"] = poseClipStreamer(clip)
+	}
+	// 正在处理：frames 最新片目录（与最近完成片同名说明该片刚完稿、下一片尚未抽帧）
+	current := map[string]any{}
+	if cur, mt, frames := poseCurrentClip(); cur != "" {
+		current = map[string]any{
+			"clip": cur, "streamer": poseClipStreamer(cur),
+			"frames": frames, "age_sec": int(time.Since(mt).Seconds()),
+		}
+	}
 	configured := map[string]bool{}
 	for _, c := range clips {
 		configured[c.Clip] = true
 	}
-	// 队列余量：downloads 里的原片还没进池的数量。
-	// 目录树大（数千文件），同步遍历会拖慢页面轮询 → 后台刷新 + 立即返回上次值
-	remaining := poseQueueRemainingAsync(configured)
+	// 待入池队列：剩余数量 + 队头几片（先来先处理），异步缓存见 poseQueueInfoAsync
+	remaining, queueHead := poseQueueInfoAsync(configured)
 	s.sendJSONSuccess(w, r, map[string]any{
 		"running": running, "stage": stage,
-		"last_done": lastDone, "logs": logs,
+		"last_done": lastDone, "current": current, "logs": logs,
 		"pool": len(clips), "features": poseCountFeatures(),
-		"queue_remaining": remaining,
-		"disk_free_gb":    float64(getDiskFreeSpaceStd(".")) / 1073741824,
+		"queue_remaining": remaining, "queue_head": queueHead,
+		"disk_free_gb": float64(getDiskFreeSpaceStd(".")) / 1073741824,
 	})
 }
 
@@ -440,7 +521,7 @@ func (s *Server) handlePoseTrainingClip(w http.ResponseWriter, r *http.Request) 
 		s.sendJSONError(w, r, http.StatusBadRequest, "clip 必填")
 		return
 	}
-	resp := map[string]any{"clip": clip}
+	resp := map[string]any{"clip": clip, "streamer": poseClipStreamer(clip)}
 	var prior string
 	var spans []map[string]any
 	if err := func() error {
@@ -455,7 +536,8 @@ func (s *Server) handlePoseTrainingClip(w http.ResponseWriter, r *http.Request) 
 		resp["spans"] = spans
 		_ = prior
 	}
-	// 每秒姿态特征 + 8s 窗判定
+	// 每秒姿态特征 + 8s 窗判定（走 internal/pose 的同一判定函数，
+	// 保证页面标签与 review-ingest 落盘的 spans 口径一致）
 	if feats, err := poseFeatDataMap(); err == nil {
 		if raw, ok := feats[clip]; ok {
 			var e struct {
@@ -463,41 +545,27 @@ func (s *Server) handlePoseTrainingClip(w http.ResponseWriter, r *http.Request) 
 				Feats [][5]float64 `json:"feats"`
 			}
 			if json.Unmarshal(raw, &e) == nil {
-				const detMin, visMin, faceMax = 0.2, 0.6, 0.14
 				wins := make([]map[string]any, 0, len(e.Feats)/8+1)
 				for st := 0; st < len(e.Feats); st += 8 {
 					en := st + 8
 					if en > len(e.Feats) {
 						en = len(e.Feats)
 					}
-					det, sv, sf, se := 0, 0.0, 0.0, 0.0
-					for _, f := range e.Feats[st:en] {
-						if f[4] == 1 {
-							det++
-							sv += f[0]
-							sf += f[1]
-							se += f[2]
+					win := make([]pose.FrameFeatures, en-st)
+					for i, f := range e.Feats[st:en] {
+						win[i] = pose.FrameFeatures{
+							Detected: f[4] == 1,
+							VisRatio: f[0],
+							FaceFrac: f[1],
+							ExtH:     f[2],
+							Aspect:   f[3],
 						}
 					}
-					label := "none"
-					if det > 0 {
-						mv, mf := sv/float64(det), sf/float64(det)
-						switch {
-						case float64(det)/float64(en-st) < detMin:
-							label = "none"
-						case mv >= visMin && mf <= faceMax:
-							label = "dance"
-						case mf > faceMax:
-							label = "closeup"
-						default:
-							label = "other"
-						}
-						se = se / float64(det)
-					}
+					ws := pose.AggregateWindow(win, pose.PrelabelDetMin, pose.PrelabelVisMin, pose.PrelabelFaceMax)
 					wins = append(wins, map[string]any{
-						"s": st, "det": float64(det) / float64(en-st),
-						"vis": sv / float64(max(det, 1)), "face": sf / float64(max(det, 1)),
-						"ext": se, "label": label,
+						"s": st, "det": ws.DetRate,
+						"vis": ws.VisMean, "face": ws.FaceMean,
+						"ext": ws.ExtMean, "label": ws.Label,
 					})
 				}
 				resp["fps"] = e.FPS
@@ -534,17 +602,18 @@ var (
 	poseQueueCache struct {
 		at         time.Time
 		remaining  int
+		head       []map[string]any
 		refreshing bool
 	}
 )
 
-// poseQueueRemainingAsync 队列余量后台刷新：缓存 5 分钟；过期时起协程重算并
+// poseQueueInfoAsync 队列余量+队头后台刷新：缓存 5 分钟；过期时起协程重算并
 // 先返回上次值，保证 /live 轮询永不因磁盘遍历阻塞。
-func poseQueueRemainingAsync(configured map[string]bool) int {
+func poseQueueInfoAsync(configured map[string]bool) (int, []map[string]any) {
 	poseQueueMu.Lock()
 	defer poseQueueMu.Unlock()
 	if time.Since(poseQueueCache.at) < 5*time.Minute {
-		return poseQueueCache.remaining
+		return poseQueueCache.remaining, poseQueueCache.head
 	}
 	if !poseQueueCache.refreshing {
 		poseQueueCache.refreshing = true
@@ -553,26 +622,13 @@ func poseQueueRemainingAsync(configured map[string]bool) int {
 			dl = "D:/upload/downloads"
 		}
 		go func() {
-			n := 0
-			_ = filepath.Walk(dl, func(p string, info os.FileInfo, err error) error {
-				if err != nil || info.IsDir() {
-					return nil
-				}
-				name := strings.ToLower(info.Name())
-				if !strings.HasSuffix(name, ".ts") || strings.Contains(info.Name(), "高光") {
-					return nil
-				}
-				if !configured[strings.TrimSuffix(info.Name(), filepath.Ext(info.Name()))] {
-					n++
-				}
-				return nil
-			})
+			n, head := poseQueueHead(dl, configured, 6)
 			poseQueueMu.Lock()
-			poseQueueCache.remaining = n
+			poseQueueCache.remaining, poseQueueCache.head = n, head
 			poseQueueCache.at = time.Now()
 			poseQueueCache.refreshing = false
 			poseQueueMu.Unlock()
 		}()
 	}
-	return poseQueueCache.remaining
+	return poseQueueCache.remaining, poseQueueCache.head
 }
