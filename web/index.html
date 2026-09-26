@@ -6653,10 +6653,10 @@
                 return {};
             });
             watch(() => poseLive.last_done.clip, (nv, ov) => {
-                // 新片入池 → 信息块绿光闪动一次
+                // 新片入池 → 小车在入池位停留 5s 展示完成画面 + 信息块绿光
                 if (nv && ov && nv !== ov) {
                     poolFlash.value = true;
-                    setTimeout(() => { poolFlash.value = false; }, 2400);
+                    setTimeout(() => { poolFlash.value = false; }, 5000);
                 }
             });
             /* 流水线四阶段状态机（真实信号）：帧数增长=抽帧；运行中帧数稳定=推理；
@@ -6698,14 +6698,21 @@
             const poseCart = computed(() => {
                 const now = poseLiveNow.value;
                 if (!now.clip) return {};
-                const slot = poseStageIdx.value;
+                const ld = poseLive.last_done || {};
                 const cur = poseLive.current || {};
-                const moving = poseLive.running && slot < 3;
+                // 刚完成一片（5s 窗口）：小车带该片的画面滑到入池位停留，确保完成过程可见
+                const hold = poolFlash.value && !!ld.clip;
+                const slot = hold ? 2 : poseStageIdx.value;
+                const moving = poseLive.running && slot < 2;
                 return {
-                    clip: now.clip, slot, moving,
-                    streamer: now.streamer, idx: now.idx, total: now.total, detail: now.detail,
-                    label: !poseLive.running ? '已入池' : (slot === 0 ? '抽帧中' : slot === 1 ? '推理中' : '入池完成'),
-                    frames: now.isCurrent ? (cur.frames || 0) : 0,
+                    clip: hold ? ld.clip : now.clip,
+                    slot, moving,
+                    streamer: hold ? ld.streamer : now.streamer,
+                    idx: hold ? ld.idx : now.idx,
+                    total: hold ? ld.total : now.total,
+                    detail: hold ? ld.detail : now.detail,
+                    label: hold ? '入池完成' : (!poseLive.running ? '已入池' : (slot === 0 ? '抽帧中' : slot === 1 ? '推理中' : '入池完成')),
+                    frames: !hold && now.isCurrent ? (cur.frames || 0) : 0,
                 };
             });
             // 驻留时 30s 轮询进度卡（片池列表只在进入页签/翻页/搜索时拉取）
