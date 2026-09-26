@@ -6571,7 +6571,7 @@
                 poseSearchTimer = setTimeout(() => { poseT.offset = 0; fetchPoseClips(); }, 300);
             };
             /* 实时过程卡：4s 轮询运行状态与日志尾 */
-            const poseLive = reactive({ running: false, last_done: {}, current: {}, queue_head: [], recent_done: [], logs: [], pool: 0, features: 0, queue_remaining: 0, disk_free_gb: 0 });
+            const poseLive = reactive({ running: false, last_done: {}, current: {}, queue_head: [], recent_done: [], logs: [], pool: 0, features: 0, queue_remaining: 0, disk_free_gb: 0, last_activity: '' });
             /* 抽帧检测：同一片帧数在两次轮询间增长 → 正在抽帧；稳定 → 推理中 */
             const prevFrames = { clip: '', n: -1 };
             const framesGrowing = ref(false);
@@ -6593,6 +6593,7 @@
                     poseLive.queue_head = d.queue_head || [];
                     poseLive.recent_done = d.recent_done || [];
                     poseLive.disk_free_gb = d.disk_free_gb || 0;
+                    poseLive.last_activity = d.last_activity || '';
                     const cur = d.current || {};
                     framesGrowing.value = !!(cur.clip && cur.clip === prevFrames.clip && prevFrames.n >= 0 && cur.frames > prevFrames.n);
                     prevFrames.clip = cur.clip || '';
