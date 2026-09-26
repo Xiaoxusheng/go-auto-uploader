@@ -1,4 +1,4 @@
-# 连续训练守护：循环执行「新片入池 → 金标重定标」，直到关窗或磁盘护栏触发。
+﻿# 连续训练守护：循环执行「新片入池 → 金标重定标」，直到关窗或磁盘护栏触发。
 # 与 手动训练.bat 用同一套命令；日志追加到 autotrain_hourly.log（控制台「姿态训练」页实时解析）。
 $ErrorActionPreference = 'Continue'
 $title = 'Pose Continuous Training'
@@ -37,8 +37,7 @@ while ($true) {
             -pose-out 'D:/upload/_diag/train/pose_features_go.json' `
             -dll 'D:/upload/onnxruntime.dll' `
             -model 'D:/upload/yolov8n-pose.onnx' `
-            -ffmpeg 'D:/upload/ffmpeg-master-latest-win64-gpl-shared/ffmpeg-master-latest-win64-gpl-shared/bin/ffmpeg.exe' 2>&1 |
-            Tee-Object -FilePath $log -Append
+            -ffmpeg 'D:/upload/ffmpeg-master-latest-win64-gpl-shared/ffmpeg-master-latest-win64-gpl-shared/bin/ffmpeg.exe' 2>&1 | ForEach-Object { $t = [string]$_; $t | Out-File $log -Append -Encoding utf8; Write-Host $t }
         if ($LASTEXITCODE -ne 0) {
             Write-Host "入池退出码 $LASTEXITCODE（继续下一轮）" -ForegroundColor Red
             "review-ingest 退出码 $LASTEXITCODE" | Out-File $log -Append -Encoding utf8
@@ -49,7 +48,7 @@ while ($true) {
     }
 
     Write-Host '[2/2] 金标重定标...' -ForegroundColor Cyan
-    node 'D:\upload\_diag\train\autogold_sweep.js' 2>&1 | Tee-Object -FilePath $log -Append
+    node 'D:\upload\_diag\train\autogold_sweep.js' 2>&1 | ForEach-Object { $t = [string]$_; $t | Out-File $log -Append -Encoding utf8; Write-Host $t }
     '=== 连续训练轮次完成' | Out-File $log -Append -Encoding utf8
 
     Start-Sleep -Seconds 180
