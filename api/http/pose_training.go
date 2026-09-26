@@ -501,6 +501,15 @@ func (s *Server) handlePoseTrainingLive(w http.ResponseWriter, r *http.Request) 
 		running = true
 		stage = "ingest"
 	}
+	// 上次活动时间：待机时告知用户守护上一轮何时跑过（今天只显时分，跨天带日期）
+	lastActivity := ""
+	if !newest.IsZero() {
+		if newest.Format("2006-01-02") == time.Now().Format("2006-01-02") {
+			lastActivity = newest.Format("15:04")
+		} else {
+			lastActivity = newest.Format("01-02 15:04")
+		}
+	}
 	// 最近一片：解析日志尾部的 [i/n] 行（200 行深度，兼容守护多轮日志）
 	lastDone := map[string]any{}
 	for i := len(parseLines) - 1; i >= 0; i-- {
@@ -545,8 +554,8 @@ func (s *Server) handlePoseTrainingLive(w http.ResponseWriter, r *http.Request) 
 	s.sendJSONSuccess(w, r, map[string]any{
 		"running": running, "stage": stage,
 		"last_done": lastDone, "current": current, "logs": logs,
-		"recent_done": poseRecentDone(5),
-		"pool":        len(clips), "features": poseCountFeatures(),
+		"recent_done": poseRecentDone(5), "last_activity": lastActivity,
+		"pool": len(clips), "features": poseCountFeatures(),
 		"queue_remaining": remaining, "queue_head": queueHead,
 		"disk_free_gb": float64(getDiskFreeSpaceStd(".")) / 1073741824,
 	})

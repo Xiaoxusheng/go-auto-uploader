@@ -2887,7 +2887,7 @@
                                     <svg class="ic"><use href="#i-zap"/></svg>
                                     实时过程<span class="mini">抽帧 → 姿态推理 → 预标入池 → 重定标</span>
                                 </div>
-                                <span class="chip" :class="{good: poseLive.running}"><span class="dot" :class="poseLive.running ? 'run pulse' : 'gray'"></span> {{ poseLive.running ? '管线运行中' : '待机' }}</span>
+                                <span class="chip" :class="{good: poseLive.running}"><span class="dot" :class="poseLive.running ? 'run pulse' : 'gray'"></span> {{ poseLive.running ? '管线运行中' : (poseLive.last_activity ? '待机 · 上轮 ' + poseLive.last_activity : '待机') }}</span>
                             </div>
                             <div class="pose-belt-wrap" v-if="poseCart.clip">
                                 <div class="pose-belt">
@@ -2928,6 +2928,8 @@
                             </div>
                             <div class="pose-queue" v-if="poseLive.queue_remaining != null">
                                 <span class="sub">待入池 <b>{{ poseLive.queue_remaining }}</b> 片 · 池内 <b>{{ poseLive.pool }}</b> 片 · 磁盘剩 <b>{{ (poseLive.disk_free_gb || 0).toFixed(1) }}</b> GB</span>
+                                <span class="tag orange" v-if="!poseLive.running && poseLive.queue_remaining > 0 && (poseLive.disk_free_gb || 99) < 10" title="训练守护每轮会检查磁盘，低于 10GB 时跳过入池、仅重定标">磁盘偏低 · 入池被守护跳过</span>
+                                <span class="sub" v-else-if="!poseLive.running && poseLive.queue_remaining > 0">等待下轮自动训练（上轮 {{ poseLive.last_activity || '—' }}）</span>
                                 <span class="qchip" v-for="(q, i) in poseLive.queue_head" :key="q.clip" :title="q.clip" :style="{animationDelay: (i * 60) + 'ms'}">{{ q.streamer || q.clip }}</span>
                                 <span class="sub" v-if="poseLive.queue_remaining > (poseLive.queue_head || []).length">…等 {{ poseLive.queue_remaining - (poseLive.queue_head || []).length }} 片</span>
                             </div>
