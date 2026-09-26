@@ -444,6 +444,43 @@ func poseLogTail(n int) []string {
 	return out
 }
 
+// poseRecentDone 解析日志尾部最近 n 个已完成片（[i/n] 完成行，倒序去重），
+// 供驾驶舱「已入池」缩略图列展示。
+func poseRecentDone(n int) []map[string]any {
+	lines := poseLogTail(800)
+	seen := map[string]bool{}
+	out := []map[string]any{}
+	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
+		l := lines[i]
+		a := strings.Index(l, "[")
+		if a < 0 {
+			continue
+		}
+		b := strings.Index(l[a:], "]")
+		if b <= 0 {
+			continue
+		}
+		rest := l[a+b+2:]
+		if !strings.Contains(rest, "帧 / ") && !strings.Contains(rest, "秒特征") {
+			continue
+		}
+		parts := strings.SplitN(rest, ":", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		clip := strings.TrimSpace(parts[0])
+		if clip == "" || seen[clip] {
+			continue
+		}
+		seen[clip] = true
+		out = append(out, map[string]any{
+			"clip": clip, "streamer": poseClipStreamer(clip),
+			"detail": strings.TrimSpace(parts[1]),
+		})
+	}
+	return out
+}
+
 // handlePoseTrainingLive 实时过程：管线阶段 / 最近处理片 / 队列余量 / 日志尾。
 func (s *Server) handlePoseTrainingLive(w http.ResponseWriter, r *http.Request) {
 	logs := poseLogTail(14)
@@ -508,7 +545,8 @@ func (s *Server) handlePoseTrainingLive(w http.ResponseWriter, r *http.Request) 
 	s.sendJSONSuccess(w, r, map[string]any{
 		"running": running, "stage": stage,
 		"last_done": lastDone, "current": current, "logs": logs,
-		"pool": len(clips), "features": poseCountFeatures(),
+		"recent_done": poseRecentDone(5),
+		"pool":        len(clips), "features": poseCountFeatures(),
 		"queue_remaining": remaining, "queue_head": queueHead,
 		"disk_free_gb": float64(getDiskFreeSpaceStd(".")) / 1073741824,
 	})

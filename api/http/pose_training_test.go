@@ -96,3 +96,32 @@ func TestPoseQueueHead(t *testing.T) {
 		t.Errorf("n=1 应截断为 1, got %d", len(head2))
 	}
 }
+
+func TestPoseRecentDone(t *testing.T) {
+	old := poseTrainRoot
+	t.Cleanup(func() { poseTrainRoot = old })
+	root := t.TempDir()
+	poseTrainRoot = root
+
+	log := "  [1/3] 爱喝旺仔_2026-09-26_09-06-59_000: 481 帧 / 4 段预标\n" +
+		"  [2/3] 帧不足，跳过 颍颍呐🍒_2026-09-25_15-37-36_000 (3)\n" +
+		"  [2/3] 雪梨汁_2026-09-25_19-12-29_003: 481 帧 / 9 段预标\n" +
+		"  [3/3] 爱喝旺仔_2026-09-26_09-06-59_000: 464 帧 / 4 段预标\n"
+	if err := os.WriteFile(filepath.Join(root, "review_ingest_test.log"), []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := poseRecentDone(5)
+	// 跳过行不算完成；同片重复入池去重取最新；顺序为最新在前
+	if len(got) != 2 {
+		t.Fatalf("应解析出 2 个已完成片, got %d: %v", len(got), got)
+	}
+	if got[0]["clip"] != "爱喝旺仔_2026-09-26_09-06-59_000" || got[1]["clip"] != "雪梨汁_2026-09-25_19-12-29_003" {
+		t.Errorf("顺序/去重不符: %v", got)
+	}
+	if got[0]["streamer"] != "爱喝旺仔" || got[1]["streamer"] != "雪梨汁" {
+		t.Errorf("主播名解析不符: %v", got)
+	}
+	if len(poseRecentDone(1)) != 1 {
+		t.Errorf("n=1 应截断为 1")
+	}
+}
