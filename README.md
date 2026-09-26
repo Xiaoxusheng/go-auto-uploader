@@ -20,6 +20,16 @@
 
 系统同时兼容外置 **[ihmily/DouyinLiveRecorder](https://github.com/ihmily/DouyinLiveRecorder)** Docker 容器作为录制引擎（双引擎架构），并提供暗色沉浸风格的响应式 Web 控制台，手机、平板、桌面均可操控。
 
+## 🌿 分支说明（先看这个）
+
+| 分支 | 内容 | 姿态语义门 | 全自动训练 |
+| --- | --- | --- | --- |
+| `main` | **基线版**：录制 / 高光（运动+音频双因子）/ 上传 / 控制台 | ❌（纯 Go 桩自动关闭） | ❌ |
+| `pose-gate` | **完整版**：在基线上增加姿态语义门 + 全自动训练管线 + 「姿态训练」控制台页 | ✅ | ✅（每小时常驻） |
+
+> ⚠️ `pose-gate` 分支为本地私有分支（未推送 GitHub），服务器部署也只从本地构建，
+> **禁止合并 / 推送到 main**。两个分支的 README 各自描述所在分支的功能。
+
 ## ✨ 核心特性
 
 ### 🎙️ 内置轻量录制引擎
@@ -50,6 +60,32 @@
 * **「只传高光」模式**：开启后该主播原片不上传，远端只收高光片段，截图照常上传；全局开关 + 单主播两级覆盖，热生效不中断录制。
 * **删源安全闸**：原片删除前必须经高光模块判定（被认领/有定论/上传凭证已确认），源片保留期可配，杜绝「高光还没跑完原片先没了」与磁盘被积压切片吃满。
 * **离线评估工具 (`cmd/hleval`)**：对已录切片批量跑判定并输出 Precision/Recall/F1，用于参数校准与算法迭代。
+
+### 🧠 姿态语义门与全自动训练（pose-gate 分支）
+
+* **姿态语义门（修复"动作大但不是跳舞"误判）**：动作评分选出的候选段逐段抽帧（5fps）跑 YOLOv8-pose 人体姿态，按「检出率 + 关键点可见度 + 面部占比」三重语义判定，近景聊天 / 连麦 PK / 无人特效段直接砍除。269 片金标（14286 窗）定标：**精确率 69.7% / 召回率 91.6% / F1 0.792**，舞区主播高光非舞内容占比从 ~65% 压到 ~8%。
+* **全自动训练管线（无人工标注）**：新切片落盘 → 自动抽帧 + 姿态推理 → 自动预标入池（dance / closeup / none）→ 每轮全池阈值网格重定标；自动标签与人工金标二分类一致率 79.3%。常驻自动化每小时 :05 触发一轮（磁盘 <10GB 自动跳过入池），幂等可续跑、断点不丢。
+* **「姿态训练」控制台页**：训练池 / 特征 / 金标计数、自动标签一致率、重定标最优 F1、门参数生产实值、重定标 TOP10 阈值表、片池分页表（每片帧缩略图点击放大）、近期训练活动日志，驻留页 30s 自动刷新。
+* **构建开关**：`CGO_ENABLED=1`（需 gcc + onnxruntime 1.30 + yolov8n-pose.onnx）构建 = 含姿态门；`CGO_ENABLED=0` 纯 Go 构建自动剔除姿态门（运行时零 cgo 依赖），其余功能完全一致。
+
+#### 训练使用速查
+
+```bash
+# 新切片手动入池（幂等可续跑；常驻自动化每小时自动执行）
+hleval review-ingest -downloads <录制目录> -frames <帧目录> -config <clips_config.json> \
+  -pose-out <pose_features_go.json> -dll onnxruntime.dll -model yolov8n-pose.onnx
+
+# 对帧目录批量姿态推理（1fps 语义特征）
+hleval pose-scan -frames <帧根目录> -out pose_features.json
+
+# 5fps 四肢关键点轨迹（时序动力学实验用）
+hleval traj-scan -frames <5fps帧根目录> -out traj.json
+
+# 冻结集 / 任意 CSV 指标验收（段级 IoU@0.5 的 P/R/F1）
+hleval metrics -csv features.csv -th 1.2 -ml 8 -gap 12 -minac1 0.15
+```
+
+生产门参数（config.json `builtin.highlight_pose_gate`）：`det_min 0.3 / vis_min 0.6 / face_max 0.12 / keep_ratio 0.3 / fps 5`；调整前先用重定标结果验证，改完重启进程生效。每次拒段都会写 `[POSE-GATE]` 诊断日志（det 率 / keep 率 / vis / face 数值），现场归因不用复现。
 
 ### 📤 B站自动投稿（高光直发）
 
@@ -181,6 +217,17 @@ go build -o uploader ./cmd/uploader
 ```
 
 > 仓库自带 `build.bat`（Windows 交叉编译双平台）与 `build.sh` 脚本。
+>
+> **姿态语义门（pose-gate 分支）**：需要 CGO 构建——
+>
+> ```bash
+> CGO_ENABLED=1 CC=<gcc> go build -o uploader ./cmd/uploader
+> ```
+>
+> 同时需 onnxruntime 1.30 动态库 + `yolov8n-pose.onnx` 模型置于工作目录
+> （路径可在 `config.json` 的 `builtin.highlight_pose_gate` 配置）。
+> 纯 Go 构建（`CGO_ENABLED=0`）自动剔除姿态门，服务器部署与回退流程见
+> [docs/POSE_GATE_SERVER_RUNBOOK.md](docs/POSE_GATE_SERVER_RUNBOOK.md)。
 
 ### 3. 启动服务
 
@@ -273,7 +320,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-w -s" -o uploader ./cm
 
 * **Backend (服务端)**：Go（原生 `net/http`、协程调度、`atomic`/`sync.Map` 无锁聚合），Gorilla WebSocket，`gopsutil` 硬件探针。
 * **Frontend (前端 UI)**：Vue.js 3（Composition API），手写组件库（零第三方 UI 框架依赖），ECharts，Axios 加密拦截器。
-* **Highlight (高光分析)**：FFmpeg 抽帧提特征 → 运动/音频双因子评分 → z 分自适应判定，纯 Go 实现，离线后处理不占录制链路。
+* **Highlight (高光分析)**：FFmpeg 抽帧提特征 → 运动/音频双因子评分 → z 分自适应判定 → （pose-gate 分支）YOLOv8-pose 姿态语义门后置过滤，纯 Go + 可选 cgo，离线后处理不占录制链路。
 * **Data (数据持久化)**：本地 `.db` / `.json` 文件存储指纹库与成功记录（原子写盘、启动恢复），无外部数据库依赖。
 
 ---
