@@ -485,9 +485,16 @@ func poseRecentDone(n int) []map[string]any {
 func (s *Server) handlePoseTrainingLive(w http.ResponseWriter, r *http.Request) {
 	logs := poseLogTail(14)
 	parseLines := poseLogTail(800) // last_done 解析用更深的历史
-	// 运行判定：最新训练日志 90 秒内有写入 → 管线活跃
+	// 正在处理片：frames 最新目录（提前算，供运行判定与驾驶舱共用）
+	curClip, curMt, curFrames := poseCurrentClip()
+	// 运行判定：训练日志 2 分钟内有写入，或帧目录 10 分钟内有动作
+	// （手动训练不写日志时，抽帧落盘同样暴露管线活动）
 	running := false
 	stage := "idle"
+	if curClip != "" && time.Since(curMt) < 10*time.Minute {
+		running = true
+		stage = "ingest"
+	}
 	matches, _ := filepath.Glob(filepath.Join(poseTrainRoot, "*ingest*.log"))
 	hourly, _ := filepath.Glob(filepath.Join(poseTrainRoot, "autotrain_hourly.log"))
 	matches = append(matches, hourly...)
@@ -539,10 +546,10 @@ func (s *Server) handlePoseTrainingLive(w http.ResponseWriter, r *http.Request) 
 	}
 	// 正在处理：frames 最新片目录（与最近完成片同名说明该片刚完稿、下一片尚未抽帧）
 	current := map[string]any{}
-	if cur, mt, frames := poseCurrentClip(); cur != "" {
+	if curClip != "" {
 		current = map[string]any{
-			"clip": cur, "streamer": poseClipStreamer(cur),
-			"frames": frames, "age_sec": int(time.Since(mt).Seconds()),
+			"clip": curClip, "streamer": poseClipStreamer(curClip),
+			"frames": curFrames, "age_sec": int(time.Since(curMt).Seconds()),
 		}
 	}
 	configured := map[string]bool{}
