@@ -40,16 +40,15 @@ var (
 )
 
 type poseClip struct {
-	Clip    string           `json:"clip"`
-	Prior   string           `json:"prior"`
-	Seconds int              `json:"seconds"`
-	Dance   int              `json:"dance"`
-	Closeup int              `json:"closeup"`
-	None    int              `json:"none"`
-	Other   int              `json:"other"`
-	Model   bool             `json:"model"`
-	Thumb   bool             `json:"thumb"`
-	Spans   []map[string]any `json:"spans,omitempty"`
+	Clip    string `json:"clip"`
+	Prior   string `json:"prior"`
+	Seconds int    `json:"seconds"`
+	Dance   int    `json:"dance"`
+	Closeup int    `json:"closeup"`
+	None    int    `json:"none"`
+	Other   int    `json:"other"`
+	Model   bool   `json:"model"`
+	Thumb   bool   `json:"thumb"`
 }
 
 // poseReadClips 读片池配置（mtime 缓存，ingest 每片原子落盘，读侧容忍偶尔失败）。
@@ -88,7 +87,7 @@ func poseReadClips() ([]poseClip, error) {
 	clips := make([]poseClip, 0, len(raw))
 	framesRoot := filepath.Join(poseTrainRoot, "_pose_pilot", "frames")
 	for _, r := range raw {
-		c := poseClip{Clip: r.Clip, Prior: r.Prior, Model: r.Model, Spans: nil}
+		c := poseClip{Clip: r.Clip, Prior: r.Prior, Model: r.Model}
 		for _, sp := range r.Spans {
 			s, e := toInt(sp.Start), toInt(sp.End)
 			if e > c.Seconds {
@@ -238,7 +237,6 @@ func (s *Server) handlePoseTrainingClips(w http.ResponseWriter, r *http.Request)
 		if q != "" && !strings.Contains(strings.ToLower(c.Clip), q) {
 			continue
 		}
-		c.Spans = nil // 列表页不带 spans，减小载荷
 		items = append(items, c)
 	}
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
