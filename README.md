@@ -20,6 +20,14 @@
 
 系统同时兼容外置 **[ihmily/DouyinLiveRecorder](https://github.com/ihmily/DouyinLiveRecorder)** Docker 容器作为录制引擎（双引擎架构），并提供暗色沉浸风格的响应式 Web 控制台，手机、平板、桌面均可操控。
 
+## 🌿 分支说明
+
+> **main 分支为基线版**：录制 / 高光切片（运动+音频双因子 + 迟滞退出比）/ 上传 / 控制台，纯 Go 单文件零依赖。
+>
+> 姿态语义门（YOLOv8-pose 舞蹈语义过滤）、全自动训练管线与「姿态训练」控制台页在本地 `pose-gate` 分支维护；
+> 该分支构建需要 CGO + onnxruntime，部署流程见其 README 与 docs/POSE_GATE_SERVER_RUNBOOK.md。
+> 按 2026-09-26 的约定：`pose-gate` 分支仅限本地，不合并、不推送。
+
 ## ✨ 核心特性
 
 ### 🎙️ 内置轻量录制引擎
