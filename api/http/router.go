@@ -29,11 +29,13 @@ type Routes struct {
 	BilibiliCandidates http.HandlerFunc
 	BilibiliPoster     http.HandlerFunc
 
-	PoseTrainingSummary http.HandlerFunc
-	PoseTrainingClips   http.HandlerFunc
-	PoseTrainingThumb   http.HandlerFunc
-	PoseTrainingLive    http.HandlerFunc
-	PoseTrainingClip    http.HandlerFunc
+	PoseTrainingSummary   http.HandlerFunc
+	PoseTrainingClips     http.HandlerFunc
+	PoseTrainingThumb     http.HandlerFunc
+	PoseTrainingLive      http.HandlerFunc
+	PoseTrainingClip      http.HandlerFunc
+	PoseTrainingApplyBest http.HandlerFunc
+	PoseTrainingAutoApply http.HandlerFunc
 
 	CtlStart, CtlPause, CtlStop, CtlRelogin, CtlRescan http.HandlerFunc
 	CtlClearFail, CtlRetryFail, CtlClearSuccess        http.HandlerFunc
@@ -85,6 +87,8 @@ func Register(mux *http.ServeMux, r Routes) {
 	mux.HandleFunc("/api/v1/pose_training/thumb", r.PoseTrainingThumb)
 	mux.HandleFunc("/api/v1/pose_training/live", r.PoseTrainingLive)
 	mux.HandleFunc("/api/v1/pose_training/clip", r.PoseTrainingClip)
+	mux.HandleFunc("/api/v1/pose_training/apply_best", r.PoseTrainingApplyBest)
+	mux.HandleFunc("/api/v1/pose_training/auto_apply", r.PoseTrainingAutoApply)
 	mux.HandleFunc("/ws/live", r.WebSocket)
 	if r.Extra != nil {
 		r.Extra(mux)

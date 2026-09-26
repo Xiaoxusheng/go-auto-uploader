@@ -6,6 +6,8 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"upload/internal/app"
+	"upload/internal/config"
 	"upload/internal/pose"
 )
 
@@ -481,6 +484,209 @@ func poseRecentDone(n int) []map[string]any {
 	return out
 }
 
+// poseRecentSkipped 解析日志尾部最近 n 个「帧不足，跳过」片（含帧数），
+// 供驾驶舱跳过走向动画与跳过列表展示。
+func poseRecentSkipped(n int) []map[string]any {
+	lines := poseLogTail(800)
+	seen := map[string]bool{}
+	out := []map[string]any{}
+	mark := "帧不足，跳过 "
+	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
+		l := lines[i]
+		a := strings.Index(l, mark)
+		if a < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(l[a+len(mark):])
+		open := strings.LastIndex(rest, "(")
+		if open < 0 || !strings.HasSuffix(rest, ")") {
+			continue
+		}
+		frames, err := strconv.Atoi(strings.TrimSuffix(rest[open+1:], ")"))
+		if err != nil || frames < 0 {
+			continue
+		}
+		clip := strings.TrimSpace(rest[:open])
+		if clip == "" || seen[clip] {
+			continue
+		}
+		seen[clip] = true
+		out = append(out, map[string]any{"clip": clip, "streamer": poseClipStreamer(clip), "frames": frames})
+	}
+	return out
+}
+
+// —— 重定标最优参数自动应用（带防抖）——
+// 比对基准来自 autogold_result.json 的 live 行（生产现值 F1，由 sweep 脚本计算）：
+// 最优 F1 连续 3 轮高于现值 ≥0.01 才自动写入，单轮波动不触发。
+
+var poseApplyMu sync.Mutex
+
+type poseApplyState struct {
+	AutoApply   bool   `json:"auto_apply"`   // 开关，默认开
+	Streak      int    `json:"streak"`       // 连续更优轮数
+	LastSeen    string `json:"last_seen"`    // 上次处理的 sweep generated_at
+	LastApplied string `json:"last_applied"` // 最近一次应用的参数描述
+}
+
+func poseApplyStatePath() string { return filepath.Join(poseTrainRoot, "autogold_apply_state.json") }
+
+func poseLoadApplyState() poseApplyState {
+	st := poseApplyState{AutoApply: true}
+	if b, err := os.ReadFile(poseApplyStatePath()); err == nil {
+		_ = json.Unmarshal(b, &st)
+	}
+	return st
+}
+
+func poseSaveApplyState(st poseApplyState) {
+	if b, err := json.MarshalIndent(st, "", " "); err == nil {
+		_ = os.WriteFile(poseApplyStatePath(), b, 0o644)
+	}
+}
+
+// poseApplyGateThresholds 纯函数：把 sweep 最优三阈值写进门配置副本。
+// 第二返回值 false = 门未启用，无参数可写。
+func poseApplyGateThresholds(cfg *config.Config, vis, face, det float64) (config.HighlightPoseGateConfig, bool) {
+	if cfg.Builtin.HighlightPoseGate == nil || !cfg.Builtin.HighlightPoseGate.Enable {
+		return config.HighlightPoseGateConfig{}, false
+	}
+	g := *cfg.Builtin.HighlightPoseGate
+	g.VisMin, g.FaceMax, g.DetMin = vis, face, det
+	cfg.Builtin.HighlightPoseGate = &g
+	return g, true
+}
+
+// poseMaybeAutoApply 每次 /live 轮询轻触：sweep 结果更新时评估防抖条件，
+// 达标（连续 3 轮更优）自动写入生产配置并在训练日志留痕。返回最新状态与本轮是否刚应用。
+func poseMaybeAutoApply() (poseApplyState, string) {
+	poseApplyMu.Lock()
+	defer poseApplyMu.Unlock()
+	st := poseLoadApplyState()
+	b, err := os.ReadFile(filepath.Join(poseTrainRoot, "autogold_result.json"))
+	if err != nil {
+		return st, ""
+	}
+	var res struct {
+		GeneratedAt string `json:"generated_at"`
+		Best        *struct {
+			Vis  float64 `json:"vis"`
+			Face float64 `json:"face"`
+			Det  float64 `json:"det"`
+			F1   float64 `json:"F1"`
+		} `json:"best"`
+		Live *struct {
+			F1 float64 `json:"F1"`
+		} `json:"live"`
+	}
+	if json.Unmarshal(b, &res) != nil || res.GeneratedAt == "" || res.Best == nil {
+		return st, ""
+	}
+	if res.GeneratedAt == st.LastSeen {
+		return st, "" // 已处理过这轮 sweep
+	}
+	st.LastSeen = res.GeneratedAt
+	applied := ""
+	defer func() { poseSaveApplyState(st) }()
+	if !st.AutoApply || res.Live == nil {
+		return st, ""
+	}
+	if res.Best.F1 >= res.Live.F1+0.01 {
+		st.Streak++
+	} else {
+		st.Streak = 0
+	}
+	if st.Streak < 3 {
+		return st, ""
+	}
+	cfg := app.AppCfg()
+	g, ok := poseApplyGateThresholds(&cfg, res.Best.Vis, res.Best.Face, res.Best.Det)
+	if !ok {
+		return st, ""
+	}
+	app.CfgStore.Replace(cfg)
+	app.SaveConfigToFile()
+	st.Streak = 0
+	st.LastApplied = fmt.Sprintf("%s vis %.2f / face %.2f / det %.2f (F1 %.3f)",
+		time.Now().Format("01-02 15:04"), g.VisMin, g.FaceMax, g.DetMin, res.Best.F1)
+	if f, err := os.OpenFile(filepath.Join(poseTrainRoot, "autotrain_hourly.log"),
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+		fmt.Fprintf(f, "=== %s 自动应用重定标最优: vis %.2f / face %.2f / det %.2f (F1 %.3f，连续 3 轮更优)\n",
+			time.Now().Format("2006-01-02 15:04:05"), g.VisMin, g.FaceMax, g.DetMin, res.Best.F1)
+		_ = f.Close()
+	}
+	applied = "自动应用重定标最优: vis " + strconv.FormatFloat(g.VisMin, 'f', 2, 64) +
+		" / face " + strconv.FormatFloat(g.FaceMax, 'f', 2, 64) +
+		" / det " + strconv.FormatFloat(g.DetMin, 'f', 2, 64)
+	return st, applied
+}
+
+// handlePoseTrainingApplyBest 一键应用重定标最优三阈值到生产门配置。
+func (s *Server) handlePoseTrainingApplyBest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.sendJSONError(w, r, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	b, err := os.ReadFile(filepath.Join(poseTrainRoot, "autogold_result.json"))
+	if err != nil {
+		s.sendJSONError(w, r, http.StatusNotFound, "暂无重定标结果")
+		return
+	}
+	var res struct {
+		GeneratedAt string `json:"generated_at"`
+		Best        *struct {
+			Vis  float64 `json:"vis"`
+			Face float64 `json:"face"`
+			Det  float64 `json:"det"`
+			F1   float64 `json:"F1"`
+		} `json:"best"`
+	}
+	if json.Unmarshal(b, &res) != nil || res.Best == nil {
+		s.sendJSONError(w, r, http.StatusNotFound, "重定标结果不可读")
+		return
+	}
+	cfg := app.AppCfg()
+	g, ok := poseApplyGateThresholds(&cfg, res.Best.Vis, res.Best.Face, res.Best.Det)
+	if !ok {
+		s.sendJSONError(w, r, http.StatusConflict, "姿态门未启用，无参数可写")
+		return
+	}
+	app.CfgStore.Replace(cfg)
+	app.SaveConfigToFile()
+	poseApplyMu.Lock()
+	st := poseLoadApplyState()
+	st.Streak = 0
+	st.LastSeen = res.GeneratedAt
+	st.LastApplied = fmt.Sprintf("%s 手动应用 vis %.2f / face %.2f / det %.2f (F1 %.3f)",
+		time.Now().Format("01-02 15:04"), g.VisMin, g.FaceMax, g.DetMin, res.Best.F1)
+	poseSaveApplyState(st)
+	poseApplyMu.Unlock()
+	log.Printf("[CONTROL] ⚙️ 一键应用重定标最优: vis %.2f / face %.2f / det %.2f (F1 %.3f)",
+		g.VisMin, g.FaceMax, g.DetMin, res.Best.F1)
+	s.sendJSONSuccess(w, r, map[string]any{"gate": g, "applied": st.LastApplied})
+}
+
+// handlePoseTrainingAutoApply 自动应用开关。
+func (s *Server) handlePoseTrainingAutoApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.sendJSONError(w, r, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	var req struct {
+		Enable *bool `json:"enable"`
+	}
+	if err := s.parseEncryptedRequest(r, &req); err != nil || req.Enable == nil {
+		s.sendJSONError(w, r, http.StatusBadRequest, "缺少 enable 字段")
+		return
+	}
+	poseApplyMu.Lock()
+	st := poseLoadApplyState()
+	st.AutoApply = *req.Enable
+	poseSaveApplyState(st)
+	poseApplyMu.Unlock()
+	s.sendJSONSuccess(w, r, map[string]any{"apply_state": st})
+}
+
 // handlePoseTrainingLive 实时过程：管线阶段 / 最近处理片 / 队列余量 / 日志尾。
 func (s *Server) handlePoseTrainingLive(w http.ResponseWriter, r *http.Request) {
 	logs := poseLogTail(14)
@@ -553,10 +759,15 @@ func (s *Server) handlePoseTrainingLive(w http.ResponseWriter, r *http.Request) 
 	}
 	// 待入池队列：剩余数量 + 队头几片（先来先处理），异步缓存见 poseQueueInfoAsync
 	remaining, queueHead := poseQueueInfoAsync(configured)
+	applyState, appliedNow := poseMaybeAutoApply()
+	if appliedNow != "" {
+		logs = append([]string{"autotrain_hourly.log │ " + appliedNow}, logs...)
+	}
 	s.sendJSONSuccess(w, r, map[string]any{
 		"running": running, "stage": stage,
 		"last_done": lastDone, "current": current, "logs": logs,
-		"recent_done": poseRecentDone(5), "last_activity": lastActivity,
+		"recent_done": poseRecentDone(5), "recent_skipped": poseRecentSkipped(5),
+		"last_activity": lastActivity, "apply_state": applyState,
 		"pool": len(clips), "features": poseCountFeatures(),
 		"queue_remaining": remaining, "queue_head": queueHead,
 		"disk_free_gb": float64(getDiskFreeSpaceStd(".")) / 1073741824,

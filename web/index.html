@@ -570,6 +570,13 @@
         .pose-done-strip .dthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .pose-done-strip .dthumb .dname { position: absolute; right: 0; bottom: 0; left: 0; font-size: 10px; color: #fff; background: rgba(0, 0, 0, 0.55); padding: 1px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .pose-term-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 5px; font-size: 11.5px; color: var(--t3); }
+        .pose-apply-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+        .pose-done-strip .dlabel.skip { color: var(--orange); }
+        .pose-done-strip .dthumb.skip { border-style: dashed; }
+        .pose-done-strip .dthumb.skip img { filter: grayscale(0.85) brightness(0.85); }
+        .pose-cart-ghost { border: 1px dashed rgba(245, 158, 11, 0.65); animation: poseDivert 1.8s ease forwards; pointer-events: none; }
+        .pose-cart-ghost img { filter: grayscale(0.8) brightness(0.85); }
+        @keyframes poseDivert { 0% { left: 12.5%; transform: translateX(-50%); opacity: 0; } 12% { opacity: 1; } 60% { left: 30%; transform: translateX(-50%) translateY(0); opacity: 1; } 100% { left: 38%; transform: translateX(-50%) translateY(72px) rotate(6deg); opacity: 0; } }
         .pose-belt-empty { padding: 30px 0 34px; text-align: center; border: 1px dashed var(--line); border-radius: var(--r-md); margin: 4px 0 12px; }
         .pose-done-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 7px 10px; background: var(--panel-2); border-radius: var(--r-sm); border: 1px solid var(--line); font-size: 12.5px; }
         .pose-queue { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 14px; }
@@ -2928,6 +2935,10 @@
                                             </div>
                                         </div>
                                     </div>
+                                    <div class="pose-cart pose-cart-ghost" v-if="skipGhost" :key="skipGhost.at">
+                                        <img :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(skipGhost.clip)" alt="" @error="$event.target.style.visibility='hidden'">
+                                        <div class="pose-media-scrim"><span class="pose-media-stage">帧不足 · {{ skipGhost.frames }} 帧</span></div>
+                                    </div>
                                 </div>
                                 <div class="pose-live-side" :class="{flash: poolFlash && !poseCart.moving}">
                                     <div>
@@ -2947,6 +2958,14 @@
                                      :style="{animationDelay: (i * 50) + 'ms'}" @click="poseOpenDetail({clip: c.clip, thumb: true})">
                                     <img :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(c.clip)" loading="lazy" alt="" @error="$event.target.style.display='none'">
                                     <span class="dname">{{ c.streamer || c.clip }}</span>
+                                </div>
+                            </div>
+                            <div class="pose-done-strip" v-if="(poseLive.recent_skipped || []).length">
+                                <span class="dlabel skip">✗ 帧不足跳过</span>
+                                <div class="dthumb skip" v-for="(c, i) in poseLive.recent_skipped" :key="c.clip"
+                                     :title="c.clip + ' · 仅 ' + c.frames + ' 帧，未入池'" :style="{animationDelay: (i * 50) + 'ms'}">
+                                    <img :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(c.clip)" loading="lazy" alt="" @error="$event.target.style.display='none'">
+                                    <span class="dname">{{ c.streamer || c.clip }} · {{ c.frames }}帧</span>
                                 </div>
                             </div>
                             <div class="pose-term-head" v-if="poseLive.logs && poseLive.logs.length">
@@ -2972,6 +2991,12 @@
                                 <div class="kv"><div class="k">面部占比上限 face_max</div><div class="v">{{ poseT.summary.gate.face_max }}</div></div>
                                 <div class="kv"><div class="k">保留比下限 keep_ratio</div><div class="v">{{ poseT.summary.gate.keep_ratio }}</div></div>
                                 <div class="kv"><div class="k">抽帧率 fps</div><div class="v">{{ poseT.summary.gate.fps || 5 }}</div></div>
+                            </div>
+                            <div class="pose-apply-row">
+                                <button class="pill sm primary" :disabled="poseApplying || !poseT.sweep.best" @click="poseApplyBest">{{ poseApplying ? '应用中…' : '应用重定标最优' }}</button>
+                                <button class="pill sm" :class="poseAutoApplyOn ? 'primary' : ''" @click="poseToggleAutoApply">自动应用：{{ poseAutoApplyOn ? '开' : '关' }}</button>
+                                <span class="sub" v-if="poseLive.apply_state && poseLive.apply_state.last_applied">上次应用：{{ poseLive.apply_state.last_applied }}</span>
+                                <span class="sub" v-else-if="poseLive.apply_state">自动应用连击 {{ poseLive.apply_state.streak || 0 }}/3 · 最优 F1 需连续 3 轮高于生产现值 ≥0.01</span>
                             </div>
                         </div>
 
@@ -6571,7 +6596,7 @@
                 poseSearchTimer = setTimeout(() => { poseT.offset = 0; fetchPoseClips(); }, 300);
             };
             /* 实时过程卡：4s 轮询运行状态与日志尾 */
-            const poseLive = reactive({ running: false, last_done: {}, current: {}, queue_head: [], recent_done: [], logs: [], pool: 0, features: 0, queue_remaining: 0, disk_free_gb: 0, last_activity: '' });
+            const poseLive = reactive({ running: false, last_done: {}, current: {}, queue_head: [], recent_done: [], recent_skipped: [], apply_state: {}, logs: [], pool: 0, features: 0, queue_remaining: 0, disk_free_gb: 0, last_activity: '' });
             /* 抽帧检测：同一片帧数在两次轮询间增长 → 正在抽帧；稳定 → 推理中 */
             const prevFrames = { clip: '', n: -1 };
             const framesGrowing = ref(false);
@@ -6592,7 +6617,11 @@
                     poseLive.queue_remaining = d.queue_remaining || 0;
                     poseLive.queue_head = d.queue_head || [];
                     poseLive.recent_done = d.recent_done || [];
+                    poseLive.recent_skipped = d.recent_skipped || [];
                     poseLive.disk_free_gb = d.disk_free_gb || 0;
+                    const hadApplyState = !!(poseLive.apply_state && poseLive.apply_state.last_seen);
+                    poseLive.apply_state = d.apply_state || {};
+                    if (!hadApplyState && d.apply_state) poseAutoApplyOn.value = !!d.apply_state.auto_apply;
                     poseLive.last_activity = d.last_activity || '';
                     const cur = d.current || {};
                     framesGrowing.value = !!(cur.clip && cur.clip === prevFrames.clip && prevFrames.n >= 0 && cur.frames > prevFrames.n);
@@ -6666,6 +6695,48 @@
                     ];
                 }
             });
+            /* 跳过片：幽灵小车走分流道（滑出传送带向下掉落） */
+            const skipGhost = ref(null);
+            watch(() => (poseLive.recent_skipped || [])[0] && poseLive.recent_skipped[0].clip, (nv) => {
+                if (!nv) return;
+                const c = poseLive.recent_skipped[0];
+                skipGhost.value = { clip: nv, frames: c.frames, at: Date.now() };
+                setTimeout(() => { skipGhost.value = null; }, 1900);
+            });
+            /* 自动应用：toast 提醒 + 刷新参数卡 */
+            const prevApplied = ref('');
+            watch(() => poseLive.apply_state && poseLive.apply_state.last_applied, (nv) => {
+                if (nv && prevApplied.value && nv !== prevApplied.value) {
+                    uiToast('success', '✅ ' + nv);
+                    fetchPoseSummary();
+                }
+                if (nv) prevApplied.value = nv;
+            });
+            const poseApplying = ref(false);
+            const poseAutoApplyOn = ref(true);
+            const poseApplyBest = async () => {
+                if (poseApplying.value) return;
+                if (!confirm('把重定标最优三阈值写入生产门参数？高光判定会立即按新值执行。')) return;
+                poseApplying.value = true;
+                try {
+                    const res = await api.post('/pose_training/apply_best');
+                    uiToast('success', '✅ ' + ((res.data && res.data.applied) || '已应用重定标最优'));
+                    fetchPoseSummary();
+                } catch (e) {
+                    uiToast('error', '应用失败：' + ((e && e.message) || '未知错误'));
+                } finally {
+                    poseApplying.value = false;
+                }
+            };
+            const poseToggleAutoApply = async () => {
+                try {
+                    const res = await api.post('/pose_training/auto_apply', { enable: !poseAutoApplyOn.value });
+                    poseAutoApplyOn.value = !!(res.data && res.data.apply_state && res.data.apply_state.auto_apply);
+                    uiToast('info', '自动应用已' + (poseAutoApplyOn.value ? '开启' : '关闭'));
+                } catch (e) {
+                    uiToast('error', '切换失败');
+                }
+            };
             /* 流水线四阶段状态机（真实信号）：帧数增长=抽帧；运行中帧数稳定=推理；
                日志 [i/n] 完成行=入池；sweep 结果落盘=重定标 */
             const poseStages = computed(() => {
@@ -6776,7 +6847,7 @@
                 biliStatus, biliCounts, biliJobs, biliJobsFiltered, biliFilter, biliBusy, biliLoginText,
                 biliStatusMeta, biliAct, fetchBili, biliManualRefresh, biliRefreshing, biliCoverEnable,
                 poseT, poseRefreshing, poseManualRefresh, posePageNum, onPosePage, poseDancePct, poseSearchDebounced,
-                poseLive, fetchPoseLive, poseLiveNow, poseStages, poseCart, poseQueueChips, logTerm, poolFlash, recalibFlash, poseDetailShow, poseDetail, poseOpenDetail, poseSecIdx, poseSecData,
+                poseLive, fetchPoseLive, poseLiveNow, poseStages, poseCart, poseQueueChips, logTerm, poolFlash, recalibFlash, skipGhost, poseApplying, poseAutoApplyOn, poseApplyBest, poseToggleAutoApply, poseDetailShow, poseDetail, poseOpenDetail, poseSecIdx, poseSecData,
                 biliCand, biliCandShow, biliCandLoading, biliOpenCandidates, biliCandPoster, biliAddCand,
                 biliCoverRow, biliCoverShow, biliCoverCustom, biliCoverOptions, biliCoverActive, biliOpenCover, biliPickCover,
                 biliPosterSrc, biliPosterAt, biliTc,

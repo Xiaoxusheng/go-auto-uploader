@@ -1,10 +1,14 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"upload/internal/app"
+	"upload/internal/config"
 )
 
 func TestPoseClipStreamer(t *testing.T) {
@@ -123,5 +127,106 @@ func TestPoseRecentDone(t *testing.T) {
 	}
 	if len(poseRecentDone(1)) != 1 {
 		t.Errorf("n=1 应截断为 1")
+	}
+}
+
+func TestPoseRecentSkipped(t *testing.T) {
+	old := poseTrainRoot
+	t.Cleanup(func() { poseTrainRoot = old })
+	root := t.TempDir()
+	poseTrainRoot = root
+
+	log := "  [2/4] 测试主播B_2026-09-26_11-05-00_000: 481 帧 / 1 段预标\n" +
+		"  [3/4] 帧不足，跳过 颍颍呐🍒_2026-09-25_15-37-36_000 (3)\n" +
+		"  [4/4] 帧不足，跳过 Lumi静_2026-09-25_17-19-39_000 (13)\n"
+	if err := os.WriteFile(filepath.Join(root, "review_ingest_test.log"), []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := poseRecentSkipped(5)
+	if len(got) != 2 {
+		t.Fatalf("应解析出 2 个跳过片, got %d: %v", len(got), got)
+	}
+	if got[0]["clip"] != "Lumi静_2026-09-25_17-19-39_000" || got[0]["frames"] != 13 {
+		t.Errorf("最新跳过片在前: %v", got[0])
+	}
+	if got[1]["streamer"] != "颍颍呐🍒" {
+		t.Errorf("主播名解析不符: %v", got[1])
+	}
+}
+
+func TestPoseApplyGateThresholds(t *testing.T) {
+	cfg := config.Config{Builtin: config.BuiltinSettings{
+		HighlightPoseGate: &config.HighlightPoseGateConfig{Enable: true, VisMin: 0.6, FaceMax: 0.12, DetMin: 0.3, KeepRatio: 0.3, FPS: 5},
+	}}
+	g, ok := poseApplyGateThresholds(&cfg, 0.7, 0.12, 0.3)
+	if !ok || g.VisMin != 0.7 || g.FaceMax != 0.12 || g.DetMin != 0.3 {
+		t.Errorf("应写三阈值: ok=%v gate=%+v", ok, g)
+	}
+	if g.KeepRatio != 0.3 || g.FPS != 5 || !g.Enable {
+		t.Errorf("其余字段应保持: %+v", g)
+	}
+	// 门未启用 → 拒绝
+	cfg.Builtin.HighlightPoseGate.Enable = false
+	if _, ok := poseApplyGateThresholds(&cfg, 0.7, 0.12, 0.3); ok {
+		t.Errorf("门关闭时应返回 false")
+	}
+	// 指针传递契约：调用方 cfg 的门应被写为新值
+	if cfg.Builtin.HighlightPoseGate.VisMin != 0.7 {
+		t.Errorf("调用方 cfg 应写为新值: %+v", cfg.Builtin.HighlightPoseGate)
+	}
+}
+
+func TestPoseMaybeAutoApplyStreak(t *testing.T) {
+	old := poseTrainRoot
+	t.Cleanup(func() { poseTrainRoot = old })
+	root := t.TempDir()
+	poseTrainRoot = root
+
+	mk := func(gen string, bestF1, liveF1 float64) {
+		res := map[string]any{
+			"generated_at": gen,
+			"best":         map[string]any{"vis": 0.72, "face": 0.12, "det": 0.3, "F1": bestF1},
+			"live":         map[string]any{"vis": 0.6, "face": 0.12, "det": 0.3, "F1": liveF1},
+		}
+		b, _ := json.Marshal(res)
+		if err := os.WriteFile(filepath.Join(root, "autogold_result.json"), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("g1", 0.81, 0.79)
+	st, _ := poseMaybeAutoApply()
+	if st.Streak != 1 {
+		t.Fatalf("第1轮 streak 应为 1, got %d (seen=%q)", st.Streak, st.LastSeen)
+	}
+	mk("g2", 0.81, 0.79)
+	st, _ = poseMaybeAutoApply()
+	if st.Streak != 2 {
+		t.Fatalf("第2轮 streak 应为 2, got %d (seen=%q)", st.Streak, st.LastSeen)
+	}
+	// 第 3 轮前给配置存储注入启用的门（模拟生产），测试后还原
+	origCfg := app.AppCfg()
+	t.Cleanup(func() {
+		app.CfgStore.Replace(origCfg)
+		app.SaveConfigToFile()
+		_ = os.Remove("config.json")
+	})
+	gateOn := origCfg
+	gateOn.Builtin = config.BuiltinSettings{HighlightPoseGate: &config.HighlightPoseGateConfig{Enable: true, VisMin: 0.6, FaceMax: 0.12, DetMin: 0.3}}
+	app.CfgStore.Replace(gateOn)
+	app.SaveConfigToFile()
+
+	mk("g3", 0.81, 0.79)
+	st, applied := poseMaybeAutoApply()
+	if applied == "" {
+		t.Fatalf("第3轮应自动应用, streak=%d seen=%q", st.Streak, st.LastSeen)
+	}
+	if got := app.AppCfg().Builtin.HighlightPoseGate.VisMin; got != 0.72 {
+		t.Errorf("应用后配置 vis_min 应为 0.72, got %v", got)
+	}
+	// 应用后生产参数等于 best，下一轮 streak 归零
+	mk("g4", 0.81, 0.81)
+	st, _ = poseMaybeAutoApply()
+	if st.Streak != 0 {
+		t.Fatalf("应用后不再更优，streak 应归零, got %d", st.Streak)
 	}
 }
