@@ -90,11 +90,56 @@ D:/upload/_diag/train/
 
 - **自动标签已替代人工复核**（用户 2026-09-25 拍板）：review-ingest 自动预标，
   dance/非舞一致率 79.3%（268 金标验证）
-- **常驻自动训练**：ZCode 自动化「每小时自动训练：切片入池+金标重定标」
-  （每小时 :05 触发，日志 autotrain_hourly.log）：新片自动抽帧+姿态推理+预标入池，
-  每轮重定标写 autogold_result.json 供控制台「姿态训练」页展示。生产门参数不自动改，
-  阈值调整由用户参考页面重定标结果另行拍板
+- **训练方式（2026-09-26 更新）：常驻自动化已按用户要求停用，改为手动触发。**
+  手动命令（幂等可续跑；结果写 autogold_result.json 供控制台「姿态训练」页展示）：
+
+  ```bash
+  # 新片入池（抽帧+姿态推理+自动预标）
+  cd /d/upload/_diag/train && ./hleval.exe review-ingest \
+    -downloads D:/upload/downloads -frames D:/upload/_diag/train/_pose_pilot/frames \
+    -config D:/upload/_diag/train/_pose_pilot/clips_config.json \
+    -pose-out D:/upload/_diag/train/pose_features_go.json \
+    -dll D:/upload/onnxruntime.dll -model D:/upload/yolov8n-pose.onnx \
+    -ffmpeg "D:/upload/ffmpeg-master-latest-win64-gpl-shared/ffmpeg-master-latest-win64-gpl-shared/bin/ffmpeg.exe"
+  node autogold_sweep.js   # 重定标
+  ```
+
+  生产门参数不自动改，阈值调整由用户参考页面重定标结果另行拍板
 - **定稿门参数**：det 0.3 / vis 0.6 / face 0.12 / keep 0.3 / fps 5（268 金标重定标最优）
+- **ext 带已彻底移除**（2026-09-26）：门不读、配置字段删除、评估默认关闭。详见下方「评估口径」
+
+### ⚠️ 评估口径（务必先读，否则数字会看错 7 倍）
+
+`hleval metrics` 是**端到端**口径，`autogold_sweep.js` / `seg_gate_sim` 是**段内条件**口径，
+**两者不可直接比较**：
+
+| 口径 | R 的分母 | 同一组门槛的 R |
+| --- | --- | --- |
+| `hleval metrics` | CSV 里**全部**真舞秒（`features_pilot48.csv` = 7702） | **0.124** |
+| `autogold_sweep` / 段内模拟 | **A 档已预测段内**的真舞秒（≈977） | **0.87** |
+
+差 7 倍的根因是**分母**，不是门。`features_pilot48.csv` 的 A 档打分基线召回本身只有 12.7%
+（`mw=1 aw=0 th=1.2 ml=8 gap=12`，见 `seg_gate_sim_20260925.log` 首行），
+端到端 R 的天花板就是它 —— **不是姿态门砍的**。
+比较门的效果看段内条件口径；评估端到端产出看 metrics。
+
+### ext 带（2026-09-26 起默认关闭）
+
+`metrics` 的 `-pose-extlo`/`-pose-exthi` 默认 **0/0 = 关闭**（打印行会显示 `ext 关`），
+显式给非零范围才启用。历史默认 0.5/1.0 会让评估口径与线上门（不带 ext）不一致 ——
+实测同参数下带 ext 带 TP **73**、不带 TP **956**（召回差 **13 倍**）。
+`review-ingest` 的 `-extlo/-exthi` flag 已移除；自动化 prompt 若还带这两个参数会直接报错退出。
+
+### 预标门槛 ≠ 生产门槛（刻意不同）
+
+| 用途 | 常量 / 位置 | 值 | 取向 |
+| --- | --- | --- | --- |
+| 预标（生成候选金标） | `pose.PrelabelDetMin/VisMin/FaceMax` | 0.2 / 0.6 / 0.14 | 宽松，尽量覆盖 |
+| 生产门（砍段） | `config.json` highlight_pose_gate | 0.3 / 0.6 / 0.12 | 严格，尽量精确 |
+
+两者是**两套数**，不要互相对齐。判定函数已统一为 `pose.AggregateWindow` ——
+`review-ingest` 落盘 spans 与控制台「姿态训练」页的窗口回放走同一个函数，
+不会再出现「页面标签 ≠ 落盘 spans」。
 
 ## 5. 踩坑备忘
 
