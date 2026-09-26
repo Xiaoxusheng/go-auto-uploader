@@ -485,16 +485,11 @@ func poseRecentDone(n int) []map[string]any {
 func (s *Server) handlePoseTrainingLive(w http.ResponseWriter, r *http.Request) {
 	logs := poseLogTail(14)
 	parseLines := poseLogTail(800) // last_done 解析用更深的历史
-	// 正在处理片：frames 最新目录（提前算，供运行判定与驾驶舱共用）
+	// 正在处理片：frames 最新目录（供驾驶舱展示；停止后目录年龄不再冒充运行）
 	curClip, curMt, curFrames := poseCurrentClip()
-	// 运行判定：训练日志 2 分钟内有写入，或帧目录 10 分钟内有动作
-	// （手动训练不写日志时，抽帧落盘同样暴露管线活动）
+	// 运行判定：训练日志 2 分钟内有写入（手动/连续两个入口都会写日志）
 	running := false
 	stage := "idle"
-	if curClip != "" && time.Since(curMt) < 10*time.Minute {
-		running = true
-		stage = "ingest"
-	}
 	matches, _ := filepath.Glob(filepath.Join(poseTrainRoot, "*ingest*.log"))
 	hourly, _ := filepath.Glob(filepath.Join(poseTrainRoot, "autotrain_hourly.log"))
 	matches = append(matches, hourly...)
