@@ -528,6 +528,29 @@
         /* 训练活动：复用系统终端块 .term */
         .pose-term { height: 262px; min-height: 200px; }
         .pose-term .src { color: var(--t4); margin-right: 8px; }
+        /* 实时过程卡 */
+        .pose-steps { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+        .pose-steps .step { display: flex; align-items: center; gap: 7px; background: var(--panel-2, var(--panel)); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font-size: 12.5px; color: var(--t3); transition: all 0.2s ease; }
+        .pose-steps .step .n { width: 18px; height: 18px; border-radius: 50%; background: var(--panel-3); color: var(--t3); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+        .pose-steps .step.on { color: var(--t1); border-color: rgba(34, 197, 94, 0.35); background: var(--green-dim); }
+        .pose-steps .step.on .n { background: var(--green); color: #04120a; }
+        .pose-live-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 0; font-size: 13px; }
+        .pose-live-clip { font-variant-numeric: tabular-nums; word-break: break-all; }
+        /* 片池详情弹窗 */
+        .pose-frame-view { text-align: center; }
+        .pose-frame-img { max-width: 100%; max-height: 420px; border-radius: 12px; border: 1px solid var(--line); }
+        .pose-frame-ctl { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+        .pose-sec-data { font-size: 13px; color: var(--t2); margin-top: 8px; }
+        .pose-sec-title { font-size: 12.5px; font-weight: 700; color: var(--t2); margin: 14px 0 8px; }
+        .pose-win-strip { display: flex; gap: 2px; height: 22px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+        .pose-win { flex: 1; min-width: 3px; cursor: help; transition: opacity 0.15s ease; }
+        .pose-win:hover { opacity: 0.72; outline: 1px solid var(--t1); }
+        .pose-win.w-dance { background: linear-gradient(180deg, #fbbf24, #d97706); }
+        .pose-win.w-closeup { background: var(--blue-dim, rgba(59, 130, 246, 0.35)); }
+        .pose-win.w-none { background: var(--panel-3, #1d2633); }
+        .pose-win.w-other { background: repeating-linear-gradient(45deg, #2a3444, #2a3444 4px, #1d2633 4px, #1d2633 8px); }
+        .pose-legend { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+        .pose-spans { display: flex; gap: 6px; flex-wrap: wrap; }
 
         /* 动效：页签切入的级联入场（v-show 从 display:none 恢复时自动重放） */
         .bili-page > .pg-head { animation: biliFade 0.3s ease backwards; }
@@ -2824,6 +2847,33 @@
                         <div class="card">
                             <div class="card-head">
                                 <div class="card-title">
+                                    <svg class="ic"><use href="#i-zap"/></svg>
+                                    实时过程<span class="mini">抽帧 → 姿态推理 → 预标入池 → 重定标</span>
+                                </div>
+                                <span class="chip" :class="{good: poseLive.running}"><span class="dot" :class="poseLive.running ? 'run pulse' : 'gray'"></span> {{ poseLive.running ? '管线运行中' : '待机' }}</span>
+                            </div>
+                            <div class="pose-steps">
+                                <div class="step on"><span class="n">1</span> 抽帧</div>
+                                <div class="step" :class="{on: poseLive.running}"><span class="n">2</span> 姿态推理</div>
+                                <div class="step" :class="{on: poseLive.running && poseLive.last_done.clip}"><span class="n">3</span> 预标入池</div>
+                                <div class="step" :class="{on: poseLive.last_done.clip}"><span class="n">4</span> 重定标</div>
+                            </div>
+                            <div class="pose-live-meta" v-if="poseLive.last_done.clip">
+                                <span class="tag orange">最近一片</span>
+                                <b class="pose-live-clip">{{ poseLive.last_done.clip }}</b>
+                                <span class="sub">第 {{ poseLive.last_done.idx }}/{{ poseLive.last_done.total }} 片 · {{ poseLive.last_done.detail }}</span>
+                            </div>
+                            <div class="pose-live-meta">
+                                <span class="sub">队列待入池 <b>{{ poseLive.queue_remaining }}</b> 片 · 池内 <b>{{ poseLive.pool }}</b> 片 · 磁盘剩 <b>{{ (poseLive.disk_free_gb || 0).toFixed(1) }}</b> GB</span>
+                            </div>
+                            <div class="term pose-term" style="height:150px;" v-if="poseLive.logs && poseLive.logs.length">
+                                <div class="lg-line" v-for="(l, i) in poseLive.logs" :key="i"><span class="src">{{ l.split(' │ ')[0].replace(/_/g, ' ') }}</span>{{ l.split(' │ ').slice(1).join(' │ ') }}</div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-head">
+                                <div class="card-title">
                                     <svg class="ic"><use href="#i-sliders"/></svg>
                                     姿态门参数<span class="mini">生产实值 · 修改需经重定标验证</span>
                                 </div>
@@ -2887,7 +2937,7 @@
                                     <tbody>
                                     <tr v-for="c in poseT.items" :key="c.clip">
                                         <td>
-                                            <img v-if="c.thumb" :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(c.clip)" loading="lazy" class="pose-thumb" @click="poseBig = c" style="cursor:zoom-in;" alt="">
+                                            <img v-if="c.thumb" :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(c.clip)" loading="lazy" class="pose-thumb" @click="poseOpenDetail(c)" style="cursor:zoom-in;" alt="">
                                             <span v-else class="sub">无帧</span>
                                         </td>
                                         <td><div class="fname" :title="c.clip">{{ c.clip }}</div></td>
@@ -2913,28 +2963,41 @@
                             </div>
                         </div>
 
-                        <div class="card">
-                            <div class="card-head">
-                                <div class="card-title">
-                                    <svg class="ic"><use href="#i-terminal"/></svg>
-                                    近期训练活动<span class="mini">入池 / 夜训守护</span>
+                        <x-modal :visible="poseDetailShow" @update:visible="poseDetailShow = $event" :title="poseDetail.clip || '片池详情'" width="960px">
+                            <div class="pose-detail">
+                                <div class="pose-frame-view">
+                                    <img v-if="poseDetail.frames > 0" :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(poseDetail.clip) + '&idx=' + poseDetail.idx" class="pose-frame-img" alt="">
+                                    <div class="pose-frame-ctl" v-if="poseDetail.frames > 0">
+                                        <button class="icobtn" @click="poseDetail.idx = Math.max(0, poseDetail.idx - 1)"><svg class="ic"><use href="#i-chev-l"/></svg></button>
+                                        <input type="range" min="0" :max="Math.max(0, poseDetail.frames - 1)" v-model.number="poseDetail.idx" style="flex:1;">
+                                        <button class="icobtn" @click="poseDetail.idx = Math.min(poseDetail.frames - 1, poseDetail.idx + 1)"><svg class="ic"><use href="#i-chev-r"/></svg></button>
+                                        <span class="sub" style="white-space:nowrap;">帧 {{ poseDetail.idx + 1 }}/{{ poseDetail.frames }} ≈ 第 {{ poseDetail.idx + 1 }} 秒</span>
+                                    </div>
+                                    <div class="pose-sec-data" v-if="poseSecData">
+                                        <span class="tag blue">该秒姿态</span>&nbsp;
+                                        可见度 <b>{{ poseSecData[0].toFixed(2) }}</b> · 面部占比 <b>{{ poseSecData[1].toFixed(2) }}</b> · 纵向跨度 <b>{{ poseSecData[2].toFixed(2) }}</b> ·
+                                        <b :class="poseSecData[4] === 1 ? 'c-green' : 'c-red'">{{ poseSecData[4] === 1 ? '检出人体' : '未检出' }}</b>
+                                    </div>
+                                </div>
+                                <div class="pose-sec-title">标注时间线（每 8 秒一窗 · 颜色 = 该窗判定）</div>
+                                <div class="pose-win-strip" v-if="poseDetail.windows && poseDetail.windows.length">
+                                    <div class="pose-win" v-for="(w, i) in poseDetail.windows" :key="i" :class="'w-' + w.label"
+                                         :title="'第 ' + (w.s + 1) + '-' + (w.s + 8) + 's · 检出率 ' + (w.det * 100).toFixed(0) + '% · vis ' + w.vis.toFixed(2) + ' · face ' + w.face.toFixed(2) + ' · ' + w.label"></div>
+                                </div>
+                                <div class="pose-legend">
+                                    <span class="tag orange">dance 舞段</span>
+                                    <span class="tag blue">closeup 近景</span>
+                                    <span class="tag gray">none 无人/未检出</span>
+                                    <span class="tag gray">other 其他</span>
+                                    <span class="sub" v-if="poseDetail.windows">悬停窗格可看该窗数值 · 共 {{ poseDetail.windows.length }} 窗</span>
+                                </div>
+                                <div class="pose-sec-title">预标段（自动入池标签）</div>
+                                <div class="pose-spans">
+                                    <span class="tag" :class="s.label === 'dance' ? 'orange' : 'gray'" v-for="(s, i) in poseDetail.spans" :key="i">{{ s.label }} {{ s.start }}–{{ s.end }}s</span>
+                                    <span class="sub" v-if="!poseDetail.spans || !poseDetail.spans.length">无预标段</span>
                                 </div>
                             </div>
-                            <div class="term pose-term" v-if="poseT.summary.logs && poseT.summary.logs.length">
-                                <div class="lg-line" v-for="(l, i) in poseT.summary.logs" :key="i"><span class="src">{{ l.split(' │ ')[0] }}</span>{{ l.split(' │ ').slice(1).join(' │ ') }}</div>
-                            </div>
-                            <div v-else class="tbl-empty">
-                                <div class="big"><svg class="ic"><use href="#i-terminal"/></svg></div>
-                                <div class="t">暂无日志</div>
-                            </div>
-                        </div>
-
-                        <div v-if="poseBig" @click="poseBig = null" style="position:fixed; inset:0; background:rgba(0,0,0,.74); z-index:90; display:flex; align-items:center; justify-content:center; cursor:zoom-out;">
-                            <div style="text-align:center;">
-                                <img :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(poseBig.clip)" style="max-width:min(860px, 86vw); max-height:76vh; border-radius:14px;" alt="">
-                                <div class="sub" style="margin-top:10px;">{{ poseBig.clip }} · 点击任意处关闭</div>
-                            </div>
-                        </div>
+                        </x-modal>
                     </section>
 
                     <!-- ============ 外部引擎凭证 ============ -->
@@ -6404,6 +6467,52 @@
                 clearTimeout(poseSearchTimer);
                 poseSearchTimer = setTimeout(() => { poseT.offset = 0; fetchPoseClips(); }, 300);
             };
+            /* 实时过程卡：4s 轮询运行状态与日志尾 */
+            const poseLive = reactive({ running: false, last_done: {}, logs: [], pool: 0, features: 0, queue_remaining: 0, disk_free_gb: 0 });
+            const fetchPoseLive = async () => {
+                try {
+                    const res = await api.get('/pose_training/live');
+                    const d = res.data || {};
+                    poseLive.running = !!d.running;
+                    poseLive.last_done = d.last_done || {};
+                    poseLive.logs = d.logs || [];
+                    poseLive.pool = d.pool || 0;
+                    poseLive.features = d.features || 0;
+                    poseLive.queue_remaining = d.queue_remaining || 0;
+                    poseLive.disk_free_gb = d.disk_free_gb || 0;
+                } catch (e) {}
+            };
+            setInterval(() => {
+                if (activeTab.value === 'pose_training' && isLoggedIn.value) fetchPoseLive();
+            }, 4000);
+            /* 片池详情弹窗：帧浏览器 + 每秒姿态数据 + 标注时间线 */
+            const poseDetailShow = ref(false);
+            const poseDetail = reactive({ clip: '', frames: 0, idx: 0, feats: [], windows: [], spans: [] });
+            const poseOpenDetail = async (c) => {
+                poseDetail.clip = c.clip;
+                poseDetail.frames = c.thumb ? 1 : 0;
+                poseDetail.idx = 0;
+                poseDetail.feats = [];
+                poseDetail.windows = [];
+                poseDetail.spans = [];
+                poseDetailShow.value = true;
+                try {
+                    const res = await api.get('/pose_training/clip', { params: { clip: c.clip } });
+                    const d = res.data || {};
+                    poseDetail.frames = d.frames || 0;
+                    poseDetail.feats = d.feats || [];
+                    poseDetail.windows = d.windows || [];
+                    poseDetail.spans = d.spans || [];
+                    // 默认跳到第一个舞段中点，直奔有效画面
+                    const dw = (d.windows || []).find(w => w.label === 'dance');
+                    if (dw && d.frames > 0) poseDetail.idx = Math.min(d.frames - 1, dw.s + 4);
+                } catch (e) {}
+            };
+            const poseSecData = computed(() => {
+                const f = poseDetail.feats;
+                if (!f || poseDetail.idx >= f.length) return null;
+                return f[poseDetail.idx];
+            });
             // 驻留时 30s 轮询进度卡（片池列表只在进入页签/翻页/搜索时拉取）
             setInterval(() => {
                 if (activeTab.value === 'pose_training' && isLoggedIn.value) fetchPoseSummary();
@@ -6414,7 +6523,7 @@
                 if (newTab === 'history') fetchHistory();
                 if (newTab === 'cookies') fetchCookies();
                 if (newTab === 'bilibili') fetchBili();
-                if (newTab === 'pose_training') fetchPose();
+                if (newTab === 'pose_training') { fetchPose(); fetchPoseLive(); }
                 if (newTab === 'streamers') {
                     fetchRecorderStatus();
                     fetchStreamers();
@@ -6454,7 +6563,8 @@
                 configSaving, lastConfigSave, fetchConfig, saveConfig,
                 biliStatus, biliCounts, biliJobs, biliJobsFiltered, biliFilter, biliBusy, biliLoginText,
                 biliStatusMeta, biliAct, fetchBili, biliManualRefresh, biliRefreshing, biliCoverEnable,
-                poseT, poseRefreshing, poseBig, poseManualRefresh, posePageNum, onPosePage, poseDancePct, poseSearchDebounced,
+                poseT, poseRefreshing, poseManualRefresh, posePageNum, onPosePage, poseDancePct, poseSearchDebounced,
+                poseLive, fetchPoseLive, poseDetailShow, poseDetail, poseOpenDetail, poseSecData,
                 biliCand, biliCandShow, biliCandLoading, biliOpenCandidates, biliCandPoster, biliAddCand,
                 biliCoverRow, biliCoverShow, biliCoverCustom, biliCoverOptions, biliCoverActive, biliOpenCover, biliPickCover,
                 biliPosterSrc, biliPosterAt, biliTc,
