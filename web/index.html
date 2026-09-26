@@ -6652,11 +6652,18 @@
                 if (ld.clip) return { clip: ld.clip, streamer: ld.streamer, isCurrent: false, idx: ld.idx, total: ld.total, detail: ld.detail };
                 return {};
             });
+            // 完成编排：入池位停 3.5s → 完成位停 3.5s → 交给下一条片
+            const holdPhase = ref('');   // '' | 'pooled' | 'done'
+            let holdTimers = [];
             watch(() => poseLive.last_done.clip, (nv, ov) => {
-                // 新片入池 → 小车在入池位停留 5s 展示完成画面 + 信息块绿光
                 if (nv && ov && nv !== ov) {
+                    holdTimers.forEach(clearTimeout);
+                    holdPhase.value = 'pooled';
                     poolFlash.value = true;
-                    setTimeout(() => { poolFlash.value = false; }, 5000);
+                    holdTimers = [
+                        setTimeout(() => { holdPhase.value = 'done'; }, 3500),
+                        setTimeout(() => { holdPhase.value = ''; poolFlash.value = false; }, 7500),
+                    ];
                 }
             });
             /* 流水线四阶段状态机（真实信号）：帧数增长=抽帧；运行中帧数稳定=推理；
@@ -6696,23 +6703,26 @@
                 return out;
             });
             const poseCart = computed(() => {
+                const ld = poseLive.last_done || {};
+                // 完成编排：入池位（2）→ 完成位（3）依次停留，之后交给下一条片
+                if (holdPhase.value) {
+                    return {
+                        clip: ld.clip, slot: holdPhase.value === 'pooled' ? 2 : 3, moving: false,
+                        streamer: ld.streamer, idx: ld.idx, total: ld.total, detail: ld.detail,
+                        label: holdPhase.value === 'pooled' ? '入池完成' : '已入池',
+                        frames: 0,
+                    };
+                }
                 const now = poseLiveNow.value;
                 if (!now.clip) return {};
-                const ld = poseLive.last_done || {};
                 const cur = poseLive.current || {};
-                // 刚完成一片（5s 窗口）：小车带该片的画面滑到入池位停留，确保完成过程可见
-                const hold = poolFlash.value && !!ld.clip;
-                const slot = hold ? 2 : poseStageIdx.value;
+                const slot = poseStageIdx.value;
                 const moving = poseLive.running && slot < 2;
                 return {
-                    clip: hold ? ld.clip : now.clip,
-                    slot, moving,
-                    streamer: hold ? ld.streamer : now.streamer,
-                    idx: hold ? ld.idx : now.idx,
-                    total: hold ? ld.total : now.total,
-                    detail: hold ? ld.detail : now.detail,
-                    label: hold ? '入池完成' : (!poseLive.running ? '已入池' : (slot === 0 ? '抽帧中' : slot === 1 ? '推理中' : '入池完成')),
-                    frames: !hold && now.isCurrent ? (cur.frames || 0) : 0,
+                    clip: now.clip, slot, moving,
+                    streamer: now.streamer, idx: now.idx, total: now.total, detail: now.detail,
+                    label: !poseLive.running ? '已入池' : (slot === 0 ? '抽帧中' : slot === 1 ? '推理中' : '入池完成'),
+                    frames: now.isCurrent ? (cur.frames || 0) : 0,
                 };
             });
             // 驻留时 30s 轮询进度卡（片池列表只在进入页签/翻页/搜索时拉取）
