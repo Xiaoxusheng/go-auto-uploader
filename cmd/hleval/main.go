@@ -50,6 +50,18 @@ func main() {
 		cmdTrajScan(os.Args[2:])
 	case "review-ingest":
 		cmdReviewIngest(os.Args[2:])
+	case "autogold-sweep":
+		cmdAutogoldSweep(os.Args[2:])
+	case "pose-probe":
+		cmdPoseProbe(os.Args[2:])
+	case "pose2-probe":
+		cmdPose2Probe(os.Args[2:])
+	case "uncertainty-export":
+		cmdUncertaintyExport(os.Args[2:])
+	case "cleanup-sources":
+		cmdCleanupSources(os.Args[2:])
+	case "audio-probe":
+		cmdAudioProbe(os.Args[2:])
 	case "de-auc":
 		cmdDeAUC(os.Args[2:])
 	case "-h", "--help", "help":
@@ -72,6 +84,7 @@ func usage() {
   de-auc      grid.csv + D/E 金标上算 ac1/bstd/center AUC
   pose-scan   批量帧目录 → 每秒姿态特征 JSON（供 metrics -pose）
   review-ingest 新切片自动入池：抽帧+姿态推理+模型预标 → 复核页
+  autogold-sweep 金标重定标：8s 窗网格搜 (vis/face/det) → autogold_result.json
 
 probe 参数:
   -src <视频>        必填

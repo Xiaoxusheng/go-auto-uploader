@@ -4,8 +4,8 @@ package main
 // 这是 Python select_seg_search / eval_frozen 的 Go 权威实现；以后调参以本命令为准。
 
 import (
-	"encoding/json"
 	"encoding/csv"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -47,8 +47,8 @@ func cmdMetrics(args []string) {
 	poseFile := fs.String("pose", "", "pose-scan 产出的每秒姿态特征 JSON（提供则启用姿态门）")
 	poseVis := fs.Float64("pose-vis", 0.6, "姿态门：关键点置信度均值下限")
 	poseFace := fs.Float64("pose-face", 0.14, "姿态门：双眼间距/帧宽上限")
-	poseExtLo := fs.Float64("pose-extlo", 0.5, "姿态门：纵向跨度下限（占帧高）")
-	poseExtHi := fs.Float64("pose-exthi", 1.0, "姿态门：纵向跨度上限（占帧高）")
+	poseExtLo := fs.Float64("pose-extlo", 0, "姿态门：纵向跨度下限（占帧高）。**0 且 exthi=0 时关闭 ext 带**（默认关，与线上一致）")
+	poseExtHi := fs.Float64("pose-exthi", 0, "姿态门：纵向跨度上限（占帧高）。0=关闭 ext 带")
 	poseKeep := fs.Float64("pose-keep", 0.5, "姿态门：段内通过秒占比下限")
 	poseDetMin := fs.Float64("pose-detmin", 0.15, "姿态门：段内姿态检出率下限（低于=无人/特效场，拒）")
 	poseSmooth := fs.Int("pose-smooth", 3, "姿态特征时序平滑窗口（帧）")
@@ -116,8 +116,12 @@ func cmdMetrics(args []string) {
 			fmt.Fprintln(os.Stderr, "解析姿态特征失败:", jerr)
 			os.Exit(1)
 		}
-		fmt.Printf("姿态门: 已加载 %d 片每秒特征（vis≥%.2f face≤%.2f ext %.2f-%.2f keep≥%.2f）\n",
-			len(poseData), *poseVis, *poseFace, *poseExtLo, *poseExtHi, *poseKeep)
+		extDesc := "关"
+		if *poseExtLo != 0 || *poseExtHi != 0 {
+			extDesc = fmt.Sprintf("%.2f-%.2f", *poseExtLo, *poseExtHi)
+		}
+		fmt.Printf("姿态门: 已加载 %d 片每秒特征（vis≥%.2f face≤%.2f ext %s keep≥%.2f detmin %.2f）\n",
+			len(poseData), *poseVis, *poseFace, extDesc, *poseKeep, *poseDetMin)
 	}
 
 	var yAll, pAll []int
@@ -195,6 +199,15 @@ func cmdMetrics(args []string) {
 				return out
 			}
 			smVis, smFace, smExt := sm(0), sm(1), sm(2)
+			// ext 带：§22 定标已判定「无判别力且砍召回」，**默认关闭**。
+			// 历史默认 0.5/1.0 会让评估口径与线上（gate_cgo.go 不带 ext）不一致 ——
+			// 同一组门槛在两边能算出完全不同的召回（实测 TP 73 vs 956）。
+			extOK := func(e float64) bool {
+				if *poseExtLo == 0 && *poseExtHi == 0 {
+					return true
+				}
+				return e >= *poseExtLo && e <= *poseExtHi
+			}
 			kept := segs[:0]
 			for _, sg := range segs {
 				dur := sg.End - sg.Start
@@ -215,15 +228,14 @@ func cmdMetrics(args []string) {
 				keep := true
 				if *poseMode == "seg" {
 					mV, mF, mE := sumV/float64(det), sumF/float64(det), sumE/float64(det)
-					keep = mV >= *poseVis && mF <= *poseFace && mE >= *poseExtLo && mE <= *poseExtHi
+					keep = mV >= *poseVis && mF <= *poseFace && extOK(mE)
 				} else {
 					pass := 0
 					for t := sg.Start; t < sg.End && t < nf; t++ {
 						if feats[t][4] != 1 {
 							continue
 						}
-						if smVis[t] >= *poseVis && smFace[t] <= *poseFace &&
-							smExt[t] >= *poseExtLo && smExt[t] <= *poseExtHi {
+						if smVis[t] >= *poseVis && smFace[t] <= *poseFace && extOK(smExt[t]) {
 							pass++
 						}
 					}
@@ -386,7 +398,6 @@ func loadFeaturesCSV(path string) ([]clipRow, error) {
 	}
 	return out, nil
 }
-
 
 func searchWorkPoints(rows []clipRow, hnLambda float64) {
 	by := map[string][]clipRow{}

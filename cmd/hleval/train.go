@@ -160,8 +160,8 @@ func cmdDeAUC(args []string) {
 }
 
 type gridTable struct {
-	secs  int
-	full  []float64
+	secs   int
+	full   []float64
 	blocks highlight.Blocks
 }
 

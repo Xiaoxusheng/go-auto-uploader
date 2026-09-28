@@ -9,7 +9,9 @@
 //
 // frames 根目录下每个子目录 = 一个评估窗（f_%04d.jpg 按 5fps 抽取）。
 // 输出：{"<窗名>": {"fps":5,"w":W,"h":H,"frames":[[idx, lwx,lwy,lwc, rwx,rwy,rwc,
-//        lax,lay,lac, rax,ray,rac, msx,msy, mhx,mhy, conf], ...缺检帧跳过]}}
+//
+//	lax,lay,lac, rax,ray,rac, msx,msy, mhx,mhy, conf], ...缺检帧跳过]}}
+//
 // 关键点序号（COCO）：9=左腕 10=右腕 15=左踝 16=右踝；ms/mh = 肩中点/髋中点（躯干归一化用）。
 package main
 

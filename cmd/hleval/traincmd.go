@@ -135,21 +135,21 @@ func cmdTrain(args []string) {
 			p, r, f1 float64
 		}
 		var perClip []pcRow
-	var skippedFolds []string
-	for _, c := range clips {
-		trainClips := without(clipNames, c.name)
-		var Xtr [][]float64
-		var ytr []int
-		for _, x := range trainClips {
-			Xtr = append(Xtr, featMatrix(zs.z[x], modelFeats)...)
-			ytr = append(ytr, yAll[x]...)
-		}
-		if !twoClasses(ytr) {
-			// 训练折单一类别 → 逻辑回归无法拟合，该折整体跳过。
-			// 必须显式记录：被跳过的测试切片不进合计指标，静默会让聚合数字无声偏置。
-			skippedFolds = append(skippedFolds, c.name)
-			continue
-		}
+		var skippedFolds []string
+		for _, c := range clips {
+			trainClips := without(clipNames, c.name)
+			var Xtr [][]float64
+			var ytr []int
+			for _, x := range trainClips {
+				Xtr = append(Xtr, featMatrix(zs.z[x], modelFeats)...)
+				ytr = append(ytr, yAll[x]...)
+			}
+			if !twoClasses(ytr) {
+				// 训练折单一类别 → 逻辑回归无法拟合，该折整体跳过。
+				// 必须显式记录：被跳过的测试切片不进合计指标，静默会让聚合数字无声偏置。
+				skippedFolds = append(skippedFolds, c.name)
+				continue
+			}
 			w, b := fitLogreg(Xtr, ytr, 0.5, 100)
 			coefs = append(coefs, w)
 			Xte := featMatrix(zs.z[c.name], modelFeats)

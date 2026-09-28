@@ -42,7 +42,7 @@ func cmdPoseScan(args []string) {
 	defer func() { _ = det.Close() }()
 
 	type clipFeats struct {
-		FPS   int         `json:"fps"`
+		FPS   int          `json:"fps"`
 		Feats [][5]float64 `json:"feats"`
 	}
 	result := map[string]clipFeats{}
