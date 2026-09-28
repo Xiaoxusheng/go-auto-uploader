@@ -61,19 +61,23 @@ type Config struct {
 // BuiltinSettings 内置录制引擎参数（字段名与原 builtin_config.json 完全兼容）。
 // HighlightPoseGateConfig 姿态语义门配置（docs/highlight-spatial-de.md §18c/§19/§21）。
 type HighlightPoseGateConfig struct {
-	Enable    bool    `json:"enable"`
-	DetMin    float64 `json:"det_min"`
+	Enable bool    `json:"enable"`
+	DetMin float64 `json:"det_min"`
 	// FPS 段内抽帧率，默认 5（奈奎斯特 2.5Hz，覆盖舞曲节拍 1.7~2.3Hz，
 	// 为将来节拍耦合特征免重抽）。非法值（<1 或 >30）回落 5。
 	FPS       int     `json:"fps,omitempty"`
 	VisMin    float64 `json:"vis_min"`
 	FaceMax   float64 `json:"face_max"`
-	ExtMin    float64 `json:"ext_min"`
-	ExtMax    float64 `json:"ext_max"`
 	KeepRatio float64 `json:"keep_ratio"`
 	// OnnxDll/OnnxModel 运行库与模型路径；空 = exe 同目录默认文件名。
 	OnnxDll   string `json:"onnx_dll,omitempty"`
 	OnnxModel string `json:"onnx_model,omitempty"`
+
+	// 学习型门头段级投票（开封 #7，灰度）：段内头判舞窗占比 ≥ head_frac 才保留段。
+	// 仅会删段不会加段（下行有界）；默认关。空 head_model = 内置灰度模型路径。
+	HeadFilterEnable bool    `json:"head_filter_enable,omitempty"`
+	HeadModel        string  `json:"head_model,omitempty"`
+	HeadFrac         float64 `json:"head_frac,omitempty"`
 }
 
 type BuiltinSettings struct {
@@ -132,6 +136,10 @@ type BuiltinSettings struct {
 	// 用指针是为了区分「未配置」（nil → 默认 7 天）与「显式关闭」（0）。
 	// 未开启上传的实例（采集/训练机）不执行清理 —— 那种实例本地就是唯一副本。
 	HighlightSourceRetentionDays *int `json:"highlight_source_retention_days"`
+	// HighlightAnalyzeWorkers 高光分析并行路数（1-4，默认 1 = 历史串行行为）。
+	// 分析要解一遍码 + 跑姿态门推理，多路并行会与录制抢 CPU/磁盘 IO ——
+	// 分析吞吐追不上录制速度时（积压持续增长）才调大，服务器弱机建议 2-3。
+	HighlightAnalyzeWorkers int `json:"highlight_analyze_workers"`
 
 	// Cookies 原 builtin_cookies.json
 	Cookies BuiltinCookies `json:"cookies"`
@@ -350,6 +358,13 @@ func (b *BuiltinSettings) ApplyDefaults() {
 	if b.HighlightMinAC1 < 0 || b.HighlightMinAC1 >= 1 {
 		b.HighlightMinAC1 = 0
 	}
+	// 高光分析并行路数：<1 视为未配置回落 1（串行，历史行为）；上限 4 防止把录制饿死。
+	if b.HighlightAnalyzeWorkers < 1 {
+		b.HighlightAnalyzeWorkers = 1
+	}
+	if b.HighlightAnalyzeWorkers > 4 {
+		b.HighlightAnalyzeWorkers = 4
+	}
 	// 姿态门：未配置→保持 nil（关闭）；enable=false 也视为关闭。开启时逐项回落到定标值。
 	if b.HighlightPoseGate != nil {
 		g := b.HighlightPoseGate
@@ -365,11 +380,12 @@ func (b *BuiltinSettings) ApplyDefaults() {
 			g.DetMin = set(g.DetMin, 0.2, 0.05, 0.5)
 			g.VisMin = set(g.VisMin, 0.6, 0.3, 0.9)
 			g.FaceMax = set(g.FaceMax, 0.14, 0.05, 0.3)
-			g.ExtMin = set(g.ExtMin, 0.5, 0.2, 0.8)
-			g.ExtMax = set(g.ExtMax, 1.0, 0.9, 2.0)
 			g.KeepRatio = set(g.KeepRatio, 0.5, 0.2, 0.9)
 			if g.FPS < 1 || g.FPS > 30 {
 				g.FPS = 5
+			}
+			if g.HeadFrac < 0.3 || g.HeadFrac > 0.9 {
+				g.HeadFrac = 0.5
 			}
 		}
 	}

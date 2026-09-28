@@ -186,7 +186,7 @@ func TestHighlightPoseGateDefaultsAndClamp(t *testing.T) {
 
 	p2 := writeCfg(t, `{"builtin":{
 		"highlight_pose_gate":{"enable":true,"vis_min":9.9,"face_max":0.14,
-		"ext_min":0.5,"ext_max":1.0,"keep_ratio":0.5}}}`)
+		"keep_ratio":0.5}}}`)
 	c2, err := Load(p2)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -198,7 +198,7 @@ func TestHighlightPoseGateDefaultsAndClamp(t *testing.T) {
 	if g.VisMin != 0.6 {
 		t.Errorf("vis_min 非法值 9.9 应回落 0.6，得到 %v", g.VisMin)
 	}
-	if g.FaceMax != 0.14 || g.ExtMin != 0.5 || g.ExtMax != 1.0 || g.KeepRatio != 0.5 {
+	if g.FaceMax != 0.14 || g.KeepRatio != 0.5 {
 		t.Errorf("合法参数被改动: %+v", g)
 	}
 }
