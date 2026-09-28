@@ -1,11 +1,14 @@
 //go:build cgo
+
 package pose
+
 import (
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
 func TestDebugVVya(t *testing.T) {
 	d := newTestDetector(t)
 	for _, clip := range []string{"VVya_2026-09-25_00-28-20_000", "卷卷卷上头_2026-09-24_12-53-36_001"} {

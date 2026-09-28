@@ -94,31 +94,70 @@ func FeaturesFromFrame(fp *FramePose, frameW, frameH int) *FrameFeatures {
 	return out
 }
 
-// GatePass 单秒姿态门判定（门槛与 §22 定标一致：vis 0.6 / face 0.14，ext 带已移除）。
-func GatePass(f *FrameFeatures) bool {
-	if f == nil || !f.Detected {
-		return true // 无姿态数据的秒不误杀
-	}
-	return f.VisRatio >= 0.6 && f.FaceFrac <= 0.14
+// 预标默认门槛（§22 定标值）。
+//
+// ⚠️ 这是**预标（生成候选金标）**口径，刻意比生产门（config highlight_pose_gate：
+// det 0.3 / vis 0.6 / face 0.12）宽松——预标要尽量覆盖，生产门要尽量精确，两者不是一套数。
+//
+// 单一真相来源：cmd/hleval review-ingest 的 flag 默认值、控制台「姿态训练」页的
+// 窗口回放都引用这里，改一处即同步。
+const (
+	PrelabelDetMin  = 0.2  // 窗内姿态检出率下限（低于=无人/特效场）
+	PrelabelVisMin  = 0.6  // 检出帧 vis 均值下限
+	PrelabelFaceMax = 0.14 // 检出帧 face 均值上限
+)
+
+// WindowStats 8s 窗聚合结果（预标判定与可视化共用同一份聚合）。
+type WindowStats struct {
+	DetRate  float64 // 检出帧占窗内帧数比（0~1）
+	VisMean  float64 // 检出帧 vis 均值（无检出=0）
+	FaceMean float64 // 检出帧 face 均值（无检出=0）
+	ExtMean  float64 // 检出帧 ext 均值（无检出=0）
+	Label    string  // none / dance / closeup / other
 }
 
-// SegmentGatePass 段级判定：≥50% 已知秒通过才保留（无姿态数据的秒不误杀）。
-func SegmentGatePass(feats []*FrameFeatures) bool {
-	known := 0
-	ok := 0
-	for _, f := range feats {
-		if f == nil || !f.Detected {
+// AggregateWindow 8s 窗预标判定（det-aware；纯计算、无 cgo 依赖，两种构建都可用）。
+//
+// ⚠️ 这是「自动预标」口径的单一真相来源：cmd/hleval review-ingest 落盘 spans 与
+// 控制台「姿态训练」页的窗口可视化都走本函数。历史上两处各写一套（页面不带 ext 带、
+// 落盘带 ext 带），导致页面显示的标签与 clips_config.json 实际写入的 spans 不一致。
+//
+// ext 带已移除（§22 定标：无判别力且砍召回）；detMin/visMin/faceMax 语义与线上
+// GateOptions 一致。feats 为窗内逐秒特征，Detected=false 的秒不计入均值。
+func AggregateWindow(feats []FrameFeatures, detMin, visMin, faceMax float64) WindowStats {
+	var w WindowStats
+	if len(feats) == 0 {
+		w.Label = "none"
+		return w
+	}
+	det := 0
+	sumV, sumF, sumE := 0.0, 0.0, 0.0
+	for i := range feats {
+		if !feats[i].Detected {
 			continue
 		}
-		known++
-		if GatePass(f) {
-			ok++
-		}
+		det++
+		sumV += feats[i].VisRatio
+		sumF += feats[i].FaceFrac
+		sumE += feats[i].ExtH
 	}
-	if known == 0 {
-		return true
+	w.DetRate = float64(det) / float64(len(feats))
+	if det > 0 {
+		w.VisMean = sumV / float64(det)
+		w.FaceMean = sumF / float64(det)
+		w.ExtMean = sumE / float64(det)
 	}
-	return float64(ok)/float64(known) >= 0.5
+	switch {
+	case det == 0 || w.DetRate < detMin:
+		w.Label = "none" // 整窗无人 / 检出率过低（无人·特效·特写聊天场）
+	case w.VisMean >= visMin && w.FaceMean <= faceMax:
+		w.Label = "dance"
+	case w.FaceMean > faceMax:
+		w.Label = "closeup"
+	default:
+		w.Label = "other"
+	}
+	return w
 }
 
 func mean(x []float64) float64 {

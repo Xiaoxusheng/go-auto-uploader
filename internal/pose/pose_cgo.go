@@ -1,22 +1,27 @@
 //go:build cgo
+
 // ONNX 姿态推理（仅 cgo 构建可用）。见 pose.go 文档。
 package pose
+
 import (
-	"os"
 	"fmt"
+	ort "github.com/yalue/onnxruntime_go"
 	"image"
 	_ "image/jpeg" // jpeg 解码注册
 	_ "image/png"
 	"math"
-	ort "github.com/yalue/onnxruntime_go"
+	"os"
 )
+
 // InSize：模型输入边长（yolov8n-pose 640）。
 const InSize = 640
+
 // Detector：ONNX 会话封装。
 type Detector struct {
 	session  *ort.DynamicSession[float32, float32]
 	outShape ort.Shape
 }
+
 // NewDetector 初始化运行时并加载模型。dllPath 指向 onnxruntime.dll，
 // modelPath 指向 yolov8n-pose.onnx。Initialize 幂等。
 func NewDetector(dllPath, modelPath string) (*Detector, error) {
@@ -35,8 +40,10 @@ func NewDetector(dllPath, modelPath string) (*Detector, error) {
 	// output0: [1, 56, 8400]（4 box + 1 conf + 17×3 kpt）
 	return &Detector{session: s, outShape: ort.NewShape(1, 56, 8400)}, nil
 }
+
 // Close 释放会话。
 func (d *Detector) Close() error { return d.session.Destroy() }
+
 // DetectFile 对图片文件跑姿态推理。
 func (d *Detector) DetectFile(path string) (*FramePose, error) {
 	f, err := openImage(path)
@@ -54,6 +61,7 @@ func openImage(path string) (image.Image, error) {
 	img, _, err := image.Decode(f)
 	return img, err
 }
+
 // DetectImage 对单帧跑姿态推理（取置信度最高的人）。
 func (d *Detector) DetectImage(img image.Image) (*FramePose, error) {
 	b := img.Bounds()
@@ -93,6 +101,7 @@ func (d *Detector) DetectImage(img image.Image) (*FramePose, error) {
 	}
 	return decodeYOLOPose(out.GetData(), []int64(d.outShape), lb)
 }
+
 // decodeYOLOPose：output [1,56,8400] → 最高置信人 → 17 kpt（原图坐标）。
 func decodeYOLOPose(out []float32, shape []int64, lb lbInfo) (*FramePose, error) {
 	if len(shape) != 3 {
@@ -174,11 +183,13 @@ func iou(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2 float64) float64 {
 	ua := (ax2-ax1)*(ay2-ay1) + (bx2-bx1)*(by2-by1) - inter
 	return inter / ua
 }
+
 // letterbox 计算缩放与边距。
 type lbInfo struct {
 	scale      float64
 	padX, padY float64
 }
+
 func letterbox(w, h int, size int) lbInfo {
 	s := math.Min(float64(size)/float64(w), float64(size)/float64(h))
 	return lbInfo{scale: s,

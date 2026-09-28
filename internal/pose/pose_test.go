@@ -1,5 +1,7 @@
 //go:build cgo
+
 package pose
+
 import (
 	"encoding/json"
 	"fmt"
@@ -9,11 +11,13 @@ import (
 	"path/filepath"
 	"testing"
 )
+
 const (
 	testDLL   = `D:/upload/_vendor/onnxruntime/onnxruntime-win-x64-1.30.0/lib/onnxruntime.dll`
 	testModel = `D:/upload/_vendor/yolov8n-pose.onnx`
 	testFrame = `D:/upload/_diag/train/_pose_pilot/frames`
 )
+
 func newTestDetector(t *testing.T) *Detector {
 	t.Helper()
 	for _, p := range []string{testDLL, testModel} {
@@ -41,6 +45,7 @@ func loadImage(t *testing.T, p string) image.Image {
 	}
 	return img
 }
+
 // 冒烟 + 语义方向验证（多帧投票，避免单帧硬帧干扰）：
 // 舞蹈片（卷卷，全身）多数帧应检出且 vis_ratio 高、face 小；
 // 近景聊天片（VVya，脸占满）多数帧 face_frac 更大 / vis 更低。
@@ -96,6 +101,7 @@ func TestDetectSmokeAndSemantics(t *testing.T) {
 		t.Fatalf("近景片 face 应大于舞蹈片: %.3f vs %.3f", meanOf(face2), meanOf(face))
 	}
 }
+
 // 批量对齐：对一批帧输出 Go 特征 JSON，供与 MediaPipe 版对比（M3）。
 func TestBatchAlignDump(t *testing.T) {
 	d := newTestDetector(t)

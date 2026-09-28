@@ -69,8 +69,6 @@ type PoseGateParams struct {
 	VisMin float64
 	// FaceMax 双眼间距/帧宽上限（脸大=近景聊天）。
 	FaceMax float64
-	// ExtMin/ExtMax 人体纵向跨度占帧高的上下限（蹲坐矮、超长条异常）。
-	ExtMin, ExtMax float64
 	// KeepRatio 段内通过秒占比达到该值才保留段。
 	KeepRatio float64
 	// FPS 段内抽帧率（默认 5：奈奎斯特 2.5Hz，覆盖舞曲节拍 1.7~2.3Hz，
@@ -78,6 +76,10 @@ type PoseGateParams struct {
 	FPS int
 	// DllPath/ModelPath onnxruntime.dll 与 yolov8n-pose.onnx 路径（空=exe 同目录默认名）。
 	DllPath, ModelPath string
+	// 学习型门头段级投票（灰度）：enable 时段内头判舞窗占比 ≥ Frac 才保留段。
+	HeadFilterEnable bool
+	HeadModel        string
+	HeadFrac         float64
 }
 
 // DefaultOptions 返回经验默认值（基于真实素材校准，勿随意改动阈值方向）。

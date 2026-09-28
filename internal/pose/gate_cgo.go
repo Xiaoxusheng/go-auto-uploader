@@ -16,17 +16,21 @@ import (
 
 // GateOptions 段级过滤参数（与 highlight.PoseGateParams 字段对应）。
 type GateOptions struct {
-	DetMin    float64
+	DetMin float64
 	// FPS 段内抽帧率。默认 5：奈奎斯特 2.5Hz，覆盖舞曲节拍 1.7~2.3Hz，
 	// 为将来节拍耦合特征免重抽（1fps 的奈奎斯特只有 0.5Hz，看不到节拍）。
-	// vis/face/ext 聚合语义与抽帧率无关，但门槛定标基于 1fps 抽帧，
+	// vis/face 聚合语义与抽帧率无关，但门槛定标基于 1fps 抽帧，
 	// 5fps 下分布可能略移——灰度前需用 pose-scan 重定标一次。
 	FPS       int
 	VisMin    float64
 	FaceMax   float64
-	ExtMin    float64
-	ExtMax    float64
 	KeepRatio float64
+
+	// 学习型门头段级投票（开封 #7 灰度）：enable 时段内头判舞窗占比 ≥ HeadFrac
+	// 才保留段。只会删段不会加段；头加载失败自动放行（不误杀）。
+	HeadEnable    bool
+	HeadModelPath string
+	HeadFrac      float64
 }
 
 // GatePassWith 参数化单秒判定（§22 定标：vis+face 两条件最优，ext 带无判别力已移除）。
@@ -42,7 +46,32 @@ var (
 	lazyDetect *Detector
 	lazyDLL    string
 	lazyModel  string
+
+	headMu      sync.Mutex
+	headLoaded  *HeadModel
+	headLoadedP string
 )
+
+// DefaultHeadModelPath 灰度头模型内置路径（配置 head_model 空时使用）。
+const DefaultHeadModelPath = "D:/upload/_diag/train/gate_head/gate_head_v2_trees.json"
+
+// lazyHead 懒加载学习型门头（按路径缓存；失败返回错误由调用方放行）。
+func lazyHead(path string) (*HeadModel, error) {
+	if path == "" {
+		path = DefaultHeadModelPath
+	}
+	headMu.Lock()
+	defer headMu.Unlock()
+	if headLoaded != nil && headLoadedP == path {
+		return headLoaded, nil
+	}
+	m, err := LoadHeadModel(path)
+	if err != nil {
+		return nil, err
+	}
+	headLoaded, headLoadedP = m, path
+	return m, nil
+}
 
 func lazyDetector(dllPath, modelPath string) (*Detector, error) {
 	lazyMu.Lock()
@@ -58,7 +87,7 @@ func lazyDetector(dllPath, modelPath string) (*Detector, error) {
 	return d, nil
 }
 
-// FilterSegments 对候选段逐段抽帧（1fps）跑姿态门：
+// FilterSegments 对候选段逐段抽帧（默认 5fps）跑姿态门：
 // 段内「已知秒」通过占比 ≥ KeepRatio 才保留。无姿态数据的段放行（不误杀）。
 // 抽帧/推理异常的段视为不可判定 → 放行（宁可多留，不误杀）。
 func FilterSegments(ffmpegBin, src string, segs [][2]int, o GateOptions,
@@ -125,19 +154,22 @@ func FilterSegments(ffmpegBin, src string, segs [][2]int, o GateOptions,
 				detCnt++
 			}
 		}
+		// 无可用帧（解码/推理全失败）→ 不可判定 → 放行（宁可多留，不误杀）。
+		// ⚠️ 必须放在 detmin 判定之前：「整段判不了」与「整段确实无人」是两回事，
+		// 前者放行、后者才该拒。若顺序颠倒，DetMin>0 时 0 帧会被算成 det率 0 而误拒。
+		if len(ffs) == 0 {
+			kept = append(kept, sg)
+			continue
+		}
 		// detmin 分母必须是帧数 len(ffs) 而不是秒数 dur：抽帧是 o.FPS fps，
 		// detCnt 数的是帧——用 dur 当分母会把检出率放大 FPS 倍（5fps 下
 		// detmin 0.2 实际只挡 4% 检出秒）。帧占比与抽帧率无关，
 		// 等价于 §22 定标时 1fps 的「检出秒占比」语义。
-		if len(ffs) > 0 && float64(detCnt)/float64(len(ffs)) < o.DetMin {
+		if float64(detCnt)/float64(len(ffs)) < o.DetMin {
 			// 现场砍留归因必需：门只记数量时无法区分「内容确实无人」与「运行时异常」
 			log.Printf("[POSE-GATE] %s 段[%d-%ds] det关拒: 帧%d 检出%d det率=%.3f (<%.2f)",
 				filepath.Base(src), st, en, len(ffs), detCnt, float64(detCnt)/float64(len(ffs)), o.DetMin)
 			dropped++ // 姿态层几乎无证据 → 无人/特效/特写聊天场 → 拒
-			continue
-		}
-		if detCnt == 0 {
-			kept = append(kept, sg) // 全不可判定 → 放行
 			continue
 		}
 		// 时序平滑（窗 3，仅在检出帧上取均值）
@@ -182,6 +214,24 @@ func FilterSegments(ffmpegBin, src string, segs [][2]int, o GateOptions,
 			continue
 		}
 		if float64(okCnt)/float64(known) >= o.KeepRatio {
+			// 学习型门头段级投票（灰度）：段内滑 8s 窗（与训练口径一致，尾窗截短），
+			// 头判舞窗占比 ≥ HeadFrac 才保留。头加载失败 → 放行（不误杀）。
+			if o.HeadEnable {
+				hm, herr := lazyHead(o.HeadModelPath)
+				if herr != nil {
+					log.Printf("[POSE-GATE] ⚠️ %s 头加载失败（放行）: %v", filepath.Base(src), herr)
+					kept = append(kept, sg)
+					continue
+				}
+				secs := headSeconds(ffs, o.FPS)
+				ok, frac := headSegmentVote(secs, hm, o.HeadFrac)
+				if !ok {
+					log.Printf("[POSE-GATE] %s 段[%d-%ds] 头投票拒: 段内%d窗 frac_dance=%.3f (<%.2f)",
+						filepath.Base(src), st, en, len(secs), frac, o.HeadFrac)
+					dropped++
+					continue
+				}
+			}
 			kept = append(kept, sg)
 		} else {
 			log.Printf("[POSE-GATE] %s 段[%d-%ds] keep关拒: 检出帧%d 过%d keep率=%.3f (<%.2f) 平滑后均值 vis=%.3f face=%.3f",
