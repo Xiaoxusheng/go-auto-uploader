@@ -60,6 +60,12 @@ func syncBuiltinAnchorToTxt(action string, platform, roomID string, rawLine stri
 				} else {
 					newLines = append(newLines, trimmed)
 				}
+			} else if action == "add" {
+				// 名单里已有该主播（典型为暂停态）时，重复添加按「恢复」处理：
+				// 若不加分支直接落空，这行会被整体丢弃——实测添加一个暂停中的主播
+				// 会把名单行删掉，重启后主播凭空消失；且 API 层 add 已启动监控，
+				// 名单去掉 # 才能与内存运行态一致，否则 3s 后热重载会把任务打回暂停。
+				newLines = append(newLines, strings.TrimSpace(strings.TrimPrefix(trimmed, "#")))
 			}
 		} else {
 			newLines = append(newLines, trimmed)

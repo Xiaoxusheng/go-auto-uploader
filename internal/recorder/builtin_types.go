@@ -136,6 +136,13 @@ var (
 	builtinCookies     *BuiltinCookieConfig
 	builtinCookieMutex sync.RWMutex
 
+	// builtinShuttingDown 进程停机标记。置位后监控协程在下一轮循环顶部直接退出，
+	// 不再重开录制。用于优雅停机（见 StopAllRecordings / WaitActiveTasks）：
+	// 停机时必须让监控协程停下，否则它会在 RecordStream 收尾返回后又用新 ctx 重开。
+	// 刻意不复用 builtinTaskStates="deleted"：API 层的 delete 会连带改用户手编的
+	// builtin_urls.txt，而停机只该影响内存状态。
+	builtinShuttingDown atomic.Bool
+
 	builtinTaskStates  sync.Map // key: platform_roomID, value: "running", "paused", "deleted"
 	builtinCancels     sync.Map // key: platform_roomID, value: context.CancelFunc
 	builtinCustomNames sync.Map // 内存中保存的自定义名称 (由 txt 提供)

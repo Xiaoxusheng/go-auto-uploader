@@ -28,6 +28,16 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 		cappedThisLive := false
 
 		for {
+			// 进程停机：直接退出监控协程，不再重开录制。
+			// 必须放在 state 检查之前且必须真的退出——否则 RecordStream 收尾返回后
+			// 循环会立刻用新 ctx 重开录制，停机会变成"反复重开"。
+			if builtinShuttingDown.Load() {
+				log.Printf("🛑 [停机] 已停止监控 %s 房间: %s", platformName, roomID)
+				builtinActiveTasks.Delete(key)
+				clearBuiltinDebounce(key)
+				return
+			}
+
 			state, _ := builtinTaskStates.Load(key)
 
 			if state == "deleted" {

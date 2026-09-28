@@ -57,8 +57,8 @@ func TestHighlightShouldDeleteSource(t *testing.T) {
 		onlyTarget bool
 		want       bool
 	}{
-		{"认领过的一律删", true, false, false, false, true},
-		{"认领过且已定论的也删", true, true, false, false, true},
+		{"认领过且已定论的必删", true, true, false, false, true},
+		{"认领过但未定论（失败冷却待重试）→ 留着", true, false, false, false, false},
 		{"只传高光 + 有定论 → 删（无需上传凭证）", false, true, false, true, true},
 		{"只传高光但还能重试 → 留着", false, false, false, true, false},
 		{"普通主播 + 有定论 + 已上传 → 删", false, true, true, false, true},
@@ -263,7 +263,9 @@ func TestHighlightClaimBlocksRemovalOfPendingClip(t *testing.T) {
 		t.Fatal("认领后应登记在 highlightClaimed 里")
 	}
 
-	// 分析结束后必须被清理，否则文件会永远留在盘上
+	// 分析结束后必须被清理，否则文件会永远留在盘上。
+	// （真流程里 analyzeClip 完成时必写 AnalyzedAt——这里按「未检出」定论模拟）
+	highlightStateSet(src, highlightEntry{AnalyzedAt: time.Now().Format("2006-01-02 15:04:05")})
 	highlightDisposeSource(src)
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
 		t.Fatalf("释放认领后源文件应被删除，stat err = %v", err)
@@ -374,13 +376,27 @@ func TestHighlightClaimAllowsSettledClips(t *testing.T) {
 	}
 	highlightDisposeSource(retryable)
 
-	// 失败已达上限 → 放弃
-	gaveUp := mk("gaveup.mp4")
+	// 失败已达上限 → 进入冷却期：不再主动分析，但也不放行删除（留给冷却后的自动重试）
+	cooling := mk("cooling.mp4")
 	for i := 0; i < maxHighlightAttempts; i++ {
-		highlightRecordFailure(gaveUp, errors.New("io"))
+		highlightRecordFailure(cooling, errors.New("io"))
 	}
-	if !highlightClaim(gaveUp) {
-		t.Fatal("失败已达上限的切片不应再被认领")
+	if highlightClaim(cooling) {
+		t.Fatal("冷却期内的失败切片不应放行删除（冷却期满要自动重试）")
+	}
+	highlightDisposeSource(cooling)
+	if _, err := os.Stat(cooling); err != nil {
+		t.Fatal("冷却期内的失败切片不是定论，不应被处置删除")
+	}
+
+	// 重试轮数耗尽 → 真定论，放行
+	exhausted := mk("exhausted.mp4")
+	highlightStateSet(exhausted, highlightEntry{
+		Err: "io", Attempts: maxHighlightAttempts, Rounds: maxHighlightRetryRounds,
+		AnalyzedAt: time.Now().Format("2006-01-02 15:04:05"),
+	})
+	if !highlightClaim(exhausted) {
+		t.Fatal("重试轮数耗尽的切片不应再被认领")
 	}
 }
 
@@ -454,7 +470,8 @@ func TestFindStableClipsOldestFirst(t *testing.T) {
 
 // 失败不应是一次性死判：切片可能只是撞上了转换进程在读同一个文件、
 // 或磁盘 IO 抖动，重试就能过。线上就有一个完全正常的切片因一次这样的失败被永久跳过。
-func TestHighlightFailureRetriesThenGivesUp(t *testing.T) {
+// 单轮内失败达上限后进入冷却期（不再立即重试），期满由 highlightMaybeRevive 复活。
+func TestHighlightFailureRetriesThenCooldown(t *testing.T) {
 	resetHighlightState(t.TempDir())
 	src := filepath.Join(t.TempDir(), "2026-09-22", "a_001.mp4")
 	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {

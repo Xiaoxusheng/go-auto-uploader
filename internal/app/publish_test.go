@@ -297,6 +297,186 @@ func TestPublishFailBackoffAndTerminal(t *testing.T) {
 	}
 }
 
+func TestPublishSweepMissing(t *testing.T) {
+	resetPublishForTest(t)
+	root := t.TempDir()
+	alive := buildPublishJob(makeHighlightFixture(t, root, "主播A", "2026-09-25", "10-00-00"), nil)
+	gone := buildPublishJob(makeHighlightFixture(t, root, "主播B", "2026-09-25", "11-00-00"), nil)
+	os.Remove(gone.File) // 源文件已删
+	gone.Status = publishFailed
+	gone.Tries = 3
+	gone.Err = "boom"
+	doneGone := buildPublishJob(makeHighlightFixture(t, root, "主播C", "2026-09-25", "12-00-00"), nil)
+	os.Remove(doneGone.File)
+	doneGone.Status = publishDone // done 是发布历史，文件删了也保留
+	doneGone.DoneAt = time.Now()
+	upGone := buildPublishJob(makeHighlightFixture(t, root, "主播D", "2026-09-25", "13-00-00"), nil)
+	os.Remove(upGone.File)
+	upGone.Status = publishUploading // 在途不扫
+	publishMu.Lock()
+	publishQueue = append(publishQueue, alive, gone, doneGone, upGone)
+	publishMu.Unlock()
+
+	if n := PublishSweepMissing(); n != 1 {
+		t.Fatalf("清扫条数 = %d, 期望只清 1 条 failed", n)
+	}
+	publishMu.Lock()
+	defer publishMu.Unlock()
+	if len(publishQueue) != 3 {
+		t.Fatalf("清扫后剩余 %d 条, 期望 3", len(publishQueue))
+	}
+	ids := map[string]bool{}
+	for _, j := range publishQueue {
+		ids[j.ID] = true
+	}
+	if !ids[alive.ID] || !ids[doneGone.ID] || !ids[upGone.ID] {
+		t.Error("存活任务与 done/uploading 不应被清扫")
+	}
+}
+
+func TestPublishLoadSweepsMissingFiles(t *testing.T) {
+	resetPublishForTest(t)
+	root := t.TempDir()
+	alive := buildPublishJob(makeHighlightFixture(t, root, "主播A", "2026-09-25", "10-00-00"), nil)
+	gone := buildPublishJob(makeHighlightFixture(t, root, "主播B", "2026-09-25", "11-00-00"), nil)
+	os.Remove(gone.File)
+	publishMu.Lock()
+	publishQueue = append(publishQueue, alive, gone)
+	gone.Status = publishUploading // 模拟崩溃时正在传一份后来被删的文件
+	publishSaveLocked()
+	// 重新载入：uploading 应回 pending，再被启动清扫出队
+	publishQueue = nil
+	publishLoaded = false
+	publishLoadLocked()
+	defer publishMu.Unlock()
+	if len(publishQueue) != 1 || publishQueue[0].ID != alive.ID {
+		t.Errorf("载入+清扫后应只剩存活任务, got %d 条", len(publishQueue))
+	}
+}
+
+func TestPublishQueueActionSweep(t *testing.T) {
+	resetPublishForTest(t)
+	root := t.TempDir()
+	gone := buildPublishJob(makeHighlightFixture(t, root, "主播A", "2026-09-25", "10-00-00"), nil)
+	os.Remove(gone.File)
+	publishMu.Lock()
+	publishQueue = append(publishQueue, gone)
+	publishMu.Unlock()
+
+	ok, msg := PublishQueueAction("sweep", "", 0, 0)
+	if !ok {
+		t.Fatal("sweep 应成功")
+	}
+	if !strings.Contains(msg, "1") {
+		t.Errorf("返回说明应包含移除条数, got %q", msg)
+	}
+	publishMu.Lock()
+	n := len(publishQueue)
+	publishMu.Unlock()
+	if n != 0 {
+		t.Errorf("清扫后剩余 %d 条", n)
+	}
+	// 空队列再扫：成功且说明「干净」
+	ok, msg = PublishQueueAction("sweep", "", 0, 0)
+	if !ok || !strings.Contains(msg, "干净") {
+		t.Errorf("空清扫应成功并提示干净, got %v/%q", ok, msg)
+	}
+}
+
+// makeSourceWithOutput 造一份「源片 + 已产出高光」：highlightOutputs 依赖
+// highlightState 的产物记录，先写源片再把产物登记进状态。
+func makeSourceWithOutput(t *testing.T, root, streamer, date, clock string) string {
+	t.Helper()
+	src := filepath.Join(root, streamer, date, streamer+"_"+date+"_"+clock+"_000.ts")
+	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("src"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := makeHighlightFixture(t, root, streamer, date, clock)
+	highlightStateSet(src, highlightEntry{Output: filepath.Base(out)})
+	return out
+}
+
+func setMtime(t *testing.T, path string, at time.Time) {
+	t.Helper()
+	if err := os.Chtimes(path, at, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPublishEnqueueLatestAfterWatermark(t *testing.T) {
+	resetPublishForTest(t)
+	resetHighlightState(t.TempDir())
+	root := t.TempDir()
+	base := time.Date(2026, 9, 25, 10, 0, 0, 0, time.Local)
+
+	// 队列已有 A 的 007（水位 10:00）；盘上还有 A 的两份更新、B 的一份更新、C 的一份更旧
+	a007 := buildPublishJob(makeSourceWithOutput(t, root, "主播A", "2026-09-25", "10-00-00"), nil)
+	a008 := buildPublishJob(makeSourceWithOutput(t, root, "主播A", "2026-09-25", "10-30-00"), nil)
+	b001 := buildPublishJob(makeSourceWithOutput(t, root, "主播B", "2026-09-25", "10-45-00"), nil)
+	a009 := buildPublishJob(makeSourceWithOutput(t, root, "主播A", "2026-09-25", "11-00-00"), nil)
+	old := buildPublishJob(makeSourceWithOutput(t, root, "主播C", "2026-09-25", "09-00-00"), nil)
+	setMtime(t, a007.File, base)
+	setMtime(t, a008.File, base.Add(30*time.Minute))
+	setMtime(t, b001.File, base.Add(45*time.Minute))
+	setMtime(t, a009.File, base.Add(1*time.Hour))
+	setMtime(t, old.File, base.Add(-1*time.Hour))
+	publishMu.Lock()
+	publishQueue = append(publishQueue, a007)
+	publishMu.Unlock()
+
+	added, msg := PublishEnqueueLatest()
+	if added != 3 {
+		t.Fatalf("入队条数 = %d, 期望 3（水位之后的产物）：%s", added, msg)
+	}
+	if !strings.Contains(msg, "3") {
+		t.Errorf("说明应包含条数, got %q", msg)
+	}
+	publishMu.Lock()
+	defer publishMu.Unlock()
+	if len(publishQueue) != 4 {
+		t.Fatalf("刷新后队列 = %d 条, 期望 4", len(publishQueue))
+	}
+	// 旧→新追加到队尾
+	wantOrder := []string{a007.ID, a008.ID, b001.ID, a009.ID}
+	for i, want := range wantOrder {
+		if publishQueue[i].ID != want {
+			t.Errorf("队列[%d] = %v, 期望按时间顺序", i, publishQueue[i].ID)
+		}
+	}
+}
+
+func TestPublishEnqueueLatestEmptyQueueTakesNewestPerStreamer(t *testing.T) {
+	resetPublishForTest(t)
+	resetHighlightState(t.TempDir())
+	root := t.TempDir()
+	base := time.Date(2026, 9, 25, 10, 0, 0, 0, time.Local)
+
+	a001 := buildPublishJob(makeSourceWithOutput(t, root, "主播A", "2026-09-25", "10-00-00"), nil)
+	a002 := buildPublishJob(makeSourceWithOutput(t, root, "主播A", "2026-09-25", "11-00-00"), nil)
+	b001 := buildPublishJob(makeSourceWithOutput(t, root, "主播B", "2026-09-25", "10-30-00"), nil)
+	setMtime(t, a001.File, base)
+	setMtime(t, a002.File, base.Add(1*time.Hour))
+	setMtime(t, b001.File, base.Add(30*time.Minute))
+
+	added, _ := PublishEnqueueLatest()
+	// 队列为空：A 只取最新一条，B 取它唯一的一条，不灌全量积压
+	if added != 2 {
+		t.Fatalf("入队条数 = %d, 期望 2（每个主播最新一条）", added)
+	}
+	publishMu.Lock()
+	defer publishMu.Unlock()
+	ids := map[string]bool{}
+	for _, j := range publishQueue {
+		ids[j.ID] = true
+	}
+	if !ids[a002.ID] || !ids[b001.ID] || ids[a001.ID] {
+		t.Error("应只入队每个主播的最新产物")
+	}
+}
+
 func configForPublishTest(maxRetry int) config.BilibiliSettings {
 	return config.BilibiliSettings{
 		Enable: true, SessData: "s", BiliJct: "j",

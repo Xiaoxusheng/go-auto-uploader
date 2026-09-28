@@ -81,6 +81,10 @@ func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 			if b.HighlightMinAC1 < 0 || b.HighlightMinAC1 >= 1 {
 				b.HighlightMinAC1 = 0
 			}
+			// 分析并行路数：0 = 未提交保留现值；越界值由 ApplyDefaults 钳制（1-4）。
+			if c.HighlightAnalyzeWorkers > 0 {
+				b.HighlightAnalyzeWorkers = c.HighlightAnalyzeWorkers
+			}
 			b.HighlightOnlyUpload = c.HighlightOnlyUpload
 		})
 

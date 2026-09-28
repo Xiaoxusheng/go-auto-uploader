@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"upload/internal/logx"
 	"upload/internal/naming"
 	"upload/internal/ratelimit"
+	"upload/internal/recorder"
 	"upload/internal/remote"
 	"upload/internal/storage"
 	"upload/internal/uploader"
@@ -142,6 +144,11 @@ func RecordSuccess(remotePath, name string, size int64) {
 	})
 }
 
+// shutdownGrace 优雅停机时等待录制收尾的上限。
+// RecordStream 对 ffmpeg 的最长收尾等待是 10s（向 stdin 发 q，超时才强杀），
+// 再加监控协程退出与在途探测的余量，取 15s。必须显著大于 10s。
+const shutdownGrace = 15 * time.Second
+
 // Run 启动完整应用生命周期（阻塞直到 SIGINT/SIGTERM）。
 func Run(opts Options) {
 	cli := opts.CLI
@@ -211,6 +218,13 @@ func Run(opts Options) {
 	AddLog("info", "系统初始化完成，启动中...", "")
 
 	if opts.StartWeb != nil {
+		// 端口预检：StartWeb 跑在独立 goroutine 里，端口被占用时它会 log.Fatalf → os.Exit(1)。
+		// 若那时录制已经拉起（下面的 RunOnce），ffmpeg 子进程会被丢成孤儿——它们会继续录
+		// 同一路流、持续写盘且永远不会被上传。所以必须在拉起任何录制之前先把端口探一遍，
+		// 冲突就直接退出（此时进程还没派生任何 ffmpeg，退出是干净的）。
+		if err := probeListenPort(cli.WebPort); err != nil {
+			log.Fatalf("[WEB] 端口 %d 不可用，拒绝启动（避免第二个实例拉起录制后退出、把 ffmpeg 丢成孤儿）: %v", cli.WebPort, err)
+		}
 		go opts.StartWeb(cli.WebPort)
 	}
 	go queueStatusLoop()
@@ -233,7 +247,18 @@ func Run(opts Options) {
 		if AppCancel != nil {
 			AppCancel()
 		}
-		time.Sleep(2 * time.Second)
+		// ⚠️ AppCancel 管不到内置录制：监控协程的 ctx 是 context.Background() 自建的，
+		// AppCtx 只传给了上传池。必须显式停录制，否则 os.Exit 会把 ffmpeg 子进程
+		// 丢成孤儿——它们会继续录制同一路流、持续写盘且永远不会被上传。
+		// （历史 bug：这里原来只 Sleep(2s)，而录制收尾最长需要 10s。）
+		if n := recorder.StopAllRecordings(); n > 0 {
+			log.Printf("[SYSTEM] 已通知 %d 路录制收尾，等待中（最多 %s）…", n, shutdownGrace)
+		}
+		if recorder.WaitActiveTasks(shutdownGrace) {
+			log.Printf("[SYSTEM] ✅ 录制已全部收尾，安全退出")
+		} else {
+			log.Printf("[SYSTEM] ⚠️ 仍有 %d 路录制未收尾，强制退出", recorder.ActiveTaskCount())
+		}
 		os.Exit(0)
 	}()
 
@@ -274,6 +299,17 @@ func Run(opts Options) {
 			}
 		}
 	}
+}
+
+// probeListenPort 试绑端口后立即释放，用于在拉起任何录制之前发现端口冲突。
+// 与随后真正的 ListenAndServe 之间存在极小的 TOCTOU 窗口，但足以挡住
+// "第二个实例抢同一端口"这类场景——那是孤儿 ffmpeg 的主要来源。
+func probeListenPort(port int) error {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return err
+	}
+	return ln.Close()
 }
 
 func adjustInterval(base, activeCount, current int) int {

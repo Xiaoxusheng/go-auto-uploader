@@ -2,15 +2,18 @@ package app
 
 // B 站自动投稿：落盘队列 + 限速 worker。
 //
-// 数据流：analyzeClip 裁切成功 → publishEnqueueHighlight 入队（ID=产物绝对路径，天然去重）
-// → publishLoop 每 30s 醒来一次，按「最小间隔 + 每日上限」取出一条 →
-// 封面截帧 → bilibili.Client 上传视频 → add/v3 提交 → 记 aid/bvid。
+// 数据流（入口暂停，2026-09-27：analyzeClip 不再调用 publishEnqueueHighlight，
+// 高光产物直接进上传队列；恢复接入即恢复调用）：publishEnqueueHighlight 入队
+// （ID=产物绝对路径，天然去重）→ publishLoop 每 30s 醒来一次，按「最小间隔 + 每日上限」
+// 取出一条 → 封面截帧 → bilibili.Client 上传视频 → add/v3 提交 → 记 aid/bvid。
 //
 // 可靠性口径：
 //   - 队列整体落盘（dataDir/bili_publish.json），原子写（tmp+rename），崩溃后恢复；
 //   - 进程崩溃时处于 uploading 的任务视为未完成，重启后回 pending 重投（B 站侧
 //     只多一版未提交的分片，不产生脏稿件）；
 //   - 失败退避重试（间隔随尝试次数翻倍），耗尽次数转 failed 终态；
+//   - 失效清扫：源文件已被删除（手动清理高光等）的 pending/failed 任务自动出队，
+//     启动时、每轮 tick、控制台手动「清理失效」三个入口共用同一把扫帚；
 //   - 限速是全自动投稿的安全阀：B 站网页投稿接口有频控（code 601）。
 
 import (
@@ -22,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -206,8 +210,15 @@ func publishLoop() {
 	}
 }
 
-// publishTick 处理一轮：取一条 → 上传投稿 → 落盘。
+// publishTick 处理一轮：清扫失效 → 取一条 → 上传投稿 → 落盘。
 func publishTick() {
+	publishMu.Lock()
+	if n := publishSweepMissingLocked(); n > 0 {
+		log.Printf("[BILI] 🧹 清扫失效投稿任务 %d 条（源文件已删除）", n)
+		BroadcastWS("biliQueue", publishStatsLocked())
+	}
+	publishMu.Unlock()
+
 	cfg := AppCfg().Bilibili
 	if !cfg.Enable {
 		return
@@ -520,6 +531,33 @@ func publishLoadLocked() {
 		}
 	}
 	publishQueue = loaded
+	// 启动清扫：中断期间被删掉源文件的任务，重投也是白投，直接出队。
+	if n := publishSweepMissingLocked(); n > 0 {
+		log.Printf("[BILI] 🧹 启动清扫：移除 %d 条源文件已删除的投稿任务", n)
+	}
+}
+
+// publishSweepMissingLocked 清扫失效任务：源文件已被删除（手动清理高光等）的
+// pending/failed 条目永远不可能再成功，直接出队（调用方持锁）。
+// uploading 在途不扫；done 是发布历史且参与每日限额计数，一律保留。
+// 只认 os.IsNotExist：网络盘暂不可达等临时错误不误删。
+func publishSweepMissingLocked() int {
+	removed := 0
+	kept := publishQueue[:0]
+	for _, j := range publishQueue {
+		if j.Status == publishPending || j.Status == publishFailed {
+			if _, err := os.Stat(j.File); err != nil && os.IsNotExist(err) {
+				removed++
+				continue
+			}
+		}
+		kept = append(kept, j)
+	}
+	if removed > 0 {
+		publishQueue = kept
+		publishSaveLocked()
+	}
+	return removed
 }
 
 // publishTrimLocked 超上限时丢最老的已完结条目（调用方持锁）。
@@ -769,9 +807,11 @@ func PublishStats() (map[string]int, int) {
 //   - delete：移除任务（进行中不允许）；
 //   - move：调整顺序，dir = -1 上移 / +1 下移；
 //   - cover：设置封面截帧秒数（sec，0 = 恢复默认 30%）；
-//   - add：把候选文件（id = 产物绝对路径）加入队列。
+//   - add：把候选文件（id = 产物绝对路径）加入队列；
+//   - sweep：清扫源文件已删除的失效任务（id 不用传）；
+//   - refresh：刷新入队，把盘上漏掉的新高光补进队列（id 不用传）。
 //
-// 返回（是否成功，失败原因）。
+// 返回（是否成功，失败原因/操作说明）。
 func PublishQueueAction(action, id string, dir, sec int) (bool, string) {
 	switch action {
 	case "retry":
@@ -784,8 +824,118 @@ func PublishQueueAction(action, id string, dir, sec int) (bool, string) {
 		return publishSetCover(id, sec), ""
 	case "add":
 		return publishAddCandidate(id)
+	case "sweep":
+		if n := PublishSweepMissing(); n > 0 {
+			return true, fmt.Sprintf("已移除 %d 条失效任务（源文件已删除）", n)
+		}
+		return true, "队列干净：没有源文件丢失的任务"
+	case "refresh":
+		_, msg := PublishEnqueueLatest()
+		return true, msg
 	}
 	return false, "未知操作"
+}
+
+// PublishEnqueueLatest 「刷新入队」：扫描盘上未入队的高光，把漏掉的新文件补进队列。
+// 范围口径：只入队文件修改时间**晚于队列里最新任务**的产物（追平漏入队的新文件）；
+// 队列为空（或队列引用的文件都已不在盘上）时退化为每个主播只取最新一条，
+// 避免一键把积压的几十个旧文件灌进队列。返回（入队条数，结果说明）。
+func PublishEnqueueLatest() (int, string) {
+	publishMu.Lock()
+	publishLoadLocked()
+
+	// 水位：队列任务引用文件的最新修改时间
+	var watermark time.Time
+	for _, j := range publishQueue {
+		if info, err := os.Stat(j.File); err == nil && info.ModTime().After(watermark) {
+			watermark = info.ModTime()
+		}
+	}
+
+	inQueue := make(map[string]bool, len(publishQueue))
+	for _, j := range publishQueue {
+		inQueue[j.ID] = true
+	}
+	type cand struct {
+		job *publishJob
+		mod time.Time
+	}
+	cands := make([]cand, 0, 8)
+	for _, path := range highlightOutputs() {
+		if inQueue[path] {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		job := buildPublishJob(path, nil)
+		if job == nil {
+			continue
+		}
+		cands = append(cands, cand{job: job, mod: info.ModTime()})
+	}
+
+	picked := make([]cand, 0, len(cands))
+	if watermark.IsZero() {
+		// 队列为空：每个主播只取最新一条
+		latest := make(map[string]cand, 4)
+		for _, c := range cands {
+			if cur, ok := latest[c.job.Streamer]; !ok || c.mod.After(cur.mod) {
+				latest[c.job.Streamer] = c
+			}
+		}
+		for _, c := range latest {
+			picked = append(picked, c)
+		}
+	} else {
+		for _, c := range cands {
+			if c.mod.After(watermark) {
+				picked = append(picked, c)
+			}
+		}
+	}
+	// 旧→新追加到队尾，保持「从上到下依次发布」的顺序语义
+	sort.Slice(picked, func(i, k int) bool { return picked[i].mod.Before(picked[k].mod) })
+
+	names := make([]string, 0, len(picked))
+	for _, c := range picked {
+		publishQueue = append(publishQueue, c.job)
+		names = append(names, filepath.Base(c.job.File))
+	}
+	if len(names) > 0 {
+		publishTrimLocked()
+		publishSaveLocked()
+	}
+	stats := publishStatsLocked()
+	publishMu.Unlock()
+
+	if len(names) == 0 {
+		return 0, "没有要补的新文件"
+	}
+	log.Printf("[BILI] 🔄 刷新入队：补入 %d 条新高光", len(names))
+	BroadcastWS("biliQueue", stats)
+	publishTrigger()
+	summary := strings.Join(names, "、")
+	if len(names) > 3 {
+		summary = strings.Join(names[:2], "、") + fmt.Sprintf(" 等 %d 条", len(names))
+	}
+	return len(names), fmt.Sprintf("已补入 %d 条新高光：%s", len(names), summary)
+}
+
+// PublishSweepMissing 清扫失效任务并返回移除条数（控制台「清理失效」按钮，
+// 以及每轮 tick 的自动清扫共用入口）。只动 pending/failed，见 publishSweepMissingLocked。
+func PublishSweepMissing() int {
+	publishMu.Lock()
+	publishLoadLocked()
+	n := publishSweepMissingLocked()
+	stats := publishStatsLocked()
+	publishMu.Unlock()
+	if n > 0 {
+		BroadcastWS("biliQueue", stats)
+		publishTrigger() // 清完马上跑一轮，别空等 30s
+	}
+	return n
 }
 
 // PublishCandidates 列出可手动入队的候选：已产出、仍在盘上、尚未在队列里的高光。

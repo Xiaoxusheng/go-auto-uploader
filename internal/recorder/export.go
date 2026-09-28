@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"time"
 
 	"upload/internal/config"
 )
@@ -73,6 +74,56 @@ func CustomNames() *sync.Map { return &builtinCustomNames }
 
 // ActiveTasks 活跃监控表。
 func ActiveTasks() *sync.Map { return &builtinActiveTasks }
+
+// ActiveTaskCount 当前活跃的录制监控协程数（停机日志用）。
+func ActiveTaskCount() int {
+	n := 0
+	builtinActiveTasks.Range(func(_, _ interface{}) bool {
+		n++
+		return true
+	})
+	return n
+}
+
+// StopAllRecordings 优雅停机：置停机标记 + 取消所有进行中的录制会话，返回被通知的会话数。
+//
+// 两步都不能少：
+//   - 置标记 → 监控协程在下一轮循环顶部退出。不置的话，RecordStream 收尾返回后
+//     循环会立刻用新的 ctx 重开录制，停机就变成"反复重开"。
+//   - 取消会话 → 正在 RecordStream 里阻塞的协程进入收尾（向 ffmpeg 发 q，
+//     最多等 10s 封装；超时则 Kill）。
+//
+// 调用方随后必须调用 WaitActiveTasks 等待真正结束，再 os.Exit。
+func StopAllRecordings() int {
+	builtinShuttingDown.Store(true)
+	n := 0
+	builtinCancels.Range(func(_, v interface{}) bool {
+		if cancel, ok := v.(context.CancelFunc); ok {
+			cancel()
+			n++
+		}
+		return true
+	})
+	return n
+}
+
+// WaitActiveTasks 等待所有录制监控协程退出，最多等 timeout，返回是否全部结束。
+//
+// 每个监控协程要等 RecordStream 收尾完（内含最多 10s 的 ffmpeg 封装等待）才退出，
+// 所以 timeout 必须显著大于 10s。用于 os.Exit 之前——直接退出会把 ffmpeg 子进程
+// 丢成孤儿继续录制（2026-09-26 实测：每次重启必产生一批）。
+func WaitActiveTasks(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if ActiveTaskCount() == 0 {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
 
 // FFmpegBin ffmpeg 路径。
 func FFmpegBin() string { return builtinFfmpegPath }
