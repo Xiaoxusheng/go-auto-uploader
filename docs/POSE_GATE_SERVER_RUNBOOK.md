@@ -80,10 +80,10 @@ D:/upload/_diag/train/
 ├── _pose_pilot/
 │   ├── clips_config.json           入池片池（418+ 片，自动预标 spans）
 │   ├── pose_features_go.json       每秒姿态特征（与片池同步）
-│   ├── gold_review.json            用户历史金标（268 片/14286 窗，只读保存）
-│   ├── freeze_v2.json              冻结集 v2（3 片，**源片永久保留禁删**）
+│   ├── gold_review.json            用户历史金标（270 片/14376 窗，含 gesture 类别，只读保存）
+│   ├── freeze_v2.json              冻结集 v2（4 片三角色，**源片永久保留禁删**）
 │   └── frames/                     1fps 帧（复核页 8131 的图片源）
-├── autogold_sweep.js               阈值网格重定标（输出 autogold_sweep.log / autogold_result.json）
+├── autogold_sweep.js               旧版 node 重定标（已退役保留；现役 hleval autogold-sweep）
 ├── nightly_train_20260925.log      夜训守护日志
 └── _traj/                          5fps 关键点轨迹工具（§25 节拍证伪用）
 ```
@@ -101,7 +101,7 @@ D:/upload/_diag/train/
     -pose-out D:/upload/_diag/train/pose_features_go.json \
     -dll D:/upload/onnxruntime.dll -model D:/upload/yolov8n-pose.onnx \
     -ffmpeg "D:/upload/ffmpeg-master-latest-win64-gpl-shared/ffmpeg-master-latest-win64-gpl-shared/bin/ffmpeg.exe"
-  node autogold_sweep.js   # 重定标
+  hleval autogold-sweep    # 重定标（Go 化，2026-09-26 起现役）
   ```
 
   生产门参数不自动改，阈值调整由用户参考页面重定标结果另行拍板
@@ -110,7 +110,7 @@ D:/upload/_diag/train/
 
 ### ⚠️ 评估口径（务必先读，否则数字会看错 7 倍）
 
-`hleval metrics` 是**端到端**口径，`autogold_sweep.js` / `seg_gate_sim` 是**段内条件**口径，
+`hleval metrics` 是**端到端**口径，`hleval autogold-sweep`（原 autogold_sweep.js）/ `seg_gate_sim` 是**段内条件**口径，
 **两者不可直接比较**：
 
 | 口径 | R 的分母 | 同一组门槛的 R |
