@@ -34,7 +34,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "=== [2/2] 金标重定标..." -ForegroundColor Cyan
-node "D:\upload\_diag\train\autogold_sweep.js" 2>&1 | Tee-Object -FilePath $log -Append
+& "D:\upload\_diag\train\hleval.exe" autogold-sweep 2>&1 | Tee-Object -FilePath $log -Append
 if ($LASTEXITCODE -ne 0) {
     Write-Host "❌ 重定标失败，请把上面的报错截图给管理员" -ForegroundColor Red
     Read-Host "按回车退出"

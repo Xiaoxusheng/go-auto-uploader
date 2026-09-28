@@ -101,3 +101,18 @@ release/
 config.json.bak*
 _rel_test.sh
 /分布式文件上传系统-控制台重设计.pdf
+
+# =========================
+# 运行时模型/工具链/产物备份与本地数据（不入库）
+# =========================
+onnxruntime.dll
+yolov8n-pose.onnx
+uploader.exe.bak*
+uploader.exe.nogate*
+wm_shot_*.txt
+_vendor/
+data/
+generated-images/
+_ui_shots/
+标注包_*/
+/*.pdf
