@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -182,6 +183,13 @@ func TestPoseMaybeAutoApplyStreak(t *testing.T) {
 	root := t.TempDir()
 	poseTrainRoot = root
 
+	// 本测试验证「开关打开时」的防抖与应用逻辑，故显式开启。
+	// （2026-09-27 起 AutoApply 默认关，默认关闭的行为由 TestPoseAutoApplyDefaultOff 覆盖）
+	if err := os.WriteFile(filepath.Join(root, "autogold_apply_state.json"),
+		[]byte(`{"auto_apply":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	mk := func(gen string, bestF1, liveF1 float64) {
 		res := map[string]any{
 			"generated_at": gen,
@@ -228,5 +236,54 @@ func TestPoseMaybeAutoApplyStreak(t *testing.T) {
 	st, _ = poseMaybeAutoApply()
 	if st.Streak != 0 {
 		t.Fatalf("应用后不再更优，streak 应归零, got %d", st.Streak)
+	}
+}
+
+// TestPoseAutoApplyDefaultOff 默认（无状态文件）时 AutoApply 为关：
+// 即使连续多轮 sweep 更优，也不得写入生产配置。
+//
+// 回归背景（2026-09-27）：sweep 的 best 与 live 都在同一份 gold_review 上计算，
+// 没有留出验证集，自动应用等于「在评估集上做模型选择并直接部署」。
+// 实测 autogold_result.json 里 best 与 live 逐字段相等（0.70/0.12/0.30，F1 0.784）
+// 正是该机制反复写入的结果；而冻结集 v2 段级 F1 只有 0.211（开封 #6，未过线）。
+func TestPoseAutoApplyDefaultOff(t *testing.T) {
+	old := poseTrainRoot
+	t.Cleanup(func() { poseTrainRoot = old })
+	root := t.TempDir()
+	poseTrainRoot = root
+
+	if st := poseLoadApplyState(); st.AutoApply {
+		t.Fatal("AutoApply 默认值应为关")
+	}
+
+	res := map[string]any{
+		"best": map[string]any{"vis": 0.72, "face": 0.12, "det": 0.3, "F1": 0.81},
+		"live": map[string]any{"vis": 0.6, "face": 0.12, "det": 0.3, "F1": 0.79},
+	}
+
+	origCfg := app.AppCfg()
+	t.Cleanup(func() {
+		app.CfgStore.Replace(origCfg)
+		app.SaveConfigToFile()
+		_ = os.Remove("config.json")
+	})
+	gateOn := origCfg
+	gateOn.Builtin = config.BuiltinSettings{HighlightPoseGate: &config.HighlightPoseGateConfig{Enable: true, VisMin: 0.6, FaceMax: 0.12, DetMin: 0.3}}
+	app.CfgStore.Replace(gateOn)
+	app.SaveConfigToFile()
+
+	// 连续 5 轮（远超防抖阈值 3）都更优，仍不得应用
+	for i := 1; i <= 5; i++ {
+		res["generated_at"] = "g" + strconv.Itoa(i)
+		b, _ := json.Marshal(res)
+		if err := os.WriteFile(filepath.Join(root, "autogold_result.json"), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, applied := poseMaybeAutoApply(); applied != "" {
+			t.Fatalf("第 %d 轮默认关闭时不应应用，却应用了: %s", i, applied)
+		}
+	}
+	if got := app.AppCfg().Builtin.HighlightPoseGate.VisMin; got != 0.6 {
+		t.Errorf("默认关闭时生产 vis_min 应保持 0.6, got %v", got)
 	}
 }

@@ -29,6 +29,9 @@ type Routes struct {
 	BilibiliCandidates http.HandlerFunc
 	BilibiliPoster     http.HandlerFunc
 
+	HighlightLive   http.HandlerFunc
+	HighlightThumb  http.HandlerFunc
+
 	PoseTrainingSummary   http.HandlerFunc
 	PoseTrainingClips     http.HandlerFunc
 	PoseTrainingThumb     http.HandlerFunc
@@ -82,6 +85,8 @@ func Register(mux *http.ServeMux, r Routes) {
 	mux.HandleFunc("/api/v1/bilibili/queue", r.BilibiliQueue)
 	mux.HandleFunc("/api/v1/bilibili/candidates", r.BilibiliCandidates)
 	mux.HandleFunc("/api/v1/bilibili/poster", r.BilibiliPoster)
+	mux.HandleFunc("/api/v1/highlight/live", r.HighlightLive)
+	mux.HandleFunc("/api/v1/highlight/thumb", r.HighlightThumb)
 	mux.HandleFunc("/api/v1/pose_training/summary", r.PoseTrainingSummary)
 	mux.HandleFunc("/api/v1/pose_training/clips", r.PoseTrainingClips)
 	mux.HandleFunc("/api/v1/pose_training/thumb", r.PoseTrainingThumb)

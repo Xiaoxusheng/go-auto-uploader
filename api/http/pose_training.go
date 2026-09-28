@@ -519,11 +519,17 @@ func poseRecentSkipped(n int) []map[string]any {
 // —— 重定标最优参数自动应用（带防抖）——
 // 比对基准来自 autogold_result.json 的 live 行（生产现值 F1，由 sweep 脚本计算）：
 // 最优 F1 连续 3 轮高于现值 ≥0.01 才自动写入，单轮波动不触发。
+//
+// ⚠️ 默认关闭（2026-09-27）。原因：sweep 的 best 与 live 都在 gold_review **同一份
+// 数据**上计算，没有留出验证集——自动应用等于「在评估集上做模型选择并直接部署」。
+// 实测证据：autogold_result.json 里 best 与 live 逐字段相等（0.70/0.12/0.30，F1 0.784），
+// 正是被本机制反复写入的结果；而冻结集 v2 段级 F1 只有 0.211（开封 #6，未过线）。
+// 重新启用前必须满足：sweep 输出带留出集（按片分组）指标，且本处判据改用该指标。
 
 var poseApplyMu sync.Mutex
 
 type poseApplyState struct {
-	AutoApply   bool   `json:"auto_apply"`   // 开关，默认开
+	AutoApply   bool   `json:"auto_apply"`   // 开关，默认关（见上方说明）
 	Streak      int    `json:"streak"`       // 连续更优轮数
 	LastSeen    string `json:"last_seen"`    // 上次处理的 sweep generated_at
 	LastApplied string `json:"last_applied"` // 最近一次应用的参数描述
@@ -532,7 +538,7 @@ type poseApplyState struct {
 func poseApplyStatePath() string { return filepath.Join(poseTrainRoot, "autogold_apply_state.json") }
 
 func poseLoadApplyState() poseApplyState {
-	st := poseApplyState{AutoApply: true}
+	st := poseApplyState{AutoApply: false}
 	if b, err := os.ReadFile(poseApplyStatePath()); err == nil {
 		_ = json.Unmarshal(b, &st)
 	}

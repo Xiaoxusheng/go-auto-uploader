@@ -384,7 +384,6 @@
             background: var(--panel-2); border: 1px solid var(--line-strong);
             border-radius: 11px; padding: 5px; box-shadow: var(--shadow);
         }
-        .xsel-pop.up { top: auto; bottom: calc(100% + 6px); }
         .xsel-opt {
             display: flex; align-items: center; justify-content: space-between; gap: 10px;
             padding: 7px 10px; border-radius: 8px; font-size: 12.5px;
@@ -507,19 +506,54 @@
         .pose-page .card { margin-bottom: 14px; }
         .pose-page .stat-card { padding: 15px 18px 14px; gap: 8px; transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease; }
         .pose-page .stat-card:hover { transform: translateY(-2px); border-color: var(--line-strong); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.16); }
-        .pose-page .stat-card .v { font-size: 27px; letter-spacing: -0.02em; }
+        .pose-page .stat-card .v { font-size: 33px; letter-spacing: -0.02em; }
         .pose-page .stat-card .aside { font-size: 11.5px; font-weight: 500; margin-left: 2px; }
         @media (max-width: 1200px) { .pose-page .statrow { grid-template-columns: repeat(3, 1fr); } }
         @media (max-width: 900px) { .pose-page .statrow { grid-template-columns: repeat(2, 1fr); } }
-        /* 门参数只读牌：与系统 kv 信息风格一致，避免 readonly 输入框的「禁用感」 */
-        .pose-kv { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+        /* 主区两栏：实时过程（宽）｜门参数 + 训练守护（窄），设计稿主视图结构 */
+        .pose-main-grid { display: grid; grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr); gap: 14px; align-items: stretch; margin-bottom: 22px; }
+        .pose-main-grid > .card { margin-bottom: 0; }
+        .pose-side-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+        .pose-side-col > .card { margin-bottom: 0; }
+        .pose-side-col > .card.pose-guard { flex: 1; } /* 守护卡撑满剩余高度，与左卡底部对齐 */
+        /* 片池分页行：右对齐 + 与表格单元格 16px 边距对齐（原 14px 左对齐与设计稿不一致） */
+        .pose-pg-row { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 6px 16px 14px; }
+        .pose-pg-total { font-size: 11.5px; color: var(--t4); font-variant-numeric: tabular-nums; }
+        @media (max-width: 1200px) { .pose-main-grid { grid-template-columns: 1fr; } }
+        /* 实时过程卡顶行：状态数字在左、队列 chips 在右 */
+        .pose-live-topline { display: flex; align-items: center; justify-content: space-between; gap: 8px 14px; flex-wrap: wrap; margin: 1px 0 10px; }
+        .pose-live-topline .lstat { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--t3); min-width: 0; }
+        .pose-live-topline .lstat b { color: var(--t1); font-weight: 600; font-variant-numeric: tabular-nums; }
+        .pose-live-topline .lstat .sep { display: inline-block; width: 1px; height: 10px; background: var(--line); }
+        .pose-live-topline .qchips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+        /* 门参数只读牌：与系统 kv 信息风格一致，避免 readonly 输入框的「禁用感」；2×2 + fps 整行 */
+        .pose-kv { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
         .pose-kv .kv { background: var(--panel-2, var(--panel)); border: 1px solid var(--line); border-radius: var(--r-md, 10px); padding: 10px 12px; }
         .pose-kv .kv .k { font-size: 11.5px; color: var(--t3); }
-        .pose-kv .kv .v { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 3px; }
+        .pose-kv .kv .k b { font-family: 'Cascadia Mono', ui-monospace, Consolas, monospace; font-weight: 600; color: var(--t2); }
+        .pose-kv .kv .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 3px; }
+        .pose-kv .kv.wide { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .pose-kv .kv.wide .v { margin-top: 0; font-size: 24px; }
+        .pose-kv .kv .v .u { font-size: 11.5px; font-weight: 500; color: var(--t3); margin-left: 5px; }
         @media (max-width: 900px) { .pose-kv { grid-template-columns: repeat(2, 1fr); } }
-        /* 舞段占比条：复用磁盘卡进度条语言 */
-        .pose-dance-bar { height: 5px; border-radius: 4px; background: var(--panel-3); overflow: hidden; margin-top: 5px; width: 132px; }
+        /* 训练守护卡：字段全部来自 /live 真实信号（不伪造下轮倒计时） */
+        .pose-guard .grows .grow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+        .pose-guard .grows .grow:last-child { border-bottom: none; }
+        .pose-guard .gk { color: var(--t3); flex: none; }
+        .pose-guard .gv { color: var(--t1); min-width: 0; text-align: right; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pose-guard .gv.low { color: var(--orange); }
+        .pose-guard .gnote { font-size: 11px; color: var(--t4); line-height: 1.7; margin-top: 2px; padding-top: 9px; border-top: 1px dashed var(--line); }
+        .pose-guard .gbar { height: 5px; border-radius: 4px; background: var(--panel-3); overflow: hidden; margin: 4px 0 2px; }
+        .pose-guard .gbar i { display: block; height: 100%; border-radius: 4px; background: var(--green); transition: width 0.4s ease; }
+        /* 舞段占比条：药丸秒数 + 占比条同行（设计稿片池表列） */
+        .pose-dance-row { display: flex; align-items: center; gap: 8px; }
+        .pose-dance-bar { height: 5px; border-radius: 4px; background: var(--panel-3); overflow: hidden; width: 120px; }
         .pose-dance-bar i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #d97706, #fbbf24); transition: width 0.4s ease; }
+        /* 片池表：片名 meta 行（主播 · 时长 · 秒特征） */
+        .pose-clip-meta { font-size: 11.5px; color: var(--t3); margin-top: 2px; font-variant-numeric: tabular-nums; }
+        /* 重定标表：三阈值合并列等宽字体；最优行 F1 用蓝 */
+        .pose-tri { font-family: 'Cascadia Mono', ui-monospace, Consolas, monospace; font-size: 12.5px; }
+        .tbl tbody tr.best td:last-child b { color: var(--blue); }
         /* TOP10 最优行 */
         .tbl tbody tr.best td { background: var(--blue-dim); }
         .tbl tbody tr.best td:first-child { border-left: 2px solid var(--blue); }
@@ -531,10 +565,11 @@
         /* 实时过程卡：流水线步进条（状态全部由真实信号驱动） */
         .pose-pipeline { display: flex; align-items: flex-start; margin-bottom: 14px; }
         .pstage { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; position: relative; min-width: 0; padding-top: 2px; }
-        .pstage::before { content: ''; position: absolute; top: 12px; right: calc(50% + 16px); left: calc(-50% + 16px); height: 2px; background: var(--line); transition: background 0.25s ease; }
+        .pstage::before { content: ''; position: absolute; top: 15px; right: calc(50% + 20px); left: calc(-50% + 20px); height: 2px; background: var(--line); transition: background 0.25s ease, opacity 0.25s ease; }
         .pstage:first-child::before { display: none; }
+        .pstage.lit::before { opacity: 0; } /* 点亮段由 .pstage-flow 流动虚线接管，避免实线+虚线叠成双线 */
         .pstage.lit::before { background: var(--green); }
-        .pstage-dot { width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; background: var(--panel-3); color: var(--t3); border: 1px solid var(--line); transition: all 0.25s ease; position: relative; z-index: 1; font-variant-numeric: tabular-nums; }
+        .pstage-dot { width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; background: var(--panel-3); color: var(--t3); border: 1px solid var(--line); transition: all 0.25s ease; position: relative; z-index: 1; font-variant-numeric: tabular-nums; }
         .pstage-name { font-size: 12px; color: var(--t3); transition: color 0.2s ease; white-space: nowrap; }
         .pstage-info { font-size: 11px; color: var(--t4); min-height: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
         .pstage.done .pstage-dot { background: var(--green-dim); border-color: transparent; color: var(--green); }
@@ -551,7 +586,7 @@
         .pose-belt { flex: 1; min-width: 0; }
         .pose-rail { position: relative; height: 92px; margin-top: 8px; }
         .pose-rail::before { content: ''; position: absolute; top: 50%; left: 3%; right: 3%; height: 1px; background: var(--line); }
-        .pose-cart { position: absolute; top: 4px; width: 150px; height: 84px; transform: translateX(-50%); transition: left 0.4s ease; border-radius: var(--r-sm); overflow: hidden; border: 1px solid var(--line); background: var(--panel-2); cursor: zoom-in; animation: poseCartIn 0.35s ease backwards; }
+        .pose-cart { position: absolute; top: 6px; width: 140px; height: 79px; transform: translateX(-50%); transition: left 0.4s ease; border-radius: var(--r-sm); overflow: hidden; border: 1px solid var(--line); background: var(--panel-2); cursor: zoom-in; animation: poseCartIn 0.35s ease backwards; }
         .pose-cart.on { border-color: rgba(34, 197, 94, 0.5); box-shadow: 0 6px 18px rgba(34, 197, 94, 0.16); }
         .pose-cart img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .pose-cart .scan { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 0%, rgba(34, 197, 94, 0.16) 50%, transparent 100%); animation: poseScan 1.8s ease-in-out infinite; pointer-events: none; }
@@ -563,37 +598,41 @@
         .pose-media-frames { font-size: 11px; color: rgba(255, 255, 255, 0.85); font-variant-numeric: tabular-nums; white-space: nowrap; }
         .pose-live-side { min-width: 0; flex: none; max-width: 300px; display: flex; flex-direction: column; gap: 3px; font-size: 13px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel-2); transition: border-color 0.25s ease, background 0.25s ease; }
         .pose-live-side.flash { border-color: rgba(34, 197, 94, 0.55); background: var(--green-dim); }
-        /* 已入池缩略图列：新完成的片在此进入 */
-        .pose-done-strip { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
-        .pose-done-strip .dlabel { font-size: 12px; color: var(--green); font-weight: 700; flex: none; }
-        .pose-done-strip .dthumb { position: relative; width: 64px; height: 38px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); cursor: zoom-in; animation: poseFadeUp 0.24s ease backwards; flex: none; background: var(--panel-2); }
+        /* 已入池/跳过缩略条：设计稿为图下小字标题（缩略图 + 下方名字） */
+        .pose-done-strip { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 12px; flex-wrap: wrap; }
+        .pose-done-strip .dlabel { font-size: 12px; color: var(--green); font-weight: 700; flex: none; display: inline-flex; align-items: center; gap: 6px; padding-top: 14px; }
+        .pose-done-strip .ditem { display: flex; flex-direction: column; align-items: center; gap: 4px; animation: poseFadeUp 0.24s ease backwards; flex: none; }
+        .pose-done-strip .dthumb { position: relative; width: 78px; height: 44px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); cursor: zoom-in; background: var(--panel-2); }
         .pose-done-strip .dthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-        .pose-done-strip .dthumb .dname { position: absolute; right: 0; bottom: 0; left: 0; font-size: 10px; color: #fff; background: rgba(0, 0, 0, 0.55); padding: 1px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pose-done-strip .dname { font-size: 10px; color: var(--t3); max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
         .pose-term-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 5px; font-size: 11.5px; color: var(--t3); }
         .pose-apply-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+        /* 自动应用开关：设计稿为绿字描边药丸，不用实心主按钮抢层级 */
+        .pose-apply-row .pill.tog-on { color: var(--green-bright); border-color: color-mix(in srgb, var(--green) 40%, transparent); background: var(--green-dim); }
         .pose-done-strip .dlabel.skip { color: var(--orange); }
-        .pose-done-strip .dthumb.skip { border-style: dashed; }
-        .pose-done-strip .dthumb.skip img { filter: grayscale(0.85) brightness(0.85); }
+        .pose-done-strip .dthumb.skip { border-color: color-mix(in srgb, var(--orange) 60%, transparent); }
+        .pose-done-strip .dthumb.skip img { filter: grayscale(0.75) brightness(0.82); }
         .pose-cart-ghost { border: 1px dashed rgba(245, 158, 11, 0.65); animation: poseDivert 1.8s ease forwards; pointer-events: none; }
         .pose-cart-ghost img { filter: grayscale(0.8) brightness(0.85); }
         @keyframes poseDivert { 0% { left: 12.5%; transform: translateX(-50%); opacity: 0; } 12% { opacity: 1; } 60% { left: 30%; transform: translateX(-50%) translateY(0); opacity: 1; } 100% { left: 38%; transform: translateX(-50%) translateY(72px) rotate(6deg); opacity: 0; } }
         .pose-belt-empty { padding: 30px 0 34px; text-align: center; border: 1px dashed var(--line); border-radius: var(--r-md); margin: 4px 0 12px; }
         .pose-done-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 7px 10px; background: var(--panel-2); border-radius: var(--r-sm); border: 1px solid var(--line); font-size: 12.5px; }
-        .pose-queue { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 14px; }
-        .pose-queue .sep { display: inline-block; width: 1px; height: 10px; background: var(--line); margin: 0 2px; }
-        .pose-queue .qchip { font-size: 11.5px; color: var(--t3); background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; animation: poseFadeUp 0.24s ease backwards; }
+        .qchip { font-size: 11.5px; color: var(--t3); background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; animation: poseFadeUp 0.24s ease backwards; }
         .tick { display: inline-block; animation: poseTick 0.3s ease; }
         @keyframes poseTick { 0% { transform: translateY(-5px); opacity: 0; } 100% { transform: none; opacity: 1; } }
-        /* 传送带：运行中虚线流动，示意带子在走 */
-        .pose-belt-wrap.flow .pose-rail::before { background: repeating-linear-gradient(90deg, rgba(34, 197, 94, 0.5) 0 7px, transparent 7px 14px); animation: beltFlow 0.9s linear infinite; }
-        @keyframes beltFlow { to { background-position-x: 14px; } }
+        /* 传送带轨道保持静止细线（设计稿）；流动示意统一由步进连接线的 .pstage-flow 承担，避免两套绿虚线互相打架 */
         @keyframes poseFadeUp { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
         /* 片池详情弹窗 */
         .pose-frame-view { text-align: center; }
-        .pose-frame-img { max-width: 100%; max-height: 420px; border-radius: 12px; border: 1px solid var(--line); }
+        .pose-frame-img { max-width: 100%; max-height: 470px; border-radius: var(--r-md); border: 1px solid var(--line); }
         .pose-frame-ctl { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
-        .pose-sec-data { font-size: 13px; color: var(--t2); margin-top: 8px; }
-        .pose-sec-title { font-size: 12.5px; font-weight: 700; color: var(--t2); margin: 14px 0 8px; }
+        /* 该秒姿态读数条：设计稿为带边框的横条 */
+        .pose-sec-bar { display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; margin-top: 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel-2); font-size: 12.5px; color: var(--t2); text-align: left; }
+        .pose-sec-bar b { color: var(--t1); font-variant-numeric: tabular-nums; }
+        .pose-sec-bar b.c-green { color: var(--green-bright); }
+        .pose-sec-bar b.c-red { color: var(--red-bright); }
+        .pose-sec-title { font-size: 12.5px; font-weight: 700; color: var(--t2); margin: 14px 0 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+        .pose-sec-title .mini { font-size: 11px; font-weight: 400; color: var(--t3); }
         .pose-win-strip { display: flex; gap: 2px; height: 22px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
         .pose-win { flex: 1; min-width: 3px; cursor: help; transition: opacity 0.15s ease; }
         .pose-win:hover { opacity: 0.72; outline: 1px solid var(--t1); }
@@ -603,6 +642,105 @@
         .pose-win.w-other { background: repeating-linear-gradient(45deg, #2a3444, #2a3444 4px, #1d2633 4px, #1d2633 8px); }
         .pose-legend { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
         .pose-spans { display: flex; gap: 6px; flex-wrap: wrap; }
+
+        /* ===================== 实时过程动效（docs/pose-live-motion.md，P0 + P2） ===================== */
+        /* P2 blueprint 网格：铺在传送带区背景、静止（doc 原案为整卡 ::before，收窄到传送带区避免盖内容） */
+        .pose-belt {
+            background-image: linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+        /* P0-A 姿态骨架叠加：关键点 + 骨骼线 + 检测角框 + HUD，位于画面之上、scrim 之下 */
+        .pose-skel { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+        .pose-skel .sk-bones { stroke: var(--green-bright); stroke-width: 1.3; fill: none; opacity: 0.85; stroke-linecap: round; stroke-dasharray: 64; stroke-dashoffset: 64; animation: skDraw 0.3s ease-out forwards; }
+        .pose-skel .sk-p { fill: var(--green-bright); opacity: 0; transform-box: fill-box; transform-origin: center; animation: skPop 0.18s ease-out forwards; animation-delay: calc(var(--i, 0) * 30ms); }
+        .pose-skel .sk-box { stroke: var(--green-bright); stroke-width: 1.5; fill: none; opacity: 0.9; }
+        .pose-skel-hud { position: absolute; top: 7px; left: 6px; font: 500 8px 'Cascadia Mono', monospace; color: var(--green-bright); opacity: 0.95; letter-spacing: 0.2px; pointer-events: none; }
+        .pose-cart .pose-skel.idle { opacity: 0.2; }
+        @keyframes skDraw { to { stroke-dashoffset: 0; } }
+        @keyframes skPop { from { opacity: 0; transform: scale(0.4); } to { opacity: 1; transform: scale(1); } }
+        /* P0-B 传输线流动：步进条连接线流动虚线（仅 lit/done 段），叠在原 ::before 底线上 */
+        .pstage .pstage-flow { position: absolute; top: 14px; right: calc(50% + 20px); left: calc(-50% + 20px); height: 2px; border-radius: 1px; opacity: 0; transition: opacity 0.25s ease; background: repeating-linear-gradient(90deg, var(--green) 0 7px, transparent 7px 18px); background-size: 18px 2px; }
+        .pstage:first-child .pstage-flow { display: none; }
+        .pstage.lit .pstage-flow { opacity: 0.9; animation: flowMove 1.2s linear infinite; }
+        @keyframes flowMove { to { background-position: 18px 0; } }
+        /* P0-C 到站 corner-bracket 瞄准框：与小车同尺寸（150×84）的四个「落位框」，
+           空位 22% 待命；小车进框瞬间框在小车上方收拢 + 辉光闪一下（z 轴在小车之上，对焦锁定感）。
+           （四工位中心 12.5/37.5/62.5/87.5%，与 cart slot 公式 ((slot+0.5)*25)% 一致） */
+        .pose-rail .slot-reticle { position: absolute; top: 4px; width: 150px; height: 84px; transform: translateX(-50%); pointer-events: none; opacity: 0.22; transition: opacity 0.25s ease; z-index: 2; }
+        .slot-reticle::before, .slot-reticle::after, .slot-reticle i::before, .slot-reticle i::after { content: ''; position: absolute; width: 12px; height: 12px; border: 1.5px solid var(--green-bright); }
+        .slot-reticle::before { top: 0; left: 0; border-right: none; border-bottom: none; }
+        .slot-reticle::after { top: 0; right: 0; border-left: none; border-bottom: none; }
+        .slot-reticle i::before { bottom: 0; left: 0; border-right: none; border-top: none; }
+        .slot-reticle i::after { bottom: 0; right: 0; border-left: none; border-top: none; }
+        .slot-reticle.on { opacity: 0.9; animation: reticleFlash 0.45s ease-out; }
+        @keyframes reticleFlash {
+            from { transform: translateX(-50%) scale(1.35); opacity: 0; filter: brightness(2.2) drop-shadow(0 0 6px rgba(34, 197, 94, 0.9)); }
+            55% { opacity: 1; filter: brightness(1.5) drop-shadow(0 0 4px rgba(34, 197, 94, 0.55)); }
+            to { transform: translateX(-50%) scale(1); opacity: 0.9; filter: none; }
+        }
+        /* P1-A 读数闪绿：阶段 info 真实值变化时闪绿一次（同 .tick 思路，作用于文本色，只闪变化的那一格） */
+        .pstage-info.tick-flash { animation: infoFlash 0.32s ease; }
+        @keyframes infoFlash { 0%, 40% { color: var(--green-bright); } }
+        /* P1-B 能量边框巡游：管线运行中，卡边框上巡游一段约 12% 的绿色高亮（8s/圈，整卡唯一循环装饰）。
+           依赖 @property 注册 --tourAng 才能平滑插值；老内核退化为每圈两次跳变（8s 一次，可接受） */
+        @property --tourAng { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+        .card-live { position: relative; }
+        .card-live::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; padding: 1px; pointer-events: none;
+            background: conic-gradient(from var(--tourAng), transparent 0 84%, rgba(34, 197, 94, 0.5) 94%, transparent 100%);
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask-composite: exclude;
+            animation: borderTour 8s linear infinite; }
+        @keyframes borderTour { to { --tourAng: 360deg; } }
+        /* 小车本体落座回弹不走 CSS class（与 poseCartIn 入场动画同元素会互相顶掉重放），用 WAAPI 在 JS 里触发 */
+        /* 窄屏：侧栏信息板不再挤压传送带（旧版会把 belt 挤到几十像素），改为上下堆叠；
+           瞄准框在窄轨上只会缩成散角标，直接隐藏；小车缩到工位 12.5% 也不出边 */
+        @media (max-width: 600px) {
+            .pose-belt-wrap { flex-direction: column; align-items: stretch; }
+            .pose-live-side { max-width: none; }
+            .pose-rail { height: 64px; }
+            .pose-cart { width: 84px; height: 47px; }
+            .slot-reticle { display: none; }
+            .pose-skel-hud { font-size: 7px; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .pose-skel .sk-p, .pose-skel .sk-bones { animation: none; opacity: 1; stroke-dashoffset: 0; }
+            .pstage.lit .pstage-flow { animation: none; background: var(--green); }
+            .slot-reticle.on { animation: none; }
+            .pstage-info.tick-flash { animation: none; }
+            .card-live::after { display: none; }
+        }
+
+        /* ===================== 页面：内置引擎 · 高光判定实时队列 ===================== */
+        /* 复用姿态训练卡的 pstage/pose-rail/pose-cart/qchip/done-strip 体系，只补差异量 */
+        .hlq-card { margin-bottom: 18px; }
+        .hlq-card .card-title .mini { margin-left: 8px; }
+        /* 队列进度条：pending/10 上限为满条。
+           不加流光动画——卡内循环预算留给扫描光/流动虚线/呼吸点三个状态动效 */
+        .hlq-prog { display: flex; align-items: center; gap: 10px; margin: 2px 0 12px; font-size: 12.5px; color: var(--t3); }
+        .hlq-prog-bar { flex: 1; height: 8px; border-radius: 999px; background: var(--panel-3); overflow: hidden; position: relative; }
+        .hlq-prog-bar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--green), var(--green-bright)); transition: width 0.45s ease; position: relative; }
+        .hlq-prog b { color: var(--t1); font-weight: 700; font-variant-numeric: tabular-nums; }
+        /* 传送带小车：缩略图（ffmpeg 抽帧）铺满盖住图标兜底层，img 加载失败时露出兜底 */
+        .hlq-cart-img { position: absolute; inset: 0; }
+        .hlq-cart-face { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: var(--panel-3); }
+        .hlq-cart-face .ic { width: 22px; height: 22px; color: var(--t3); }
+        .hlq-cart-face .nm { font-size: 10px; color: var(--t2); max-width: 92%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .hlq-cart-face .st { font-size: 10px; color: var(--green-bright); font-variant-numeric: tabular-nums; }
+        /* 高光判定只在两处语义色：产出=绿，未检出/失败=橙/红，其余中性 */
+        .hlq-done-strip .dlabel { color: var(--blue); }
+        .hlq-done-strip .ditem .dname b { color: var(--t2); font-weight: 600; }
+        .hlq-done-strip .ditem.ok .dname b { color: var(--green); }
+        .hlq-done-strip .ditem.miss .dname b { color: var(--orange); }
+        .hlq-done-strip .ditem.fail .dname b { color: var(--red-bright); }
+        .hlq-done-strip .dthumb img { position: absolute; inset: 0; z-index: 1; }
+        .hlq-done-strip .dmeta { font-size: 10px; color: var(--t4); font-variant-numeric: tabular-nums; max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        @media (max-width: 600px) {
+            .hlq-cart-face .nm { font-size: 9px; }
+            .hlq-done-strip .dlabel { padding-top: 10px; }
+        }
 
         /* 动效：页签切入的级联入场（v-show 从 display:none 恢复时自动重放） */
         .bili-page > .pg-head { animation: biliFade 0.3s ease backwards; }
@@ -1772,6 +1910,90 @@
                             </div>
                         </div>
 
+                        <!-- 高光判定 · 实时队列：进度条 + 传送带动画 + 最近判定（数据全部来自 /highlight/live 真实信号） -->
+                        <div class="card hlq-card">
+                            <div class="card-head">
+                                <div class="card-title">
+                                    <svg class="ic"><use href="#i-zap"/></svg>
+                                    高光判定 · 实时队列<span class="mini">写盘稳定 → 解码打分 → 姿态门 → 裁切</span>
+                                </div>
+                                <span class="chip" :class="{good: hlq.enabled && hlq.running}">
+                                    <span class="dot" :class="hlq.enabled && hlq.running ? 'run pulse' : (hlq.enabled ? 'warn' : 'gray')"></span>
+                                    {{ !hlq.enabled ? '高光未开启' : (hlq.running ? '分析循环运行中' : '系统暂停') }}
+                                </span>
+                            </div>
+
+                            <div class="hlq-prog" :class="{running: hlq.current.clip}">
+                                <span>队列</span>
+                                <div class="hlq-prog-bar"><i :style="{width: hlqProgPct + '%'}"></i></div>
+                                <span><b :key="'p' + hlq.pending">{{ hlq.pending }}</b> 片待分析<template v-if="hlqNextName"> · {{ hlq.current.clip ? '正在分析' : '下一个' }} <b style="font-weight:600;">{{ hlqNextName }}</b></template><span class="sub" style="display:inline;" v-if="hlq.last_pass"> · 上轮扫描 {{ hlq.last_pass }}</span></span>
+                            </div>
+
+                            <div class="qchips" style="justify-content:flex-start; margin-bottom:12px;" v-if="(hlq.queue_head || []).length">
+                                <span class="qchip" v-for="(q, i) in hlq.queue_head" :key="q.clip"
+                                      :title="q.clip + ' · 已写完 ' + q.age_min + ' 分钟'" :style="{animationDelay: (i * 60) + 'ms'}"
+                                      :class="{ok: q.claimed}">{{ q.streamer || q.clip }}<span class="sub" style="margin-left:4px;">{{ q.age_min }}m</span></span>
+                                <span class="sub" v-if="hlq.pending > (hlq.queue_head || []).length">…等 {{ hlq.pending - hlq.queue_head.length }} 片</span>
+                            </div>
+
+                            <div class="pose-belt-wrap" :class="{flow: hlq.enabled && hlq.running}" v-if="hlqCart.clip">
+                                <div class="pose-belt">
+                                    <div class="pose-pipeline">
+                                        <div class="pstage" v-for="(st, i) in hlqStages" :key="st.name"
+                                             :class="{done: st.done, active: st.active, lit: st.lit}">
+                                            <span class="pstage-flow" aria-hidden="true"></span>
+                                            <span class="pstage-dot">{{ st.done && !st.active ? '✓' : i + 1 }}</span>
+                                            <span class="pstage-name">{{ st.name }}</span>
+                                            <span class="pstage-info">{{ st.info }}</span>
+                                        </div>
+                                    </div>
+                                    <div class="pose-rail">
+                                        <div class="slot-reticle" v-for="i in 4" :key="'hlqret' + i" :class="{on: hlqCart.slot === i - 1}" :style="{left: ((i - 0.5) * 25) + '%'}"><i></i></div>
+                                        <div class="pose-cart hlq-cart" :key="hlqCart.clip" :style="{left: ((hlqCart.slot + 0.5) * 25) + '%'}" :class="{on: hlqCart.active}">
+                                            <!-- 缩略图在上层遮住图标兜底层；源片已删/抽帧失败时 img 隐藏露出兜底 -->
+                                            <div class="hlq-cart-face">
+                                                <svg class="ic"><use href="#i-cam"/></svg>
+                                                <span class="nm">{{ hlqCart.streamer || '切片' }}</span>
+                                                <span class="st" v-if="hlqCart.active">{{ hlqStageLabel }} · {{ hlqCart.elapsed }}s</span>
+                                                <span class="st" v-else style="color: var(--t4);">待分析</span>
+                                            </div>
+                                            <img class="hlq-cart-img" :src="'/api/v1/highlight/thumb?clip=' + encodeURIComponent(hlqCart.clip)" alt="" loading="lazy" @error="$event.target.style.display='none'">
+                                            <div class="scan" v-if="hlqCart.active"></div>
+                                            <div class="pose-media-scrim"><span class="pose-media-stage"><span class="dot" :class="hlqCart.active ? 'run' : ''"></span>{{ hlqCart.streamer || hlqCart.clip }}</span></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="pose-live-side">
+                                    <div><span class="tag" :class="hlqCart.active ? 'green' : 'orange'">{{ hlqCart.active ? '正在分析' : '下一片' }}</span>&nbsp;<b>{{ hlqCart.streamer || '未知主播' }}</b><span class="sub" style="display:inline;" v-if="hlqCart.parallel > 1"> · 并行 {{ hlqCart.parallel }}/{{ hlq.workers }}</span></div>
+                                    <div class="sub pose-live-clip">{{ hlqCart.clip }}</div>
+                                    <div class="sub" v-if="hlq.gate_enabled && hlqCart.active">姿态语义门已启用 · 非舞段会被砍</div>
+                                </div>
+                            </div>
+                            <div class="pose-belt-empty" v-else>
+                                <span class="sub">{{ hlq.enabled ? '队列为空 · 切片写盘稳定 3 分钟后自动进入分析' : '开启高光切片后，待分析队列会显示在这里' }}</span>
+                            </div>
+
+                            <div class="hlq-stat-row" style="display:flex; gap:8px 18px; flex-wrap:wrap; font-size:12.5px; color:var(--t3); margin:2px 0 12px;">
+                                <span>今日已判 <b class="tick" :key="'ta' + hlq.today.analyzed">{{ hlq.today.analyzed }}</b> 片</span>
+                                <span class="tag green" v-if="hlq.today.highlights" style="font-size:11px;">产出高光 {{ hlq.today.highlights }} 片 / {{ hlq.today.segments }} 段</span>
+                                <span class="tag orange" v-if="hlq.today.failed" style="font-size:11px;">失败 {{ hlq.today.failed }} 片（自动重试）</span>
+                                <span class="sub" style="display:inline;" v-if="!hlq.today.analyzed">今日暂无新判定</span>
+                            </div>
+
+                            <div class="pose-done-strip hlq-done-strip" v-if="(hlq.recent_done || []).length">
+                                <span class="dlabel"><svg class="ic" style="width:11px;height:11px;"><use href="#i-zap"/></svg> 最近判定</span>
+                                <div class="ditem" v-for="(d, i) in hlq.recent_done" :key="d.clip"
+                                     :class="d.output ? 'ok' : (d.err ? 'fail' : 'miss')" :style="{animationDelay: (i * 50) + 'ms'}">
+                                    <div class="dthumb" :title="d.clip + (d.err ? ' · ' + d.err : '')" style="cursor:default;">
+                                        <svg class="ic" style="width:16px;height:16px; color:var(--t3);"><use :href="d.output ? '#i-zap' : (d.err ? '#i-x-c' : '#i-clock')"/></svg>
+                                        <img :src="'/api/v1/highlight/thumb?clip=' + encodeURIComponent(d.clip)" loading="lazy" alt="" @error="$event.target.style.display='none'">
+                                    </div>
+                                    <span class="dname"><b>{{ d.streamer || d.clip }}</b></span>
+                                    <span class="dmeta">{{ d.output ? '✓ ' + d.segments + ' 段' : (d.err ? '失败' : '未检出') }} · {{ hlqTimeShort(d.analyzed_at) }}</span>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="qc-row">
                             <x-select v-model="builtinForm.platform" :options="platformOptions" style="min-width:104px;"></x-select>
                             <div class="inp-wrap fluid">
@@ -2755,6 +2977,12 @@
                                     <span class="mini">从上到下依次发布</span>
                                 </div>
                                 <div class="pg-tools">
+                                    <button class="pill sm" :disabled="biliBusy" title="扫描磁盘，把漏入队的新高光补进队列" @click="biliRefresh">
+                                        <svg class="ic"><use href="#i-refresh"/></svg> 刷新入队
+                                    </button>
+                                    <button class="pill sm" :disabled="biliBusy" title="扫描队列，移除源文件已被删除的失效任务" @click="biliSweep">
+                                        <svg class="ic"><use href="#i-scan"/></svg> 清理失效
+                                    </button>
                                     <button class="pill primary sm" @click="biliOpenCandidates">
                                         <svg class="ic"><use href="#i-plus"/></svg> 添加高光
                                     </button>
@@ -2883,6 +3111,7 @@
                             <div class="pg-tools">
                                 <span v-if="poseT.summary.train_ready === false" class="chip"><span class="dot gray"></span> 本机无训练数据 · 训练管线在录制机 8080</span>
                                 <span class="chip" :class="{good: poseT.summary.gate && poseT.summary.gate.enable}"><span class="dot" :class="poseT.summary.gate && poseT.summary.gate.enable ? 'run' : 'warn'"></span> {{ poseT.summary.gate && poseT.summary.gate.enable ? '姿态门已启用' : '姿态门未启用' }}</span>
+                                <span class="chip" :class="{good: poseLive.running}"><span class="dot" :class="poseLive.running ? 'run' : 'warn'"></span> {{ poseLive.running ? '训练守护 · 运行中' : (poseLive.last_activity ? '训练守护 · 待机 · 上轮 ' + poseLive.last_activity : '训练守护 · 待机') }}</span>
                                 <button class="icobtn" title="刷新" @click="poseManualRefresh"><svg class="ic" :class="{spin: poseRefreshing}"><use href="#i-refresh"/></svg></button>
                             </div>
                         </div>
@@ -2896,7 +3125,8 @@
                             <div class="stat-card"><span class="k">磁盘剩余</span><span class="v" :class="(poseT.summary.disk_free_gb || 99) < 20 ? 'c-red' : ''">{{ poseT.summary.disk_free_gb != null ? poseT.summary.disk_free_gb.toFixed(1) : '—' }}<span class="aside">GB</span></span></div>
                         </div>
 
-                        <div class="card">
+                        <div class="pose-main-grid">
+                        <div class="card" :class="{'card-live': poseLive.running}">
                             <div class="card-head">
                                 <div class="card-title">
                                     <svg class="ic"><use href="#i-zap"/></svg>
@@ -2904,30 +3134,46 @@
                                 </div>
                                 <span class="chip" :class="{good: poseLive.running}"><span class="dot" :class="poseLive.running ? 'run pulse' : 'gray'"></span> {{ poseLive.running ? '管线运行中' : (poseLive.last_activity ? '待机 · 上轮 ' + poseLive.last_activity : '待机') }}</span>
                             </div>
-                            <div class="pose-queue" v-if="poseLive.queue_remaining != null">
-                                <span class="sub">待入池 <b class="tick" :key="'q' + poseLive.queue_remaining">{{ poseLive.queue_remaining }}</b> 片<i class="sep"></i>池内 <b class="tick" :key="'p' + poseLive.pool">{{ poseLive.pool }}</b> 片<i class="sep"></i>磁盘剩 <b class="tick" :key="'d' + poseLive.disk_free_gb">{{ (poseLive.disk_free_gb || 0).toFixed(1) }}</b> GB</span>
-                                <span class="tag orange" v-if="!poseLive.running && poseLive.queue_remaining > 0 && (poseLive.disk_free_gb || 99) < 10" title="训练守护每轮会检查磁盘，低于 10GB 时跳过入池、仅重定标">磁盘偏低 · 入池被守护跳过</span>
-                                <span class="sub" v-else-if="!poseLive.running && poseLive.queue_remaining > 0">等待下轮自动训练（上轮 {{ poseLive.last_activity || '—' }}）</span>
-                                <span class="qchip" v-for="(q, i) in poseQueueChips" :key="q.clip" :title="q.clip" :style="{animationDelay: (i * 60) + 'ms'}">{{ q.name }}{{ q.n > 1 ? ' ×' + q.n : '' }}</span>
-                                <span class="sub" v-if="poseLive.queue_remaining > (poseLive.queue_head || []).length">…等 {{ poseLive.queue_remaining - (poseLive.queue_head || []).length }} 片</span>
+                            <div class="pose-live-topline" v-if="poseLive.queue_remaining != null">
+                                <span class="lstat">
+                                    <span>待入池 <b class="tick" :key="'q' + poseLive.queue_remaining">{{ poseLive.queue_remaining }}</b> 片</span><i class="sep"></i>
+                                    <span>池内 <b class="tick" :key="'p' + poseLive.pool">{{ poseLive.pool }}</b> 片</span><i class="sep"></i>
+                                    <span>磁盘剩 <b class="tick" :key="'d' + poseLive.disk_free_gb">{{ (poseLive.disk_free_gb || 0).toFixed(1) }}</b> GB</span>
+                                    <span class="tag orange" v-if="!poseLive.running && poseLive.queue_remaining > 0 && (poseLive.disk_free_gb || 99) < 10" title="训练守护每轮会检查磁盘，低于 10GB 时跳过入池、仅重定标">磁盘偏低 · 入池被守护跳过</span>
+                                    <span class="sub" style="display:inline;" v-else-if="!poseLive.running && poseLive.queue_remaining > 0">等待下轮自动训练（上轮 {{ poseLive.last_activity || '—' }}）</span>
+                                </span>
+                                <span class="qchips">
+                                    <span class="qchip" v-for="(q, i) in poseQueueChips" :key="q.clip" :title="q.clip" :style="{animationDelay: (i * 60) + 'ms'}">{{ q.name }}{{ q.n > 1 ? ' ×' + q.n : '' }}</span>
+                                    <span class="sub" v-if="poseLive.queue_remaining > (poseLive.queue_head || []).length">…等 {{ poseLive.queue_remaining - (poseLive.queue_head || []).length }} 片</span>
+                                </span>
                             </div>
                             <div class="pose-belt-wrap" :class="{flow: poseLive.running}" v-if="poseCart.clip">
                                 <div class="pose-belt">
                                     <div class="pose-pipeline">
                                         <div class="pstage" v-for="(st, i) in poseStages" :key="st.name"
                                              :class="{done: st.done, active: st.active, lit: st.lit || st.done || st.active, flash: st.flash}">
+                                            <span class="pstage-flow" aria-hidden="true"></span>
                                             <span class="pstage-dot">{{ st.done && !st.active && !st.flash ? '✓' : i + 1 }}</span>
                                             <span class="pstage-name">{{ st.name }}</span>
-                                            <span class="pstage-info">{{ st.info }}</span>
+                                            <span class="pstage-info" :class="{'tick-flash': infoFlash === i}">{{ st.info }}</span>
                                         </div>
                                     </div>
                                     <div class="pose-rail">
-                                        <div class="pose-cart" :key="poseCart.clip" :class="{on: poseCart.moving}"
+                                        <div class="slot-reticle" v-for="i in 4" :key="'reticle' + i" :class="{on: poseCart.slot === i - 1}" :style="{left: ((i - 0.5) * 25) + '%'}"><i></i></div>
+                                        <div class="pose-cart" :key="poseCart.clip" ref="cartEl" :class="{on: poseCart.moving}"
                                              :style="{left: ((poseCart.slot + 0.5) * 25) + '%'}"
                                              title="点击查看片详情 · 帧浏览器" @click="poseOpenDetail({clip: poseCart.clip, thumb: true})">
                                             <img :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(poseCart.clip) + (poseCart.frames ? '&idx=' + Math.max(0, poseCart.frames - 1) : '')"
                                                  loading="lazy" alt=""
                                                  @error="$event.target.style.visibility='hidden'" @load="$event.target.style.visibility=''">
+                                            <!-- P0-A 姿态骨架叠加：DEMO 骨架轮播，真值接口 /pose_training/skeleton 未接（见 JS POSE_SKEL_DEMO 注释） -->
+                                            <svg class="pose-skel" :class="{idle: poseSkelIdle}" viewBox="0 0 150 84" preserveAspectRatio="none" aria-hidden="true" v-if="poseSkel.kps.length">
+                                                <path class="sk-bones" :key="'b' + poseSkel.epoch" :d="poseSkel.bonesPath"/>
+                                                <circle class="sk-p" v-for="(p, i) in poseSkel.kps" :key="poseSkel.epoch + '-' + i"
+                                                        :cx="p[0]" :cy="p[1]" r="2.1" :style="{'--i': i}"/>
+                                                <path class="sk-box" d="M38 16V6H50M110 6H122V16M122 74V84H110M50 84H38V74"/>
+                                            </svg>
+                                            <span class="pose-skel-hud" v-if="poseSkel.kps.length">KEYPOINTS {{ poseSkel.kps.length }}<template v-if="poseSkel.det != null"> · det {{ poseSkel.det }}</template></span>
                                             <div class="scan" v-if="poseCart.moving"></div>
                                             <div class="pose-media-scrim">
                                                 <span class="pose-media-stage"><span class="dot" :class="poseCart.moving ? 'run' : ''"></span>{{ poseCart.label }}</span>
@@ -2953,50 +3199,80 @@
                                 <span class="sub">暂无入池记录 · 等待管线首轮运行</span>
                             </div>
                             <div class="pose-done-strip" v-if="(poseLive.recent_done || []).length">
-                                <span class="dlabel">✓ 已入池</span>
-                                <div class="dthumb" v-for="(c, i) in poseLive.recent_done" :key="c.clip" :title="c.clip + (c.detail ? ' · ' + c.detail : '')"
-                                     :style="{animationDelay: (i * 50) + 'ms'}" @click="poseOpenDetail({clip: c.clip, thumb: true})">
-                                    <img :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(c.clip)" loading="lazy" alt="" @error="$event.target.style.display='none'">
+                                <span class="dlabel"><span class="dot" style="background: var(--green);"></span>已入池</span>
+                                <div class="ditem" v-for="(c, i) in poseLive.recent_done" :key="c.clip" :style="{animationDelay: (i * 50) + 'ms'}">
+                                    <div class="dthumb" :title="c.clip + (c.detail ? ' · ' + c.detail : '')" @click="poseOpenDetail({clip: c.clip, thumb: true})">
+                                        <img :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(c.clip)" loading="lazy" alt="" @error="$event.target.style.display='none'">
+                                    </div>
                                     <span class="dname">{{ c.streamer || c.clip }}</span>
                                 </div>
                             </div>
                             <div class="pose-done-strip" v-if="(poseLive.recent_skipped || []).length">
-                                <span class="dlabel skip">✗ 帧不足跳过</span>
-                                <div class="dthumb skip" v-for="(c, i) in poseLive.recent_skipped" :key="c.clip"
-                                     :title="c.clip + ' · 仅 ' + c.frames + ' 帧，未入池'" :style="{animationDelay: (i * 50) + 'ms'}">
-                                    <img :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(c.clip)" loading="lazy" alt="" @error="$event.target.style.display='none'">
+                                <span class="dlabel skip"><span class="dot" style="background: var(--orange);"></span>帧不足跳过</span>
+                                <div class="ditem" v-for="(c, i) in poseLive.recent_skipped" :key="c.clip" :style="{animationDelay: (i * 50) + 'ms'}">
+                                    <div class="dthumb skip" :title="c.clip + ' · 仅 ' + c.frames + ' 帧，未入池'">
+                                        <img :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(c.clip)" loading="lazy" alt="" @error="$event.target.style.display='none'">
+                                    </div>
                                     <span class="dname">{{ c.streamer || c.clip }} · {{ c.frames }}帧</span>
                                 </div>
                             </div>
                             <div class="pose-term-head" v-if="poseLive.logs && poseLive.logs.length">
                                 <span>训练日志 · 自动滚动到最新</span>
-                                <span class="dot" :class="poseLive.running ? 'run' : ''"></span>
                             </div>
-                            <div class="term pose-term" style="height:150px;" ref="logTerm" v-if="poseLive.logs && poseLive.logs.length">
+                            <div class="term pose-term" style="height:210px;" ref="logTerm" v-if="poseLive.logs && poseLive.logs.length">
                                 <div class="lg-line" v-for="(l, i) in poseLive.logs" :key="i"><span class="src">{{ l.split(' │ ')[0].replace(/_/g, ' ') }}</span>{{ l.split(' │ ').slice(1).join(' │ ') }}</div>
                             </div>
                         </div>
 
+                        <div class="pose-side-col">
                         <div class="card">
                             <div class="card-head">
                                 <div class="card-title">
                                     <svg class="ic"><use href="#i-sliders"/></svg>
                                     姿态门参数<span class="mini">生产实值 · 修改需经重定标验证</span>
                                 </div>
-                                <span class="sub" v-if="poseT.sweep.generated_at">重定标：{{ poseT.sweep.generated_at }} · {{ poseT.sweep.windows }} 窗 / {{ poseT.sweep.gold_clips }} 片金标</span>
                             </div>
                             <div class="pose-kv" v-if="poseT.summary.gate">
-                                <div class="kv"><div class="k">检出率下限 det_min</div><div class="v">{{ poseT.summary.gate.det_min }}</div></div>
-                                <div class="kv"><div class="k">可见度下限 vis_min</div><div class="v">{{ poseT.summary.gate.vis_min }}</div></div>
-                                <div class="kv"><div class="k">面部占比上限 face_max</div><div class="v">{{ poseT.summary.gate.face_max }}</div></div>
-                                <div class="kv"><div class="k">保留比下限 keep_ratio</div><div class="v">{{ poseT.summary.gate.keep_ratio }}</div></div>
-                                <div class="kv"><div class="k">抽帧率 fps</div><div class="v">{{ poseT.summary.gate.fps || 5 }}</div></div>
+                                <div class="kv"><div class="k"><b>det_min</b> · 检出率下限</div><div class="v">{{ poseT.summary.gate.det_min }}</div></div>
+                                <div class="kv"><div class="k"><b>vis_min</b> · 可见度下限</div><div class="v">{{ poseT.summary.gate.vis_min }}</div></div>
+                                <div class="kv"><div class="k"><b>face_max</b> · 面部占比上限</div><div class="v">{{ poseT.summary.gate.face_max }}</div></div>
+                                <div class="kv"><div class="k"><b>keep_ratio</b> · 保留比下限</div><div class="v">{{ poseT.summary.gate.keep_ratio }}</div></div>
+                                <div class="kv wide"><div class="k"><b>fps</b> · 抽帧率</div><div class="v">{{ poseT.summary.gate.fps || 5 }}<span class="u">帧/秒</span></div></div>
                             </div>
                             <div class="pose-apply-row">
                                 <button class="pill sm primary" :disabled="poseApplying || !poseT.sweep.best" @click="poseApplyBest">{{ poseApplying ? '应用中…' : '应用重定标最优' }}</button>
-                                <button class="pill sm" :class="poseAutoApplyOn ? 'primary' : ''" @click="poseToggleAutoApply">自动应用：{{ poseAutoApplyOn ? '开' : '关' }}</button>
-                                <span class="sub" v-if="poseLive.apply_state && poseLive.apply_state.last_applied">上次应用：{{ poseLive.apply_state.last_applied }}</span>
-                                <span class="sub" v-else-if="poseLive.apply_state">自动应用连击 {{ poseLive.apply_state.streak || 0 }}/3 · 最优 F1 需连续 3 轮高于生产现值 ≥0.01</span>
+                                <button class="pill sm" :class="poseAutoApplyOn ? 'tog-on' : ''" @click="poseToggleAutoApply">自动应用：{{ poseAutoApplyOn ? '开' : '关' }}</button>
+                                <span class="sub" style="flex-basis:100%;" v-if="poseLive.apply_state">最优 F1 需连续 3 轮高于生产现值 ≥0.01 · 连击 {{ poseLive.apply_state.streak || 0 }}/3<template v-if="poseLive.apply_state.last_applied"> · 上次应用 {{ poseTimeShort(poseLive.apply_state.last_applied) }}</template></span>
+                            </div>
+                        </div>
+
+                        <div class="card pose-guard">
+                            <div class="card-head">
+                                <div class="card-title">
+                                    <svg class="ic"><use href="#i-moon"/></svg>
+                                    夜训守护<span class="mini">连续训练 · 3 分钟/轮 · 状态为真实信号</span>
+                                </div>
+                            </div>
+                            <div class="grows">
+                                <div class="grow"><span class="gk">上轮结果</span><span class="gv"><span class="tag" :class="poseLive.running ? 'green' : 'gray'">{{ poseLive.running ? '运行中' : '待机' }}</span><span style="margin-left:8px;" v-if="poseLive.last_activity">{{ poseTimeShort(poseLive.last_activity) }}</span></span></div>
+                                <div class="grow"><span class="gk">距上轮</span><span class="gv">{{ poseGuard.lastAgo }}</span></div>
+                                <div class="grow"><span class="gk">本轮模式</span><span class="gv" :class="{low: poseGuard.modeLow}">{{ poseGuard.mode }}</span></div>
+                                <div class="grow" style="flex-direction:column; align-items:stretch; gap:5px;">
+                                    <span style="display:flex; justify-content:space-between; align-items:baseline;"><span class="gk">上轮批次进度</span><span class="gv">第 {{ poseLive.last_done.idx || 0 }}/{{ poseLive.last_done.total || 0 }} 片</span></span>
+                                    <div class="gbar"><i :style="{width: poseGuard.batchPct + '%'}"></i></div>
+                                </div>
+                                <div class="grow"><span class="gk">上次重定标</span><span class="gv" v-if="poseT.sweep.generated_at" title="完整网格见训练根目录 autogold_result.json">{{ poseGuard.sweepShort }} · {{ poseT.sweep.windows }} 窗 / {{ poseT.sweep.gold_clips }} 片金标</span><span class="gv" style="color: var(--t4);" v-else>—</span></div>
+                            </div>
+                            <div class="gnote">磁盘低于 10GB 时守护自动降级为仅重定标、入池被跳过；待入池 {{ poseLive.queue_remaining || 0 }} 片在磁盘恢复后入池。</div>
+                        </div>
+                        </div>
+                        </div>
+
+                        <div class="sec-head">
+                            <div class="sec-title">姿态训练 · 重定标与片池<span class="mini">阈值网格 TOP10 按最优 F1 排序 · 训练片池新入池在前</span></div>
+                            <div class="pg-tools" style="display:flex; gap:8px; align-items:center;">
+                                <span class="chip" v-if="poseT.sweep.generated_at"><span class="dot" style="background: var(--blue);"></span> 重定标 {{ poseGuard.sweepShort }} 完成</span>
+                                <span class="chip"><span class="dot gray"></span> 片池 <b>{{ poseT.total }}</b> 片</span>
                             </div>
                         </div>
 
@@ -3006,17 +3282,16 @@
                                     <svg class="ic"><use href="#i-grid"/></svg>
                                     重定标阈值网格<span class="mini">TOP10 · 按 F1 排序</span>
                                 </div>
+                                <span class="sub" v-if="poseT.sweep.generated_at">{{ poseT.sweep.generated_at }} · {{ poseT.sweep.windows }} 窗 / {{ poseT.sweep.gold_clips }} 片金标 · vis / face / det 三轴扫描</span>
                             </div>
                             <div class="tbl-scroll" v-if="poseT.sweep.top && poseT.sweep.top.length">
                                 <table class="tbl">
                                     <thead>
-                                    <tr><th style="width:18%;">vis</th><th style="width:18%;">face</th><th style="width:18%;">detmin</th><th>精确率 P</th><th>召回率 R</th><th>F1</th></tr>
+                                    <tr><th style="width:34%;">vis · face · detmin</th><th>精确率 P</th><th>召回率 R</th><th>F1</th></tr>
                                     </thead>
                                     <tbody>
                                     <tr v-for="(row, i) in poseT.sweep.top" :key="i" :class="{best: i === 0}">
-                                        <td>{{ row.vis.toFixed(2) }}</td>
-                                        <td>{{ row.face.toFixed(2) }}</td>
-                                        <td>{{ row.det.toFixed(2) }}</td>
+                                        <td><span class="pose-tri">{{ row.vis.toFixed(2) }} · {{ row.face.toFixed(2) }} · {{ row.det.toFixed(2) }}</span></td>
                                         <td>{{ (row.P * 100).toFixed(1) }}%</td>
                                         <td>{{ (row.R * 100).toFixed(1) }}%</td>
                                         <td><b>{{ row.F1.toFixed(3) }}</b><span v-if="i === 0" class="tag blue" style="margin-left:8px;">最优</span></td>
@@ -3027,7 +3302,10 @@
                             <div v-else class="tbl-empty">
                                 <div class="big"><svg class="ic"><use href="#i-info"/></svg></div>
                                 <div class="t">暂无重定标结果</div>
-                                <div class="s">夜训守护每 30 分钟自动运行 · 结果落盘后本页自动可读</div>
+                                <div class="s">训练守护每轮自动运行 · 结果落盘后本页自动可读</div>
+                            </div>
+                            <div class="tbl-foot" v-if="poseT.sweep.top && poseT.sweep.top.length">
+                                <span>另 {{ poseSweepNear }} 组与最优 F1 差距 &lt; 0.01 · 完整网格与混淆矩阵见训练根目录 autogold_result.json</span>
                             </div>
                         </div>
 
@@ -3044,7 +3322,7 @@
                             <div class="tbl-scroll" v-if="poseT.items.length">
                                 <table class="tbl">
                                     <thead>
-                                    <tr><th style="width:70px;">预览</th><th style="width:36%;">片名</th><th style="width:12%;">时长</th><th>舞段占比</th><th style="width:11%;">来源</th></tr>
+                                    <tr><th style="width:70px;">预览</th><th>片名</th><th style="width:26%;">舞段占比</th><th style="width:11%;">来源</th></tr>
                                     </thead>
                                     <tbody>
                                     <tr v-for="c in poseT.items" :key="c.clip">
@@ -3052,12 +3330,15 @@
                                             <img v-if="c.thumb" :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(c.clip)" loading="lazy" class="pose-thumb" @click="poseOpenDetail(c)" style="cursor:zoom-in;" alt="">
                                             <span v-else class="sub">无帧</span>
                                         </td>
-                                        <td><div class="fname" :title="c.clip">{{ c.clip }}</div></td>
-                                        <td>{{ Math.floor(c.seconds / 60) }}分{{ c.seconds % 60 }}秒</td>
                                         <td>
-                                            <span class="tag orange" style="margin-right:6px;">{{ c.dance }}s</span>
-                                            <span class="sub" style="display:inline;">/ 共 {{ c.closeup + c.none + c.other }}s 非舞</span>
-                                            <div class="pose-dance-bar"><i :style="{width: poseDancePct(c) + '%'}"></i></div>
+                                            <div class="fname" :title="c.clip">{{ c.clip }}</div>
+                                            <div class="pose-clip-meta">{{ poseClipStreamerName(c.clip) ? poseClipStreamerName(c.clip) + ' · ' : '' }}{{ Math.floor(c.seconds / 60) }}分{{ c.seconds % 60 }}秒 · {{ c.dance + c.closeup + c.none + c.other }} 秒特征<template v-if="poseDancePct(c) < 10"> · 舞段偏少</template></div>
+                                        </td>
+                                        <td>
+                                            <div class="pose-dance-row">
+                                                <span class="tag orange">{{ c.dance }}s</span>
+                                                <div class="pose-dance-bar"><i :style="{width: poseDancePct(c) + '%'}"></i></div>
+                                            </div>
                                         </td>
                                         <td><span class="sub">{{ c.model ? '自动预标' : '人工' }}</span></td>
                                     </tr>
@@ -3069,9 +3350,10 @@
                                 <div class="t">没有匹配的片</div>
                                 <div class="s">训练管线会在录制切片落盘后自动抽帧入池</div>
                             </div>
-                            <div style="padding: 6px 14px 14px;" v-if="poseT.total > poseT.limit">
+                            <div class="pose-pg-row" v-if="poseT.total > poseT.limit">
                                 <x-pagination :total="poseT.total" :page-size="poseT.limit" :page="posePageNum"
                                               @update:page="onPosePage"></x-pagination>
+                                <span class="pose-pg-total">共 {{ Math.ceil(poseT.total / poseT.limit) }} 页</span>
                             </div>
                         </div>
 
@@ -3080,6 +3362,7 @@
                                 <div class="pose-live-meta" style="padding-top:0;" v-if="poseDetail.streamer">
                                     <span class="tag blue">主播 {{ poseDetail.streamer }}</span>
                                     <span class="sub" v-if="poseDetail.spans">{{ poseDetail.spans.length }} 段预标 · 共 {{ poseDetail.feats.length }} 秒特征</span>
+                                    <span class="sub" v-if="poseDetail.model != null">· 来源 {{ poseDetail.model ? '自动预标' : '人工' }}</span>
                                 </div>
                                 <div class="pose-frame-view">
                                     <img v-if="poseDetail.frames > 0" :src="'/api/v1/pose_training/thumb?clip=' + encodeURIComponent(poseDetail.clip) + '&idx=' + poseDetail.idx" class="pose-frame-img" alt="">
@@ -3089,23 +3372,25 @@
                                         <button class="icobtn" @click="poseDetail.idx = Math.min(poseDetail.frames - 1, poseDetail.idx + 1)"><svg class="ic"><use href="#i-chev-r"/></svg></button>
                                         <span class="sub" style="white-space:nowrap;">帧 {{ poseDetail.idx + 1 }}/{{ poseDetail.frames }} · 第 {{ poseSecIdx + 1 }} 秒</span>
                                     </div>
-                                    <div class="pose-sec-data" v-if="poseSecData">
-                                        <span class="tag blue">该秒姿态</span>&nbsp;
-                                        可见度 <b>{{ poseSecData[0].toFixed(2) }}</b> · 面部占比 <b>{{ poseSecData[1].toFixed(2) }}</b> · 纵向跨度 <b>{{ poseSecData[2].toFixed(2) }}</b> ·
+                                    <div class="pose-sec-bar" v-if="poseSecData">
+                                        <span class="tag blue">该秒姿态</span>
+                                        <span>可见度 <b>{{ poseSecData[0].toFixed(2) }}</b></span>
+                                        <span>面部占比 <b>{{ poseSecData[1].toFixed(2) }}</b></span>
+                                        <span>纵向跨度 <b>{{ poseSecData[2].toFixed(2) }}</b></span>
                                         <b :class="poseSecData[4] === 1 ? 'c-green' : 'c-red'">{{ poseSecData[4] === 1 ? '检出人体' : '未检出' }}</b>
                                     </div>
                                 </div>
-                                <div class="pose-sec-title">标注时间线（每 8 秒一窗 · 颜色 = 该窗判定）</div>
+                                <div class="pose-sec-title">标注时间线<span class="mini">每 8 秒一窗 · 颜色 = 该窗判定 · 悬停可看数值</span></div>
                                 <div class="pose-win-strip" v-if="poseDetail.windows && poseDetail.windows.length">
                                     <div class="pose-win" v-for="(w, i) in poseDetail.windows" :key="i" :class="'w-' + w.label"
                                          :title="'第 ' + (w.s + 1) + '-' + (w.s + 8) + 's · 检出率 ' + (w.det * 100).toFixed(0) + '% · vis ' + w.vis.toFixed(2) + ' · face ' + w.face.toFixed(2) + ' · ' + w.label"></div>
                                 </div>
                                 <div class="pose-legend">
-                                    <span class="tag orange">dance 舞段</span>
+                                    <span class="tag orange">dance 舞蹈</span>
                                     <span class="tag blue">closeup 近景</span>
                                     <span class="tag gray">none 无人/未检出</span>
                                     <span class="tag gray">other 其他</span>
-                                    <span class="sub" v-if="poseDetail.windows">悬停窗格可看该窗数值 · 共 {{ poseDetail.windows.length }} 窗</span>
+                                    <span class="sub" v-if="poseDetail.windows">共 {{ poseDetail.windows.length }} 窗</span>
                                 </div>
                                 <div class="pose-sec-title">预标段（自动入池标签）</div>
                                 <div class="pose-spans">
@@ -3337,7 +3622,10 @@
                             <label>时序门槛 min_ac1 (0关)</label>
                             <input type="number" class="inp" step="0.05" v-model.number="builtinSettings.highlight_min_ac1" min="0" max="0.95">
                         </div>
-                        <div class="f-item"></div>
+                        <div class="f-item">
+                            <label>分析并行路数 (1-4)</label>
+                            <input type="number" class="inp" v-model.number="builtinSettings.highlight_analyze_workers" min="1" max="4" title="高光分析并行路数；加大提升吞吐但与录制抢 CPU">
+                        </div>
                     </div>
                 </template>
 
@@ -3872,7 +4160,7 @@
         },
         emits: ['update:modelValue', 'change'],
         data() {
-            return {open: false, dropUp: false};
+            return {open: false, popStyle: null};
         },
         computed: {
             current() {
@@ -3882,27 +4170,62 @@
         methods: {
             toggle() {
                 if (this.disabled) return;
-                this.open = !this.open;
-                if (this.open) {
-                    this.$nextTick(() => {
-                        const el = this.$el;
-                        if (el && el.getBoundingClientRect().bottom + 270 > window.innerHeight) this.dropUp = true;
-                        else this.dropUp = false;
-                    });
+                if (this.open) { this.collapse(); return; }
+                this.open = true;
+                this.bindDismiss();
+                this.$nextTick(this.placePop);
+            },
+            // 弹层用 fixed 定位按按钮实时坐标摆放：fixed 不受祖先 overflow:hidden
+            // 裁剪（.tbl-card 等表格卡会裁掉 absolute 弹层），DOM 仍在组件内，
+            // clickOutside 判定不用改。
+            placePop() {
+                const btn = this.$el && this.$el.querySelector('.xsel-btn');
+                const pop = this.$refs.pop;
+                if (!btn || !pop) return;
+                const r = btn.getBoundingClientRect();
+                const gap = 6, pad = 8;
+                const pw = pop.offsetWidth, ph = pop.offsetHeight;
+                const style = {position: 'fixed', minWidth: r.width + 'px'};
+                // 视口底部放不下且上方放得下才向上弹，其余一律向下
+                if (r.bottom + gap + ph > window.innerHeight - pad && r.top - gap - ph >= pad) {
+                    style.top = Math.max(pad, r.top - gap - ph) + 'px';
+                } else {
+                    style.top = (r.bottom + gap) + 'px';
                 }
+                style.left = Math.min(Math.max(pad, r.left), Math.max(pad, window.innerWidth - pad - pw)) + 'px';
+                this.popStyle = style;
+            },
+            collapse() {
+                if (!this.open) return;
+                this.open = false;
+                this.popStyle = null;
+                this.unbindDismiss();
+            },
+            // 页面滚动/缩放后按钮坐标已失效，直接收起（弹层内部的选项滚动不算）
+            bindDismiss() {
+                window.addEventListener('scroll', this.onDismiss, true);
+                window.addEventListener('resize', this.onDismiss);
+            },
+            unbindDismiss() {
+                window.removeEventListener('scroll', this.onDismiss, true);
+                window.removeEventListener('resize', this.onDismiss);
+            },
+            onDismiss(e) {
+                if (e && e.type === 'scroll' && this.$refs.pop && this.$refs.pop.contains(e.target)) return;
+                this.collapse();
             },
             pick(opt) {
-                this.open = false;
+                this.collapse();
                 if (opt.value !== this.modelValue) {
                     this.$emit('update:modelValue', opt.value);
                     this.$emit('change', opt.value);
                 }
             },
             onDocClick(e) {
-                if (this.$el && !this.$el.contains(e.target)) this.open = false;
+                if (this.$el && !this.$el.contains(e.target)) this.collapse();
             },
             onEsc(e) {
-                if (e.key === 'Escape') this.open = false;
+                if (e.key === 'Escape') this.collapse();
             }
         },
         mounted() {
@@ -3910,6 +4233,7 @@
             document.addEventListener('keydown', this.onEsc);
         },
         unmounted() {
+            this.unbindDismiss();
             document.removeEventListener('click', this.onDocClick);
             document.removeEventListener('keydown', this.onEsc);
         },
@@ -3919,7 +4243,7 @@
                 <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9.5l6 6 6-6"/></svg>
             </button>
             <transition name="drop">
-                <div v-if="open" class="xsel-pop" :class="{up: dropUp}">
+                <div v-if="open" ref="pop" class="xsel-pop" :style="popStyle">
                     <div v-for="o in options" :key="o.value" class="xsel-opt" :class="{'is-on': o.value === modelValue}" @click="pick(o)">
                         <span>{{ o.label }}</span>
                         <svg v-if="o.value === modelValue" class="ic" viewBox="0 0 24 24"><use href="#i-check"/></svg>
@@ -4413,6 +4737,7 @@
                 highlight_smooth_window: 5,
                 highlight_exit_ratio: 0,
                 highlight_min_ac1: 0,
+                highlight_analyze_workers: 1,
                 highlight_only_upload: false
             });
             const builtinCookies = ref({douyin: '', kuaishou: '', soop: '', bilibili: '', twitch: ''});
@@ -5120,6 +5445,7 @@
                         builtinSettings.value.highlight_smooth_window = res1.data.highlight_smooth_window || 5;
                         builtinSettings.value.highlight_exit_ratio = res1.data.highlight_exit_ratio ?? 0;
                         builtinSettings.value.highlight_min_ac1 = res1.data.highlight_min_ac1 ?? 0;
+                        builtinSettings.value.highlight_analyze_workers = res1.data.highlight_analyze_workers || 1;
                         builtinSettings.value.highlight_only_upload = res1.data.highlight_only_upload || false;
                     }
                     const res2 = await api.get('/builtin_recorder/cookies');
@@ -6457,6 +6783,34 @@
                 }
                 doBiliAct(action, row, dir);
             };
+            // 清理失效：源文件已被删除的任务永远投不出去，一次扫描全部出队
+            const biliSweep = async () => {
+                if (biliBusy.value) return;
+                biliBusy.value = true;
+                try {
+                    const res = await api.post('/bilibili/queue', {action: 'sweep', id: ''});
+                    const msg = (res.data && res.data.message) || '清扫完成';
+                    window.uiNotify('success', {title: '队列已扫描', content: msg, duration: 3200});
+                    fetchBili();
+                } catch (e) {
+                } finally {
+                    biliBusy.value = false;
+                }
+            };
+            // 刷新入队：扫描磁盘，把比队列更新的高光补进队列（漏入队的新文件一键追平）
+            const biliRefresh = async () => {
+                if (biliBusy.value) return;
+                biliBusy.value = true;
+                try {
+                    const res = await api.post('/bilibili/queue', {action: 'refresh', id: ''});
+                    const msg = (res.data && res.data.message) || '刷新完成';
+                    window.uiNotify('success', {title: '队列已刷新', content: msg, duration: 3200});
+                    fetchBili();
+                } catch (e) {
+                } finally {
+                    biliBusy.value = false;
+                }
+            };
 
             /* ---- 队列可视化：候选入队 + 封面选择 ---- */
             const biliCand = ref([]);
@@ -6640,7 +6994,7 @@
             }, 4000);
             /* 片池详情弹窗：帧浏览器 + 每秒姿态数据 + 标注时间线 */
             const poseDetailShow = ref(false);
-            const poseDetail = reactive({ clip: '', frames: 0, idx: 0, fps: 1, feats: [], windows: [], spans: [], streamer: '' });
+            const poseDetail = reactive({ clip: '', frames: 0, idx: 0, fps: 1, feats: [], windows: [], spans: [], streamer: '', model: null });
             const poseOpenDetail = async (c) => {
                 poseDetail.clip = c.clip;
                 poseDetail.frames = c.thumb ? 1 : 0;
@@ -6650,6 +7004,7 @@
                 poseDetail.windows = [];
                 poseDetail.spans = [];
                 poseDetail.streamer = '';
+                poseDetail.model = c.model === undefined ? null : !!c.model; // 片池表入口带来源，传送带/缩略条入口未知不显示
                 poseDetailShow.value = true;
                 try {
                     const res = await api.get('/pose_training/clip', { params: { clip: c.clip } });
@@ -6796,10 +7151,196 @@
                     frames: now.isCurrent ? (cur.frames || 0) : 0,
                 };
             });
+            /* ---------- 实时过程动效（docs/pose-live-motion.md） ---------- */
+            /* P0-A 骨架叠加：DEMO 路线 —— 真值接口 GET /pose_training/skeleton 尚未实现，
+               接通后删除本段改走接口；det 只显示接口真值，DEMO 阶段不显示数字（不伪造判定值） */
+            const POSE_SKEL_DEMO = true; // DEMO：预置舞姿骨架循环轮播，非推理真值
+            const DEMO_SKELETONS = [
+                {
+                    kps: [[78, 14], [60, 24], [96, 22], [48, 38], [108, 36], [44, 52], [116, 30], [64, 50], [90, 48], [58, 66], [96, 64], [52, 80], [102, 80]],
+                    bones: [[0, 1], [0, 2], [1, 3], [3, 5], [2, 4], [4, 6], [1, 7], [2, 8], [7, 8], [7, 9], [9, 11], [8, 10], [10, 12]],
+                },
+                {
+                    kps: [[75, 15], [57, 19], [93, 17], [43, 31], [105, 27], [37, 46], [115, 41], [63, 49], [89, 51], [55, 65], [99, 67], [53, 80], [101, 78]],
+                    bones: [[0, 1], [0, 2], [1, 3], [3, 5], [2, 4], [4, 6], [1, 7], [2, 8], [7, 8], [7, 9], [9, 11], [8, 10], [10, 12]],
+                },
+                {
+                    kps: [[72, 14], [58, 25], [88, 19], [47, 41], [104, 29], [40, 57], [118, 43], [62, 50], [86, 47], [53, 66], [97, 62], [50, 80], [103, 77]],
+                    bones: [[0, 1], [0, 2], [1, 3], [3, 5], [2, 4], [4, 6], [1, 7], [2, 8], [7, 8], [7, 9], [9, 11], [8, 10], [10, 12]],
+                },
+            ];
+            const poseSkel = reactive({ kps: [], bonesPath: '', det: null, epoch: 0 });
+            const poseSkelIdle = ref(false);
+            let skelIdx = 0, skelIdleTimer = null, skelSeen = '';
+            const applySkel = () => {
+                if (!POSE_SKEL_DEMO) return;
+                const s = DEMO_SKELETONS[skelIdx++ % DEMO_SKELETONS.length];
+                poseSkel.kps = s.kps;
+                poseSkel.bonesPath = s.bones.map(([a, b]) => 'M' + s.kps[a][0] + ' ' + s.kps[a][1] + 'L' + s.kps[b][0] + ' ' + s.kps[b][1]).join('');
+                poseSkel.epoch++;
+                poseSkelIdle.value = false;
+                clearTimeout(skelIdleTimer);
+                skelIdleTimer = setTimeout(() => { poseSkelIdle.value = true; }, 800);
+            };
+            watch(() => poseCart.value.clip + '|' + poseCart.value.frames, (nv) => {
+                if (!poseCart.value.clip) { poseSkel.kps = []; clearTimeout(skelIdleTimer); return; }
+                if (nv !== skelSeen) { skelSeen = nv; applySkel(); }
+            });
+            /* P0-C 到站回弹：与 poseCartIn 入场动画同元素，CSS class 切换会顶掉入场动画重放，改 WAAPI 一次性触发 */
+            const cartEl = ref(null);
+            watch(() => poseCart.value.slot, (nv, ov) => {
+                if (ov === undefined || nv === ov) return;
+                const el = cartEl.value;
+                if (el && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                    el.animate(
+                        [{ transform: 'translateX(-50%) scale(1.02)' }, { transform: 'translateX(-50%) scale(1)' }],
+                        { duration: 120, easing: 'ease-out' });
+                }
+            });
+            /* P1-A 读数闪绿：阶段 info 文本真实变化时，只对变化的那一格闪绿一次（首帧挂载不闪，清空不闪） */
+            const infoFlash = ref(-1);
+            let infoFlashTimer = null;
+            watch(() => poseStages.value.map((s) => s.info).join('\u0001'), (nv, ov) => {
+                if (ov === undefined || nv === ov) return;
+                const prev = ov.split('\u0001');
+                const idx = nv.split('\u0001').findIndex((v, i) => v && v !== prev[i]);
+                if (idx < 0) return;
+                infoFlash.value = idx;
+                clearTimeout(infoFlashTimer);
+                infoFlashTimer = setTimeout(() => { infoFlash.value = -1; }, 340);
+            });
+            /* ---------- 派生数据：守护卡 / 区头 chips / 重定标脚注 / 片名主播段 ---------- */
+            const poseTimeShort = (s) => {
+                if (!s) return '';
+                const d = new Date(s);
+                if (isNaN(d.getTime())) return s;
+                const pad = (n) => (n < 10 ? '0' + n : '' + n);
+                const hm = pad(d.getHours()) + ':' + pad(d.getMinutes());
+                return d.toDateString() === new Date().toDateString() ? hm : pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + hm;
+            };
+            const poseGuard = computed(() => {
+                const disk = poseLive.disk_free_gb || 0;
+                const low = disk > 0 && disk < 10;
+                const la = poseLive.last_activity || '';
+                let lastAgo = '—';
+                const laDate = la ? new Date(la) : null;
+                const hm = /^(\d{2}):(\d{2})$/.exec(la);
+                if (hm) {
+                    const mins = Math.max(0, Math.round((Date.now() - new Date().setHours(+hm[1], +hm[2], 0, 0)) / 60000));
+                    lastAgo = mins <= 0 ? '刚刚' : mins + ' 分钟前';
+                } else if (laDate && !isNaN(laDate.getTime())) {
+                    /* ISO 时间戳：换算成相对时间（与设计稿一致，不裸展示完整 ISO） */
+                    const mins = Math.max(0, Math.round((Date.now() - laDate.getTime()) / 60000));
+                    lastAgo = mins <= 1 ? '刚刚' : (mins < 60 ? mins + ' 分钟前' : Math.floor(mins / 60) + ' 小时前');
+                } else if (la) {
+                    lastAgo = la; // 不可解析的格式，兜底原样展示
+                }
+                const ld = poseLive.last_done || {};
+                const total = ld.total || 0;
+                return {
+                    modeLow: low,
+                    mode: low ? '仅重定标 · 磁盘护栏' : '入池 + 重定标',
+                    sweepShort: poseTimeShort(poseT.sweep.generated_at),
+                    lastAgo,
+                    batchPct: total ? Math.min(100, Math.round(100 * (ld.idx || 0) / total)) : 0,
+                };
+            });
+            const poseSweepNear = computed(() => {
+                const top = poseT.sweep.top || [];
+                if (top.length < 2) return 0;
+                const best = top[0].F1;
+                return top.slice(1).filter((r) => best - r.F1 < 0.01).length;
+            });
+            /* 片名主播段：与后端 poseClipRe 同口径（主播_日期_时间_序号，主播名可含下划线/emoji） */
+            const poseClipStreamerName = (clip) => {
+                const m = /^(.+)_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_\d+/.exec(clip || '');
+                return m ? m[1] : '';
+            };
             // 驻留时 30s 轮询进度卡（片池列表只在进入页签/翻页/搜索时拉取）
             setInterval(() => {
                 if (activeTab.value === 'pose_training' && isLoggedIn.value) fetchPoseSummary();
             }, 30000);
+
+            /* ===================== 高光判定 · 实时队列（内置轻量引擎页） ===================== */
+            /* 数据全部来自 GET /highlight/live：pending/queue_head=待分析积压（认领片优先、mtime 正序，
+               与 highlightPass 消费口径一致）；current=正在分析片与阶段（probe 打分/gate 姿态门/cut 裁切）；
+               today/recent_done=今日统计与最近判定（highlight_status.json 真值）。 */
+            const hlq = reactive({ enabled: false, running: false, gate_enabled: false, pending: 0,
+                queue_head: [], current: {}, currents: [], today: {}, recent_done: [], last_pass: '', scan_interval_min: 2, workers: 1 });
+            const fetchHlqLive = async () => {
+                try {
+                    const res = await api.get('/highlight/live');
+                    const d = res.data || {};
+                    hlq.enabled = !!d.enabled;
+                    hlq.running = !!d.running;
+                    hlq.gate_enabled = !!d.gate_enabled;
+                    hlq.pending = d.pending || 0;
+                    hlq.queue_head = d.queue_head || [];
+                    hlq.current = d.current || {};
+                    hlq.currents = d.currents || [];
+                    hlq.today = d.today || {};
+                    hlq.recent_done = d.recent_done || [];
+                    hlq.last_pass = d.last_pass || '';
+                    hlq.scan_interval_min = d.scan_interval_min || 2;
+                    hlq.workers = d.workers || 1;
+                } catch (e) {}
+            };
+            /* 进度条：队列积压以 10 片为满（分析吞吐约 13 片/小时，10 片已属明显积压） */
+            const hlqProgPct = computed(() => Math.min(100, Math.round(100 * (hlq.pending || 0) / 10)));
+            const hlqNextName = computed(() => {
+                const cur = hlq.current || {};
+                if (cur.clip) return cur.streamer || cur.clip; // 分析中显示主播名，完整片名由侧栏信息板承载
+                const q = hlq.queue_head || [];
+                return q.length ? (q[0].streamer || q[0].clip) : '';
+            });
+            /* 阶段中文标签 */
+            const hlqStageLabel = computed(() => ({probe: '解码打分', gate: '姿态门', cut: '裁切高光'}[hlq.current.stage] || '解码打分'));
+            /* 传送带小车（三层回落，保持常驻有内容）：
+               正在分析的片（多路并行取最早开始的）按阶段滑动 → 空闲时显示队头「下一片」待命 → 队列也空才走空态 */
+            const hlqCart = computed(() => {
+                const list = hlq.currents || [];
+                if (list.length) {
+                    const cur = list[0];
+                    const slot = {probe: 0, gate: 1, cut: 2}[cur.stage] || 0;
+                    return { clip: cur.clip, streamer: cur.streamer, slot, elapsed: cur.elapsed_sec || 0, active: true, parallel: list.length };
+                }
+                const q = (hlq.queue_head || [])[0];
+                if (q) return { clip: q.clip, streamer: q.streamer, slot: 0, elapsed: 0, active: false, parallel: 0 };
+                return { clip: '', slot: 3, elapsed: 0, active: false, parallel: 0 };
+            });
+            /* 步进条四工位（与 4 个瞄准框中心一一对齐，pose 卡同构）：
+               前三位随当前片推进（下一片待命时全灰）；「完成」位 done=最近判定有产出，不 lit 连接线 */
+            const hlqStages = computed(() => {
+                const names = ['解码打分', '姿态门', '裁切', '完成'];
+                const working = hlqCart.value.active;
+                const idx = hlqCart.value.slot;
+                const last = (hlq.recent_done || [])[0];
+                const lastOk = !!(last && last.output);
+                return names.map((name, i) => {
+                    if (i === 3) {
+                        return { name, done: lastOk, active: false, lit: false,
+                            info: lastOk ? ((last.streamer || '') + ' · ' + last.segments + ' 段').replace(/^ · /, '') : '' };
+                    }
+                    return {
+                        name,
+                        done: working && i < idx,
+                        active: working && i === idx,
+                        lit: working && i <= idx,
+                        info: working && i === idx ? (i === 0 ? 'ffmpeg 双因子' : (i === 1 ? 'dance 判别' : '产出 mp4')) : '',
+                    };
+                });
+            });
+            const hlqTimeShort = (s) => {
+                if (!s) return '';
+                const d = new Date();
+                const today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+                if (s.startsWith(today)) return s.slice(11, 16); // 今天只显时分
+                return s.slice(5, 16);                           // 跨天带 MM-DD HH:MM
+            };
+            /* 驻留 5s 轮询；进入页签立即拉一次 */
+            setInterval(() => {
+                if (activeTab.value === 'builtin_recorder' && isLoggedIn.value) fetchHlqLive();
+            }, 5000);
 
             watch(activeTab, (newTab) => {
                 if (newTab === 'logs') fetchLogs();
@@ -6814,6 +7355,7 @@
                 }
                 if (newTab === 'builtin_recorder') {
                     fetchBuiltinConfig();
+                    fetchHlqLive();
                 }
                 if (newTab === 'overview') {
                     setTimeout(() => {
@@ -6845,9 +7387,11 @@
                 logQuery, logData, logExportLimit, fetchLogs, downloadLogs, configForm, configDirsString,
                 configSaving, lastConfigSave, fetchConfig, saveConfig,
                 biliStatus, biliCounts, biliJobs, biliJobsFiltered, biliFilter, biliBusy, biliLoginText,
-                biliStatusMeta, biliAct, fetchBili, biliManualRefresh, biliRefreshing, biliCoverEnable,
+                biliStatusMeta, biliAct, biliSweep, biliRefresh, fetchBili, biliManualRefresh, biliRefreshing, biliCoverEnable,
                 poseT, poseRefreshing, poseManualRefresh, posePageNum, onPosePage, poseDancePct, poseSearchDebounced,
                 poseLive, fetchPoseLive, poseLiveNow, poseStages, poseCart, poseQueueChips, logTerm, poolFlash, recalibFlash, skipGhost, poseApplying, poseAutoApplyOn, poseApplyBest, poseToggleAutoApply, poseDetailShow, poseDetail, poseOpenDetail, poseSecIdx, poseSecData,
+                poseSkel, poseSkelIdle, cartEl, infoFlash, poseGuard, poseSweepNear, poseClipStreamerName, poseTimeShort,
+                hlq, hlqProgPct, hlqNextName, hlqStageLabel, hlqCart, hlqStages, hlqTimeShort, fetchHlqLive,
                 biliCand, biliCandShow, biliCandLoading, biliOpenCandidates, biliCandPoster, biliAddCand,
                 biliCoverRow, biliCoverShow, biliCoverCustom, biliCoverOptions, biliCoverActive, biliOpenCover, biliPickCover,
                 biliPosterSrc, biliPosterAt, biliTc,

@@ -716,7 +716,8 @@ func (s *Server) handleBilibiliStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBilibiliQueue 投稿队列：GET 全量列表 / POST 单条操作
-//（action = retry|delete|move|cover|add，move 带 dir，cover 带 sec，add 的 id 为候选文件路径）。
+// （action = retry|delete|move|cover|add|sweep|refresh，move 带 dir，cover 带 sec，
+// add 的 id 为候选文件路径；sweep/refresh 是全队列操作，不需要 id）。
 func (s *Server) handleBilibiliQueue(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -732,14 +733,14 @@ func (s *Server) handleBilibiliQueue(w http.ResponseWriter, r *http.Request) {
 			s.sendJSONError(w, r, http.StatusBadRequest, "请求体解析失败")
 			return
 		}
-		if req.ID == "" {
+		if req.ID == "" && req.Action != "sweep" && req.Action != "refresh" {
 			s.sendJSONError(w, r, http.StatusBadRequest, "id 必填")
 			return
 		}
 		switch req.Action {
-		case "retry", "delete", "move", "cover", "add":
+		case "retry", "delete", "move", "cover", "add", "sweep", "refresh":
 		default:
-			s.sendJSONError(w, r, http.StatusBadRequest, "action 必须为 retry/delete/move/cover/add")
+			s.sendJSONError(w, r, http.StatusBadRequest, "action 必须为 retry/delete/move/cover/add/sweep/refresh")
 			return
 		}
 		ok, msg := app.PublishQueueAction(req.Action, req.ID, req.Dir, req.Sec)
@@ -750,7 +751,12 @@ func (s *Server) handleBilibiliQueue(w http.ResponseWriter, r *http.Request) {
 			s.sendJSONError(w, r, http.StatusConflict, msg)
 			return
 		}
-		s.sendJSONSuccess(w, r, nil)
+		// sweep 的结果说明（移除几条）随 data.message 回给前端做 toast。
+		payload := map[string]interface{}{}
+		if msg != "" {
+			payload["message"] = msg
+		}
+		s.sendJSONSuccess(w, r, payload)
 	default:
 		s.sendJSONError(w, r, http.StatusMethodNotAllowed, "Method not allowed")
 	}

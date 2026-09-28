@@ -179,6 +179,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 		Streamers: s.handleStreamers, ActiveStreamers: s.handleActiveStreamers, Cookies: s.handleCookies,
 		BilibiliStatus: s.handleBilibiliStatus, BilibiliQueue: s.handleBilibiliQueue,
 		BilibiliCandidates: s.handleBilibiliCandidates, BilibiliPoster: s.handleBilibiliPoster,
+		HighlightLive: s.handleHighlightLive, HighlightThumb: s.handleHighlightThumb,
 		PoseTrainingSummary: s.handlePoseTrainingSummary, PoseTrainingClips: s.handlePoseTrainingClips, PoseTrainingThumb: s.handlePoseTrainingThumb,
 		PoseTrainingLive: s.handlePoseTrainingLive, PoseTrainingClip: s.handlePoseTrainingClip, PoseTrainingApplyBest: s.handlePoseTrainingApplyBest, PoseTrainingAutoApply: s.handlePoseTrainingAutoApply,
 		RecorderStatus: s.handleRecorderStatus, RecorderControl: s.handleRecorderControl, RecorderLogs: s.handleRecorderLogs,
