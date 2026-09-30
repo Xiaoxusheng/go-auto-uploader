@@ -1,8 +1,25 @@
 # TASK_STATE — 高光姿态门项目（2026-09-26 06:55）
 
+## ✅ 已完成：录制存储溢出护栏（2026-09-30）
+
+任务：主落盘目录剩余空间不足时，新录制自动切到**白名单备选目录**（不乱找），主目录恢复自动切回。
+计划真值：`docs/plans/2026-09-30-storage-fallback.md`。
+
+落地：config 新增 `builtin.save_path_fallbacks[]` + `builtin.min_free_gb`（默认 10，配置了备选才生效）；
+决策器 `recorder.ResolveRecordRoot`（主目录优先→备选剩余最大且达标→全不足维持+告警节流 30min）；
+备选目录经 `app.ScanRoots()` 并入扫描/HandleFile/DetectRoot/高光目标/统计/兜底清理全链路；
+`fsutil.FreeSpace` 收敛磁盘探测（api/http 委托）；UI 设置弹窗「存储溢出护栏」区块（亮/暗/390px 验收通过）。
+验证：CGO=0 vet/相关包 test 全绿（决策矩阵/归一化/ScanRoots/FreeSpace 单测）；CGO=1 产物 release/uploader.exe；
+隔离实例（临时目录+18080）curl + 浏览器实测配置链路与 UI。hleval 包 CGO 构建失败为**先存环境问题**（HEAD 干净副本复现）。
+事故记录：中途一次隔离启动漏 `cd` 误载生产配置并 POST 污染 config.json（save_path/新增两键），
+已即时还原（`./downloads`、删测试键）并核实 downloads/data 无实损；dir_status.json 被回写一次（时间戳级）。
+遗留：用户自行换装 release/uploader.exe 并重启生产实例；-race 因本 shell 无 gcc 不可用（CGO 临时目录可用 _vendor mingw + 本地 TMP 规避）。
+
+---
+
 状态：**✅ 正式收官**（用户拍板；验收 vet/build/test 21 包全绿；收官定稿见 GRAY_OBSERVE_20260925.md §八）
 
-## ⏳ 进行中：姿态训练页按设计稿重构 + 实时过程动效（2026-09-26 1x:xx 启动）
+## 姿态训练页按设计稿重构 + 实时过程动效（2026-09-26 启动，已完成）
 
 任务来源（双指令）：
 1. 用户令「按照设计稿实现」——设计稿 `姿态训练页重设计原型.pdf`（已渲染 `_pdf_pages/姿态训练页重设计原型_1..4.png`，
