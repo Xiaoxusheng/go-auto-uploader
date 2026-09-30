@@ -47,26 +47,24 @@
 
 ## 五、Web 控制台 UI 风格速查（新增页面/组件必须遵守）
 
-视觉语言：**Editorial Workspace / Automation Workspace（浅色默认 · 黑白灰为主体 · 排版驱动层级 · 细边框 · 大量留白）**。2026-09-30 全量重构，设计与实施真值来源：`docs/ui-editorial-workspace-plan.md`；Token 真值来源是 `web/index.html` 顶部 `:root`（浅色默认）与 `html[data-theme='dark']`（仅覆盖取值）两个变量块，新样式只许引用变量，禁止硬编码颜色。
+视觉语言：**Premium Minimal SaaS Analytics Dashboard（浅灰 App 底 #F5F6F8 · 白色卡片 · 轻边框轻阴影 · 蓝色主色 #1677FF）**。2026-09-30 第三轮定稿（Editorial 文档风已废弃：无 Context 右栏、无文档三栏）。Token 真值来源是 `web/index.html` 顶部 `:root`（浅色默认）与 `html[data-theme='dark']`（#111113/#18181B/#202023）两个变量块，新样式只许引用变量，禁止硬编码颜色。
 
-**Shell（三栏 Workspace）**
-- 布局：侧栏 240px（`--sb-w`，分组树：工作台/录制/智能/系统/设置，展开态存 localStorage）+ Header 52px（`--header-h`：面包屑 / 全局搜索 Ctrl+K / WS 状态 / 主题 / 退出）+ 内容区（max-width 1120px）+ Context 右栏（`--ctx-w`，仅姿态训练/运行日志显示本页目录）。
-- 移动端 ≤900px：侧栏转抽屉（汉堡按钮 + mask），Header 收缩为图标；设置页左导航转横向 chips。
+**Shell**
+- 布局：Sidebar 232px（白底，静态分组标签 工作台/录制/智能/系统/设置 + 38px 菜单项，active #F1F3F5 + 蓝 icon）+ Header 56px（面包屑 / 搜索框灰底 10px 圆角 / WS 状态 / 主题 / 退出）+ 内容区 max-width 1400px（灰底上放白卡）。
+- 命令面板 Ctrl/⌘+K（.cmdk-*，openCmdk()）；移动端 ≤900px 侧栏抽屉化。
 
 **颜色与层级**
-- 浅色（默认）：`--bg` #ffffff / `--panel` #fafafa / `--panel-2` hover / `--panel-3` 激活；深色：#0f0f10 / #151516 / #1c1c1e / #262629。双主题布局完全一致，只覆盖 Token。
-- 文字四级灰度 `--t1..t4`；语义色绿(成功/运行)/蓝(信息/链接)/红(危险)/橙(警告) 各配 `*-dim` 半透明底；颜色只承担状态，占比 5–15%。
-- 分层靠 1px 实色 `--line`（浅）/ rgba 白线（深），禁止阴影堆砌（`--shadow`/`--shadow-pop` 只给弹层）；禁止渐变、Glow、光斑背景。
-- 圆角阶梯：卡片 `--r-lg` 10px / 次级 `--r-md` 8px / 小元素 `--r-sm` 6px；按钮 7px；999px 药丸只允许 chip/tag/状态点。
+- 浅色：App 底 `--bg` #F5F6F8；Sidebar/Header `--panel` #FFF；卡片 `--card` #FFF；hover `--panel-2` / active `--panel-3` #F1F3F5。深色：#111113 底 / #18181B 卡与侧栏 / #202023 次面。
+- 语义色：主色蓝 `--blue` #1677FF（主按钮/链接/激活 icon/环图）、绿成功、橙警告、红危险、紫 #7C3AED 仅用于图表；颜色只用于状态与图表，禁止大面积彩色卡。
+- 卡片 = 主要视觉容器：`.card` 白底 + 1px `--line` + `--shadow`(0 2px 8px .03)；hover `--shadow-hover`。禁止渐变/Glow/厚阴影。
+- 圆角：卡片 `--r-lg` 14px / 控件 `--r-md` 10px / 小元素与按钮 `--r-sm` 8px；999px 药丸仅限 chip/tag/状态点。
 
-**必须复用的现有类，禁止自造第二套**：`.pill`（按钮，`.primary` 黑底白字 / `.danger` / `.sm` / `.xs`）、`.icobtn`、`.card`/`.card-head`/`.card-title`、`.statrow`+`.stat-card`（无边框统计条，数字 21px/650）、`.chip`、`.dot`（状态点）、`.tag`、`.inp`（focus 黑边框 + `--ring`）、`.segpills`（分段筛选）、`.toolbar`、`.sec-head`/`.sec-title`、`.ed-list`/`.ed-item`（编辑式列表）、`.set-row` 系列（设置行：Label+Description+Control+Divider）、`.skel-rows`（骨架屏）、`table.tbl`+`.tbl-empty`；弹窗/抽屉/下拉/分页/菜单/开关用现成 `x-modal`/`x-drawer`/`x-select`/`x-pagination`/`x-menu`/`x-switch`；通知用 `.toasts` 与 `.notifies`；命令面板 `.cmdk-*`（openCmdk()）。
+**必须复用的现有类**：`.pill`（`.primary` 蓝底白字）、`.icobtn`、`.card`、`.kpi-grid`+`.kpi-card`（KPI：标题/30px 数字/.spark 迷你柱/kpi-info）、`.activity-strip`（任务动态+`.avatars`）、`.store-body`+`.sl-row`（存储环图图例）、`.statrow`（白卡统计条）、`.chip`/`.dot`/`.tag`、`.inp`（36px 圆角 8 focus 蓝环）、`.segpills`、`.toolbar`、`.sec-head`、`.ed-list`/`.ed-item`/`.ed-date`、`.set-layout`+`.set-nav`+`.set-sec`（分节卡）、`.skel-rows`、`table.tbl`+`.tbl-empty`、`.col-sm-hide`（≤640px 列裁剪）；弹层组件 `x-modal`/`x-drawer`/`x-select`/`x-pagination`/`x-menu`/`x-switch`；`.toasts`/`.notifies`。
 
-**排版**：系统字体栈，基准 14px/1.6；页头 h1 24px/600、描述 13px；卡片标题 13.5px/600；辅助文字 11–13px；等宽用 `--font-mono`；一切数字 `font-variant-numeric: tabular-nums`。层级靠字号/字重/间距/divider，不靠颜色和卡片堆叠。
+**排版**：系统字体栈，基准 14px/1.6；页头 h1 30px/600（Overview）、描述 13px；卡片标题 13.5px/600；KPI 数字 30px/600 tabular-nums；辅助 11–12px；`--font-mono` 等宽。
 
-**动效**：只服务状态变化/空间关系/操作反馈，120–260ms、ease-out；循环动画预算 ≤3（姿态/高光卡保留 docs/pose-live-motion.md 体系原样）；禁止漂浮/发光/粒子/装饰动画；`prefers-reduced-motion` 全量降级必须保留。
+**动效**：120–260ms ease-out；卡片 hover 阴影 150ms；循环动画预算 ≤3（姿态/高光卡保留 docs/pose-live-motion.md 体系）；`prefers-reduced-motion` 全量降级。
 
-**响应式三断点**：≤1200px 网格降列、Context 隐藏(≤1100px)；≤900px 侧栏抽屉化、统计条 2 列；≤600px 表单/设置行单列、h1 20px、编辑式列表块状堆叠。
+**响应式**：≤1200px 网格降列/KPI 2 列；≤640px KPI 1 列、表格列裁剪、min-width 480；≤900px 侧栏抽屉。无障碍：`:focus-visible` 蓝 outline、图标按钮 aria-label、ESC 关闭弹层；禁止 `user-scalable=no`。
 
-**无障碍**：交互控件保留 `:focus-visible`（蓝 outline）；图标按钮必须有 `aria-label`；弹窗/抽屉/命令面板支持 ESC；禁止 `user-scalable=no`（embed_test 断言）。
-
-**z-index 阶梯**：下拉 60–70 < 弹出卡 80 < 侧栏抽屉 94/95 < 模态 100 < 命令面板 120 < toast 200 < 通知 210 < 图片预览 300。
+**z-index**：下拉 60–70 < 弹出卡 80 < 侧栏抽屉 94/95 < 模态 100 < 命令面板 120 < toast 200 < 通知 210 < 图片预览 300。

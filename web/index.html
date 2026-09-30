@@ -23,13 +23,14 @@
    颜色只承担状态表达。真值来源：docs/ui-editorial-workspace-plan.md
    ================================================================ */
 :root {
-    --bg: #ffffff;
-    --panel: #fafafa;
-    --panel-2: #f4f4f5;
-    --panel-3: #ececee;
-    --line: #e4e4e7;
-    --line-strong: #d4d4d8;
-    --line-subtle: #f0f0f1;
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --panel-2: #f5f6f8;
+    --panel-3: #f1f3f5;
+    --card: #ffffff;
+    --line: #eaecef;
+    --line-strong: #e5e7eb;
+    --line-subtle: #f0f1f3;
     --t1: #18181b;
     --t2: #52525b;
     --t3: #a1a1aa;
@@ -38,37 +39,41 @@
     --green-bright: #15803d;
     --green-dim: rgba(22, 163, 74, 0.09);
     --green-ink: #ffffff;
-    --blue: #2563eb;
-    --blue-dim: rgba(37, 99, 235, 0.08);
-    --red: #dc2626;
-    --red-bright: #b91c1c;
-    --red-dim: rgba(220, 38, 38, 0.07);
-    --orange: #d97706;
-    --orange-bright: #b45309;
-    --orange-dim: rgba(217, 119, 6, 0.10);
+    --blue: #1677ff;
+    --blue-dim: rgba(22, 119, 255, 0.08);
+    --purple: #7c3aed;
+    --purple-dim: rgba(124, 58, 237, 0.08);
+    --red: #ef4444;
+    --red-bright: #dc2626;
+    --red-dim: rgba(239, 68, 68, 0.07);
+    --orange: #f59e0b;
+    --orange-bright: #d97706;
+    --orange-dim: rgba(245, 158, 11, 0.10);
     --ctl-bg: #ffffff;
     --seg-thumb: #ffffff;
     --mask: rgba(24, 24, 27, 0.32);
-    --ring: rgba(24, 24, 27, 0.07);
+    --ring: rgba(22, 119, 255, 0.12);
     --blueprint: rgba(24, 24, 27, 0.035);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-    --shadow-pop: 0 1px 3px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.09);
-    --sb-w: 240px;
-    --header-h: 52px;
+    --shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+    --shadow-hover: 0 4px 14px rgba(0, 0, 0, 0.05);
+    --shadow-pop: 0 4px 20px rgba(16, 24, 40, 0.10);
+    --sb-w: 232px;
+    --header-h: 56px;
     --ctx-w: 188px;
-    --r-lg: 10px;
-    --r-md: 8px;
-    --r-sm: 6px;
+    --r-lg: 14px;
+    --r-md: 10px;
+    --r-sm: 8px;
     --font-mono: 'Cascadia Mono', ui-monospace, Consolas, 'JetBrains Mono', monospace;
 }
 
 html[data-theme='dark'] {
-    --bg: #0f0f10;
-    --panel: #151516;
-    --panel-2: #1c1c1e;
-    --panel-3: #262629;
+    --bg: #111113;
+    --panel: #18181b;
+    --panel-2: #202023;
+    --panel-3: #26262a;
+    --card: #18181b;
     --line: rgba(255, 255, 255, 0.08);
-    --line-strong: rgba(255, 255, 255, 0.15);
+    --line-strong: rgba(255, 255, 255, 0.14);
     --line-subtle: rgba(255, 255, 255, 0.05);
     --t1: #f4f4f5;
     --t2: #a1a1aa;
@@ -78,22 +83,26 @@ html[data-theme='dark'] {
     --green-bright: #4ade80;
     --green-dim: rgba(34, 197, 94, 0.13);
     --green-ink: #04120a;
-    --blue: #60a5fa;
-    --blue-dim: rgba(59, 130, 246, 0.15);
+    --blue: #4096ff;
+    --blue-dim: rgba(64, 150, 255, 0.15);
+    --purple: #8b5cf6;
+    --purple-dim: rgba(139, 92, 246, 0.15);
     --red: #ef4444;
     --red-bright: #f87171;
     --red-dim: rgba(239, 68, 68, 0.13);
     --orange: #f59e0b;
     --orange-bright: #fbbf24;
     --orange-dim: rgba(245, 158, 11, 0.13);
-    --ctl-bg: #1c1c1e;
+    --ctl-bg: #202023;
     --seg-thumb: #3a3a3f;
     --mask: rgba(0, 0, 0, 0.6);
-    --ring: rgba(255, 255, 255, 0.12);
+    --ring: rgba(64, 150, 255, 0.18);
     --blueprint: rgba(255, 255, 255, 0.025);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow: 0 2px 8px rgba(0, 0, 0, 0.20);
+    --shadow-hover: 0 4px 14px rgba(0, 0, 0, 0.30);
     --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.55);
 }
+
 
 * { box-sizing: border-box; }
 [v-cloak] { display: none; }
@@ -159,20 +168,11 @@ a { color: inherit; text-decoration: none; }
 .sb-nav { display: flex; flex-direction: column; flex: 1; overflow-y: auto; padding: 2px 0 10px; }
 .sb-group { margin-top: 10px; }
 .sb-group:first-child { margin-top: 2px; }
-.sb-group-hd {
-    display: flex; align-items: center; justify-content: space-between;
-    width: 100%; padding: 4px 10px;
-    border: none; background: none; cursor: pointer; font-family: inherit;
-    border-radius: 6px;
-}
-.sb-group-hd:hover .sb-group-lb { color: var(--t2); }
-.sb-group-lb { font-size: 11px; font-weight: 600; color: var(--t3); letter-spacing: 0.05em; }
-.sb-group-hd .sb-chev { width: 12px; height: 12px; color: var(--t4); transition: transform 0.15s ease; }
-.sb-group-hd[aria-expanded="false"] .sb-chev { transform: rotate(-90deg); }
+.sb-group-lb { font-size: 11px; font-weight: 600; color: var(--t3); letter-spacing: 0.05em; padding: 4px 10px; }
 .sb-children { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; }
 .sb-item {
     display: flex; align-items: center; gap: 9px;
-    padding: 6.5px 10px; border-radius: 6px;
+    height: 38px; padding: 0 10px; border-radius: 8px;
     color: var(--t2); font-size: 13px; cursor: pointer;
     user-select: none; white-space: nowrap;
     transition: background-color 0.12s ease, color 0.12s ease;
@@ -180,7 +180,7 @@ a { color: inherit; text-decoration: none; }
 .sb-item:hover { color: var(--t1); background: var(--panel-2); }
 .sb-item.on { color: var(--t1); background: var(--panel-3); font-weight: 600; }
 .sb-item .ic { width: 15px; height: 15px; color: var(--t3); }
-.sb-item.on .ic { color: var(--t1); }
+.sb-item.on .ic { color: var(--blue); }
 
 .sb-foot { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
 .sb-stat { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--t3); padding: 3px 8px; }
@@ -202,7 +202,7 @@ a { color: inherit; text-decoration: none; }
     display: flex; align-items: center; gap: 12px;
     padding: 0 14px 0 20px;
     border-bottom: 1px solid var(--line);
-    background: var(--bg);
+    background: var(--panel);
 }
 .icobtn.m-menu-btn { display: none; }
 .hd-crumb { display: flex; align-items: center; gap: 8px; font-size: 13px; min-width: 0; flex: 1; }
@@ -212,8 +212,8 @@ a { color: inherit; text-decoration: none; }
 .hd-search {
     display: flex; align-items: center; gap: 8px;
     width: 300px; height: 32px; padding: 0 8px 0 10px;
-    border: 1px solid var(--line); border-radius: 7px;
-    background: var(--panel); color: var(--t3);
+    border: 1px solid var(--line); border-radius: 10px;
+    background: var(--panel-2); color: var(--t3);
     font-size: 12.5px; font-family: inherit; cursor: pointer;
     transition: border-color 0.12s ease, color 0.12s ease;
 }
@@ -223,7 +223,7 @@ a { color: inherit; text-decoration: none; }
 .kbd {
     flex-shrink: 0; font-size: 10.5px; color: var(--t3);
     border: 1px solid var(--line); border-radius: 4px;
-    padding: 1px 5px; background: var(--bg); font-family: var(--font-mono);
+    padding: 1px 5px; background: var(--card); font-family: var(--font-mono);
 }
 .hd-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .hd-conn { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--t3); padding: 0 4px; border: none; background: none; font-family: inherit; cursor: default; }
@@ -234,26 +234,8 @@ a { color: inherit; text-decoration: none; }
     padding: 26px 30px 56px;
     scroll-behavior: smooth;
 }
-.page { max-width: 1120px; margin: 0 auto; animation: pageIn 0.24s ease; }
+.page { max-width: 1400px; margin: 0 auto; animation: pageIn 0.24s ease; }
 @keyframes pageIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-
-/* ---------- Context 右栏（本页目录） ---------- */
-.ctx {
-    width: var(--ctx-w); flex-shrink: 0;
-    border-left: 1px solid var(--line);
-    padding: 26px 16px 26px 18px;
-    overflow-y: auto;
-}
-.ctx-title { font-size: 11px; font-weight: 600; color: var(--t3); letter-spacing: 0.05em; margin-bottom: 10px; }
-.ctx-link {
-    display: block; font-size: 12.5px; color: var(--t3);
-    padding: 4.5px 0 4.5px 12px;
-    border-left: 1px solid var(--line);
-    cursor: pointer; user-select: none;
-    transition: color 0.12s ease, border-color 0.12s ease;
-}
-.ctx-link:hover { color: var(--t1); }
-.ctx-link.on { color: var(--t1); border-left-color: var(--t1); font-weight: 500; }
 
 /* ===================== 页头 ===================== */
 .pg-head {
@@ -274,16 +256,16 @@ a { color: inherit; text-decoration: none; }
 .pill {
     display: inline-flex; align-items: center; gap: 7px;
     height: 34px; padding: 0 14px;
-    border-radius: 7px; border: 1px solid var(--line-strong);
-    background: var(--bg); color: var(--t1);
+    border-radius: 8px; border: 1px solid var(--line-strong);
+    background: var(--card); color: var(--t1);
     font-size: 13px; font-weight: 500; font-family: inherit;
     cursor: pointer; user-select: none; white-space: nowrap;
     transition: background-color 0.12s ease, border-color 0.12s ease, transform 0.08s ease, opacity 0.12s ease;
 }
 .pill:hover { background: var(--panel-2); }
 .pill:active { transform: scale(0.98); }
-.pill.primary { background: var(--t1); border-color: var(--t1); color: var(--bg); }
-.pill.primary:hover { background: color-mix(in srgb, var(--t1) 82%, var(--bg)); }
+.pill.primary { background: var(--blue); border-color: var(--blue); color: #ffffff; }
+.pill.primary:hover { background: color-mix(in srgb, var(--blue) 86%, #000 0%) ; filter: brightness(1.06); }
 .pill.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, var(--line-strong)); background: var(--bg); }
 .pill.danger:hover { background: var(--red-dim); }
 .pill.sm { height: 29px; padding: 0 11px; font-size: 12.5px; gap: 5px; }
@@ -308,7 +290,7 @@ a { color: inherit; text-decoration: none; }
 .linkish[disabled] { opacity: 0.5; cursor: default; text-decoration: none; }
 
 .clear-btn {
-    border: 1px solid var(--line); background: var(--bg); color: var(--t3);
+    border: 1px solid var(--line); background: var(--card); color: var(--t3);
     font-size: 11.5px; border-radius: 6px; padding: 4px 11px; cursor: pointer; font-family: inherit;
 }
 .clear-btn:hover { color: var(--t1); border-color: var(--line-strong); }
@@ -359,9 +341,10 @@ a { color: inherit; text-decoration: none; }
 
 /* ===================== 卡片 / 区块 ===================== */
 .card {
-    background: var(--bg);
+    background: var(--card);
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
+    box-shadow: var(--shadow);
     padding: 18px 20px;
 }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
@@ -373,8 +356,11 @@ a { color: inherit; text-decoration: none; }
 .statrow {
     display: grid; grid-template-columns: repeat(5, 1fr);
     margin: 2px 0 20px;
-    border-top: 1px solid var(--line-subtle);
-    border-bottom: 1px solid var(--line-subtle);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow);
+    padding: 5px 0;
 }
 .statrow.c4 { grid-template-columns: repeat(4, 1fr); }
 .stat-card {
@@ -383,6 +369,52 @@ a { color: inherit; text-decoration: none; }
     display: flex; flex-direction: column; gap: 3px;
 }
 .stat-card:first-child { border-left: none; padding-left: 2px; }
+
+/* ===================== SaaS KPI / Mini Chart / 活动条 / 存储环图 ===================== */
+.kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 2px 0 16px; }
+.kpi-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg);
+    box-shadow: var(--shadow); padding: 18px 20px 16px;
+    display: flex; flex-direction: column; gap: 6px;
+}
+.kpi-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.kpi-k { font-size: 12.5px; color: var(--t3); display: inline-flex; align-items: center; gap: 6px; }
+.kpi-v { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.kpi-v .kpi-u { font-size: 13px; font-weight: 500; color: var(--t3); margin-left: 4px; letter-spacing: 0; }
+.kpi-info { font-size: 11.5px; color: var(--t3); }
+.kpi-info b { color: var(--t2); font-weight: 600; }
+.spark { display: flex; align-items: flex-end; gap: 3px; height: 34px; flex-shrink: 0; }
+.spark i { width: 5px; border-radius: 2px; background: var(--line-strong); min-height: 3px; }
+.spark i.on { background: var(--blue); }
+.activity-strip {
+    display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg);
+    box-shadow: var(--shadow); padding: 13px 20px; margin-bottom: 14px;
+}
+.activity-strip .a-main { min-width: 0; }
+.activity-strip .a-t { font-size: 13.5px; font-weight: 600; }
+.activity-strip .a-d { font-size: 12px; color: var(--t3); margin-top: 2px; }
+.activity-strip .a-d b { color: var(--t1); font-weight: 600; font-variant-numeric: tabular-nums; }
+.avatars { display: flex; align-items: center; }
+.avatars .av { width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--card); object-fit: cover; margin-left: -9px; background: var(--panel-3); }
+.avatars .av:first-child { margin-left: 0; }
+.avatars .av-ph { display: flex; align-items: center; justify-content: center; color: var(--t4); }
+.avatars .a-more { font-size: 11px; color: var(--t3); margin-left: 8px; }
+.store-body { display: flex; gap: 20px; align-items: center; }
+.store-legend { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+.sl-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.sl-dot { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+.sl-name { flex: 1; min-width: 0; color: var(--t2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sl-pct { color: var(--t1); font-weight: 600; font-variant-numeric: tabular-nums; }
+.donut-wrap { position: relative; width: 150px; height: 150px; flex-shrink: 0; }
+.donut-wrap .center {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; pointer-events: none;
+}
+.donut-wrap .center .n { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.donut-wrap .center .l { font-size: 11px; color: var(--t3); }
+@media (max-width: 1100px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } .store-body { flex-direction: column; } }
+@media (max-width: 600px) { .kpi-grid { grid-template-columns: 1fr; } }
 .stat-card .k { font-size: 12px; color: var(--t3); display: flex; align-items: center; gap: 6px; }
 .stat-card .v { font-size: 21px; font-weight: 650; line-height: 1.25; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 .stat-card .aside { font-size: 11.5px; color: var(--t3); }
@@ -475,7 +507,7 @@ a { color: inherit; text-decoration: none; }
 .inp {
     height: 36px; padding: 0 11px;
     background: var(--ctl-bg); border: 1px solid var(--line-strong);
-    color: var(--t1); border-radius: 7px;
+    color: var(--t1); border-radius: 8px;
     font-size: 13px; font-family: inherit;
     outline: none; min-width: 0;
     transition: border-color 0.12s ease, box-shadow 0.12s ease;
@@ -521,7 +553,7 @@ html[data-theme='dark'] input[type='time'].inp::-webkit-calendar-picker-indicato
 .xsel-btn {
     display: inline-flex; align-items: center; justify-content: space-between; gap: 8px;
     background: var(--ctl-bg); border: 1px solid var(--line-strong); color: var(--t1);
-    border-radius: 7px; padding: 0 10px; height: 36px; font-size: 13px; font-family: inherit;
+    border-radius: 10px; padding: 0 10px; height: 36px; font-size: 13px; font-family: inherit;
     cursor: pointer; min-width: 108px; transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 .xsel-btn:hover { border-color: var(--t4); }
@@ -532,7 +564,7 @@ html[data-theme='dark'] input[type='time'].inp::-webkit-calendar-picker-indicato
 .xsel-pop {
     position: absolute; z-index: 60; top: calc(100% + 6px); left: 0;
     min-width: 100%; max-height: 264px; overflow-y: auto;
-    background: var(--bg); border: 1px solid var(--line);
+    background: var(--card); border: 1px solid var(--line);
     border-radius: var(--r-md); padding: 4px; box-shadow: var(--shadow-pop);
 }
 .xsel-opt {
@@ -548,7 +580,7 @@ html[data-theme='dark'] input[type='time'].inp::-webkit-calendar-picker-indicato
 .xmenu { position: relative; display: inline-block; }
 .xmenu-pop {
     position: absolute; z-index: 70; right: 0; top: calc(100% + 6px);
-    min-width: 150px; background: var(--bg);
+    min-width: 150px; background: var(--card);
     border: 1px solid var(--line); border-radius: var(--r-md);
     padding: 4px; box-shadow: var(--shadow-pop);
 }
@@ -648,7 +680,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
 .frm-switches.c4 { grid-template-columns: repeat(4, 1fr); }
 .fsw {
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    background: var(--panel); border: 1px solid var(--line);
+    background: var(--card); border: 1px solid var(--line);
     border-radius: var(--r-md); padding: 10px 13px;
 }
 .fsw .lb { font-size: 12.5px; color: var(--t1); }
@@ -666,7 +698,10 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
 }
 .set-nav a:hover { color: var(--t1); }
 .set-nav a.on { color: var(--t1); background: var(--panel-2); font-weight: 550; }
-.set-sec { margin-bottom: 36px; }
+.set-sec {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg);
+    box-shadow: var(--shadow); padding: 20px 22px; margin-bottom: 18px;
+}
 .set-sec-t { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
 .set-sec-t small { display: block; font-size: 12px; color: var(--t3); font-weight: 400; margin-top: 3px; }
 .set-rows { margin-top: 8px; }
@@ -694,7 +729,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
 }
 html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 .ck-card {
-    background: var(--panel); border: 1px solid var(--line);
+    background: var(--card); border: 1px solid var(--line);
     border-radius: var(--r-md); padding: 12px 14px; margin-bottom: 11px;
 }
 .ck-head { display: flex; align-items: center; justify-content: space-between; gap: 9px; margin-bottom: 9px; }
@@ -714,7 +749,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 
 /* ===================== 统计弹窗条形图 ===================== */
 .stats-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-bottom: 16px; }
-.stats-cell { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 13px 15px; }
+.stats-cell { background: var(--card); border: 1px solid var(--line); border-radius: var(--r-md); padding: 13px 15px; }
 .stats-cell .k { font-size: 11.5px; color: var(--t3); }
 .stats-cell .v { font-size: 20px; font-weight: 650; margin-top: 3px; font-variant-numeric: tabular-nums; }
 .stats-cell .v.green { color: var(--green); }
@@ -730,7 +765,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 
 /* ===================== 日志（文档式，不是终端黑块） ===================== */
 .term {
-    background: var(--panel); border: 1px solid var(--line);
+    background: var(--card); border: 1px solid var(--line);
     border-radius: var(--r-lg); padding: 12px 16px;
     font-family: var(--font-mono);
     font-size: 12px; line-height: 1.8;
@@ -753,12 +788,12 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 .login-wrap {
     height: 100vh; height: 100dvh; display: flex; align-items: center; justify-content: center;
     padding: 20px;
-    background: var(--panel);
+    background: var(--bg);
 }
 .login-card {
     width: 380px; max-width: 94vw;
-    background: var(--bg); border: 1px solid var(--line);
-    border-radius: 12px; padding: 34px 32px 24px;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 16px; padding: 34px 32px 24px;
     animation: modIn 0.24s ease;
 }
 .login-logo { display: flex; justify-content: center; margin-bottom: 14px; }
@@ -780,7 +815,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 .xdrw {
     position: fixed; top: 0; right: 0; bottom: 0; z-index: 91;
     width: 480px; max-width: 96vw;
-    background: var(--bg); border-left: 1px solid var(--line);
+    background: var(--card); border-left: 1px solid var(--line);
     display: flex; flex-direction: column;
     box-shadow: var(--shadow-pop);
 }
@@ -816,7 +851,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
     display: flex; align-items: center; justify-content: center; padding: 20px;
 }
 .xmod-card {
-    background: var(--bg); border: 1px solid var(--line);
+    background: var(--card); border: 1px solid var(--line);
     border-radius: 12px; box-shadow: var(--shadow-pop);
     width: 520px; max-width: 96vw; max-height: 88vh;
     display: flex; flex-direction: column;
@@ -850,7 +885,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 .toasts { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
 .toast {
     display: flex; align-items: center; gap: 8px;
-    background: var(--bg); border: 1px solid var(--line-strong);
+    background: var(--card); border: 1px solid var(--line-strong);
     color: var(--t1); font-size: 13px;
     border-radius: 8px; padding: 9px 16px;
     box-shadow: var(--shadow-pop); animation: toastIn 0.22s ease;
@@ -866,7 +901,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 
 .notifies { position: fixed; right: 18px; bottom: 18px; z-index: 210; display: flex; flex-direction: column; gap: 10px; width: 340px; max-width: 92vw; }
 .notify {
-    background: var(--bg); border: 1px solid var(--line);
+    background: var(--card); border: 1px solid var(--line);
     border-radius: 10px; padding: 12px 14px; box-shadow: var(--shadow-pop);
     animation: notifIn 0.24s ease;
 }
@@ -895,7 +930,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 }
 .cmdk {
     width: 560px; max-width: 100%;
-    background: var(--bg); border: 1px solid var(--line);
+    background: var(--card); border: 1px solid var(--line);
     border-radius: 12px; box-shadow: var(--shadow-pop);
     overflow: hidden;
     animation: modIn 0.16s ease;
@@ -983,7 +1018,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 .pose-live-topline .qchips { justify-content: flex-end; }
 
 .pose-kv { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-.pose-kv .kv { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px; }
+.pose-kv .kv { background: var(--card); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px; }
 .pose-kv .kv .k { font-size: 11.5px; color: var(--t3); }
 .pose-kv .kv .k b { font-family: var(--font-mono); font-weight: 600; color: var(--t2); }
 .pose-kv .kv .v { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 3px; }
@@ -1170,11 +1205,12 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 /* ===================== 内置引擎 · 任务卡 / 表格 ===================== */
 .rec-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .rec-card {
-    background: var(--bg); border: 1px solid var(--line);
+    background: var(--card); border: 1px solid var(--line);
     border-radius: var(--r-lg); cursor: pointer;
-    transition: border-color 0.15s ease;
+    box-shadow: var(--shadow);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.rec-card:hover { border-color: var(--line-strong); }
+.rec-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-hover); }
 .rec-card.menu-open { position: relative; z-index: 80; }
 .rec-cv { position: relative; aspect-ratio: 16/9; background: linear-gradient(160deg, #1c2126, #14181d); overflow: hidden; border-radius: var(--r-lg) var(--r-lg) 0 0; }
 .rec-cv img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -1243,9 +1279,6 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
     .frm-switches.c4 { grid-template-columns: repeat(2, 1fr); }
     .grid-main { grid-template-columns: 1fr; }
     .pose-main-grid { grid-template-columns: 1fr; }
-}
-@media (max-width: 1100px) {
-    .ctx { display: none; }
 }
 @media (max-width: 640px) {
     .col-sm-hide { display: none; }
@@ -1458,12 +1491,8 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                 </div>
                 <nav class="sb-nav" aria-label="页面导航">
                     <div class="sb-group" v-for="g in navGroups" :key="g.label">
-                        <button type="button" class="sb-group-hd" @click="toggleGroup(g.label)"
-                                :aria-expanded="expandedGroups[g.label] ? 'true' : 'false'">
-                            <span class="sb-group-lb">{{ g.label }}</span>
-                            <svg class="sb-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9.5l6 6 6-6"/></svg>
-                        </button>
-                        <div class="sb-children" v-show="expandedGroups[g.label]">
+                        <div class="sb-group-lb">{{ g.label }}</div>
+                        <div class="sb-children">
                             <a v-for="m in g.children" :key="m.key"
                                class="sb-item" :class="{on: activeTab === m.key}"
                                href="javascript:void(0)"
@@ -1527,10 +1556,13 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                     <section v-show="activeTab === 'overview'">
                         <div class="pg-head">
                             <div>
-                                <h1>上传工作台</h1>
-                                <div class="sub">自动扫描、录制和归档任务的统一状态</div>
+                                <h1>Overview</h1>
+                                <div class="sub">自动录制、上传与云端归档的运行概览</div>
                             </div>
                             <div class="pg-tools">
+                                <button class="icobtn" title="刷新数据" aria-label="刷新数据" style="width:34px;height:34px;border:1px solid var(--line-strong);border-radius:8px;" @click="refreshOverview">
+                                    <svg class="ic"><use href="#i-refresh"/></svg>
+                                </button>
                                 <button v-if="!systemStatus.running" class="pill primary" :disabled="pendingControl === 'start'" @click="control('start')">
                                     <svg class="ic"><use href="#i-play"/></svg> 开始扫描
                                 </button>
@@ -1539,27 +1571,66 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                     <svg v-else class="ic"><use href="#i-pause"/></svg> 暂停扫描
                                 </button>
                                 <button class="pill" :disabled="pendingControl === 'rescan'" @click="control('rescan')">
-                                    <svg class="ic"><use href="#i-refresh"/></svg> 重新扫描
+                                    <svg class="ic"><use href="#i-scan"/></svg> 立即扫描
                                 </button>
                                 <x-menu>
                                     <template #trigger>
-                                        <button class="icobtn" title="更多操作" aria-label="更多操作" style="width:34px;height:34px;border:1px solid var(--line-strong);border-radius:7px;"><svg class="ic"><use href="#i-more"/></svg></button>
+                                        <button class="icobtn" title="更多操作" aria-label="更多操作" style="width:34px;height:34px;border:1px solid var(--line-strong);border-radius:8px;"><svg class="ic"><use href="#i-more"/></svg></button>
                                     </template>
                                     <div class="xmenu-item" @click="control('relogin')"><svg class="ic"><use href="#i-key"/></svg> 刷新授权</div>
                                     <div class="xmenu-item" :disabled="!queueStatus.failed" @click="control('retry-fail-queue')"><svg class="ic"><use href="#i-refresh"/></svg> 重试失败任务</div>
                                     <div class="xmenu-item is-danger" :disabled="!queueStatus.failed" @click="control('clear-fail-queue')"><svg class="ic"><use href="#i-trash"/></svg> 清空失败任务</div>
                                     <div class="xmenu-item" :disabled="!queueStatus.success" @click="control('clear-success-queue')"><svg class="ic"><use href="#i-check-c"/></svg> 清空成功记录</div>
                                 </x-menu>
+                                <button class="pill" @click="switchTab('settings')">
+                                    <svg class="ic"><use href="#i-gear"/></svg> 设置
+                                </button>
                             </div>
                         </div>
 
-                        <!-- 系统状态：Inline Status Row，不做卡片堆叠 -->
+                        <!-- KPI Cards -->
+                        <div class="kpi-grid">
+                            <div class="kpi-card">
+                                <div class="kpi-top">
+                                    <span class="kpi-k"><span class="dot blue pulse"></span> 上传中</span>
+                                    <div class="spark" title="近 7 日上传量趋势" aria-hidden="true"><i v-for="(b, i) in trendSpark" :key="i" :style="{height: b.h + '%'}" :class="{on: b.on}"></i></div>
+                                </div>
+                                <div class="kpi-v">{{ queueStatus.uploading || 0 }}</div>
+                                <div class="kpi-info">另有 <b>{{ queueStatus.waiting || 0 }}</b> 个任务等待上传</div>
+                            </div>
+                            <div class="kpi-card">
+                                <div class="kpi-top">
+                                    <span class="kpi-k"><span class="dot run"></span> 已完成</span>
+                                    <div class="spark" title="近 7 日上传量趋势" aria-hidden="true"><i v-for="(b, i) in trendSpark" :key="i" :style="{height: b.h + '%'}" :class="{on: b.on}"></i></div>
+                                </div>
+                                <div class="kpi-v">{{ queueStatus.success || 0 }}</div>
+                                <div class="kpi-info">累计归档任务 · 含秒传<template v-if="queueStatus.retrying > 0"> · <b>{{ queueStatus.retrying }}</b> 重试中</template></div>
+                            </div>
+                            <div class="kpi-card">
+                                <div class="kpi-top">
+                                    <span class="kpi-k"><span class="dot" :class="trafficMetrics.speed > 0 ? 'run pulse' : 'gray'"></span> 当前速度</span>
+                                    <div class="spark" title="近 7 日上传量趋势" aria-hidden="true"><i v-for="(b, i) in trendSpark" :key="i" :style="{height: b.h + '%'}" :class="{on: b.on}"></i></div>
+                                </div>
+                                <div class="kpi-v">{{ formatSpeed(trafficMetrics.speed) }}</div>
+                                <div class="kpi-info">实时上行速率 · <span v-if="queueStatus.failed"><b style="color:var(--red);">{{ queueStatus.failed }}</b> 个失败</span><span v-else>无失败任务</span></div>
+                            </div>
+                            <div class="kpi-card">
+                                <div class="kpi-top">
+                                    <span class="kpi-k"><span class="dot" :class="builtinRecordingCount > 0 ? 'err pulse' : 'gray'"></span> 录制中</span>
+                                    <span v-if="builtinRecordingCount > 0" class="tag red">LIVE</span>
+                                </div>
+                                <div class="kpi-v">{{ builtinRecordingCount }}</div>
+                                <div class="kpi-info">{{ builtinActiveCount }} 路监控中 · 磁盘剩 <b>{{ formatSize(systemStatus.diskFree) }}</b></div>
+                            </div>
+                        </div>
+
+                        <!-- 系统状态：Inline Status Row -->
                         <div class="card ov-status">
                             <div class="sys-block">
                                 <div class="sys-line">
                                     <span class="sys-name">
                                         <span class="dot" :class="engineView.key === 'paused' ? 'warn' : (engineView.key === 'scanning' ? 'blue pulse' : 'run pulse')"></span>
-                                        {{ engineView.key === 'scanning' ? '正在扫描' : (engineView.key === 'paused' ? '引擎已挂起' : '扫描引擎运行正常') }}
+                                        {{ engineView.key === 'scanning' ? '正在扫描' : (engineView.key === 'paused' ? '扫描引擎已挂起' : '扫描引擎运行正常') }}
                                     </span>
                                     <span style="display:inline-flex;align-items:center;gap:8px;">
                                         <span class="chip xs" v-if="systemStatus.dynamicInterval < systemStatus.scanningInterval">狂暴模式</span>
@@ -1567,8 +1638,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                         <span class="chip xs" v-if="engineView.key !== 'paused'">下一次扫描 {{ engineView.key === 'scanning' ? '进行中…' : nextScanClock }}</span>
                                     </span>
                                 </div>
-                                <div class="sys-line"><span>扫描周期</span><b>{{ systemStatus.dynamicInterval || systemStatus.scanningInterval }} 分/次</b></div>
-                                <div class="sys-line"><span>引擎运行</span><b>{{ uptimeText }}</b></div>
+                                <div class="sys-line"><span>扫描周期 · 引擎运行</span><b>{{ systemStatus.dynamicInterval || systemStatus.scanningInterval }} 分/次 · {{ uptimeText }}</b></div>
                             </div>
                             <div class="sys-block">
                                 <div class="sys-line">
@@ -1584,88 +1654,79 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                         <span style="color:var(--t4);"> · </span>{{ Number(wsStats.msgCount || 0).toLocaleString() }} 条</b>
                                 </div>
                                 <div class="sys-line"><span>录制引擎内存 · 上传并发</span><b>{{ formatSize(systemStatus.ffmpegMem) || '0 B' }} · {{ systemStatus.workers || 0 }} 线程</b></div>
-                                <div class="sys-line"><span>磁盘剩余</span><b :style="{color: systemStatus.diskFree && systemStatus.diskFree < diskWarnBytes ? 'var(--red)' : 'var(--t1)'}">{{ formatSize(systemStatus.diskFree) }}</b></div>
                             </div>
                         </div>
 
-                        <!-- 任务计数摘要行 -->
-                        <div class="statrow">
-                            <div class="stat-card">
-                                <span class="k">等待处理</span>
-                                <span class="v" v-tween="queueStatus.waiting || 0"></span>
+                        <!-- 今日动态 / 最近主播 -->
+                        <div class="activity-strip">
+                            <div class="a-main">
+                                <div class="a-t">任务动态</div>
+                                <div class="a-d">
+                                    已归档 <b>{{ queueStatus.success || 0 }}</b> 个文件 ·
+                                    <b>{{ uploadingCount }}</b> 个上传中 ·
+                                    <b>{{ waitingCount }}</b> 个排队
+                                    <template v-if="engineView.key !== 'paused'"> · 下一次扫描 {{ nextScanClock }}</template>
+                                </div>
                             </div>
-                            <div class="stat-card">
-                                <span class="k">上传中</span>
-                                <span class="v c-blue" v-tween="queueStatus.uploading || 0"></span>
-                            </div>
-                            <div class="stat-card">
-                                <span class="k">成功</span>
-                                <span class="v c-green" v-tween="queueStatus.success || 0"></span>
-                            </div>
-                            <div class="stat-card">
-                                <span class="k">失败</span>
-                                <span class="v c-red" v-tween="queueStatus.failed || 0"></span>
-                            </div>
-                            <div class="stat-card">
-                                <span class="k" title="当前瞬时网络上行速率，随上传任务实时变化">当前速率</span>
-                                <span class="v">{{ formatSpeed(trafficMetrics.speed) }}</span>
+                            <div style="display:flex; align-items:center; gap:14px;">
+                                <div class="avatars" v-if="recordingAvatars.length">
+                                    <div class="av-wrap" v-for="a in recordingAvatars" :key="a.key" :title="a.name + ' · 直播中'">
+                                        <img class="av" :src="a.avatar" alt="" loading="lazy" @error="$event.target.style.visibility='hidden'">
+                                    </div>
+                                    <span class="a-more">{{ recordingAvatars.length }} 路直播中</span>
+                                </div>
+                                <span class="sub" v-else>当前没有直播中的频道</span>
+                                <button class="linkish" @click="switchTab('builtin_recorder')">直播任务 →</button>
                             </div>
                         </div>
 
-                        <!-- 正在处理 -->
-                        <div class="sec-head" style="margin-top:6px;">
-                            <div class="sec-title">正在处理<span class="mini">{{ uploadingCount }} 上传中 · {{ waitingCount }} 排队 · 合计 {{ formatSize(liveTotalSize) }}</span></div>
-                            <div class="sec-side">
-                                <button class="linkish" @click="switchTab('live')">上传队列 →</button>
-                            </div>
-                        </div>
-                        <div class="card" style="padding:4px 20px;">
-                            <template v-if="uploadingTasks.length">
-                                <div class="ed-item" v-for="record in uploadingTasks.slice(0, 6)" :key="record.id">
-                                    <span class="ed-st" style="min-width:auto;">
-                                        <span class="dot" :class="String(record.status).toLowerCase().includes('fail') ? 'err' : (record.status === 'uploading' ? 'blue pulse' : 'warn')"></span>
-                                    </span>
-                                    <div class="ed-main">
-                                        <div class="ed-name">{{ record.filename }}</div>
-                                        <div class="ed-sub" v-if="record.path" :title="record.path">{{ record.path }}</div>
-                                    </div>
-                                    <span class="ed-meta">{{ formatSize(record.uploaded) }} / {{ formatSize(record.size) }}</span>
-                                    <div class="prog" style="min-width:130px;" :class="{orange: String(record.status).includes('fail')}">
-                                        <div class="bar"><i :style="{width: Math.min(100, calculatePercent(record.uploaded, record.size) * 100) + '%'}"></i></div>
-                                        <span class="pct">{{ Math.round(calculatePercent(record.uploaded, record.size) * 100) }}%</span>
-                                    </div>
-                                    <span class="ed-meta">{{ formatSpeed(record.speed) }}</span>
-                                    <span class="ed-st" style="min-width:70px; justify-content:flex-end;">
-                                        <template v-if="String(record.status).toLowerCase().includes('fail')">
-                                            <span style="color:var(--red);">失败重试</span>
-                                        </template>
-                                        <template v-else-if="record.status === 'uploading'">
-                                            <span style="color:var(--blue);">上传中</span>
-                                        </template>
-                                        <template v-else>
-                                            <span class="sub">排队中</span>
-                                        </template>
+                        <!-- 图表区：上传趋势 | 存储占用 -->
+                        <div class="grid-main">
+                            <div class="card">
+                                <div class="card-head">
+                                    <div class="card-title">上传趋势</div>
+                                    <span class="chip" :class="{good: trafficMetrics.speed > 0}">
+                                        <span class="dot" :class="trafficMetrics.speed > 0 ? 'run pulse' : 'gray'"></span>
+                                        实时 <b>{{ formatSpeed(trafficMetrics.speed) }}</b>
                                     </span>
                                 </div>
-                            </template>
-                            <div v-else-if="wsStatus === 'connecting'" class="skel-rows" style="padding:6px 0;" aria-hidden="true">
-                                <div class="skel-row" v-for="i in 3" :key="i"><span class="skel-bar" style="width:38%;"></span><span class="skel-bar" style="width:18%;"></span><span class="skel-bar" style="width:10%; margin-left:auto;"></span></div>
+                                <div id="trendChart" class="trend-box"></div>
+                                <div class="tbl-foot" style="border-top:none; padding:6px 0 0;">
+                                    <span>最近 7 天 · 按日累计</span>
+                                    <span>蓝色 = 上传流量 · 灰虚线 = 文件数</span>
+                                </div>
                             </div>
-                            <div v-else class="tbl-empty" style="padding:32px 10px;">
-                                <template v-if="systemStatus.running">
-                                    <svg class="ic big"><use href="#i-check-c"/></svg>
-                                    <div class="t">所有任务都已完成</div>
-                                    <div class="s">当前没有等待上传的文件 · 下一次扫描 {{ nextScanClock }}</div>
-                                </template>
-                                <template v-else>
-                                    <svg class="ic big"><use href="#i-pause"/></svg>
-                                    <div class="t">扫描已暂停</div>
-                                    <div class="s">启动扫描后，系统将自动发现并上传新文件</div>
-                                </template>
+
+                            <div class="card">
+                                <div class="card-head">
+                                    <div class="card-title">存储占用</div>
+                                    <span class="sub">累计已上传</span>
+                                </div>
+                                <div class="store-body" v-if="(systemStatus.dirs || []).length">
+                                    <div class="donut-wrap">
+                                        <div id="storeChart" style="width:150px;height:150px;"></div>
+                                        <div class="center">
+                                            <div class="n">{{ storeStat.val }}</div>
+                                            <div class="l">{{ storeStat.unit }}</div>
+                                        </div>
+                                    </div>
+                                    <div class="store-legend">
+                                        <div class="sl-row" v-for="d in storeLegend" :key="d.name">
+                                            <span class="sl-dot" :style="{background: d.color}"></span>
+                                            <span class="sl-name" :title="d.path">{{ d.name }}</span>
+                                            <b class="sl-pct">{{ d.pct }}%</b>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-else class="tbl-empty" style="padding:40px 10px;">
+                                    <svg class="ic big"><use href="#i-hdd"/></svg>
+                                    <div class="t">暂无目录数据</div>
+                                    <div class="s">首次扫描后按目录统计已上传体积</div>
+                                </div>
                             </div>
                         </div>
 
-                        <!-- 最近完成：Editorial List -->
+                        <!-- 最近完成：Activity List -->
                         <div class="sec-head">
                             <div class="sec-title">最近完成</div>
                             <div class="sec-side">
@@ -1701,53 +1762,6 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                             </div>
                         </div>
 
-                        <div class="grid-main">
-                            <div class="card">
-                                <div class="card-head">
-                                    <div class="card-title">
-                                        <svg class="ic"><use href="#i-bar"/></svg>
-                                        流量与文件增长 <span class="mini">最近 7 天</span>
-                                    </div>
-                                    <span class="chip" :class="{good: trafficMetrics.speed > 0}">
-                                        <span class="dot" :class="trafficMetrics.speed > 0 ? 'run pulse' : 'gray'"></span>
-                                        实时上传 <b>{{ formatSpeed(trafficMetrics.speed) }}</b>
-                                    </span>
-                                </div>
-                                <div id="trendChart" class="trend-box"></div>
-                            </div>
-
-                            <div class="card">
-                                <div class="card-head">
-                                    <div class="card-title">
-                                        <svg class="ic"><use href="#i-hdd"/></svg>
-                                        磁盘空间 <span class="mini">TOP 5</span>
-                                    </div>
-                                    <span class="sub">剩余 <b style="color:var(--green-bright); font-weight:600;">{{ formatSize(systemStatus.diskFree) }}</b></span>
-                                </div>
-                                <div v-if="systemStatus.diskFree && systemStatus.diskFree < diskWarnBytes" class="disk-warn">
-                                    <svg class="ic"><use href="#i-alert"/></svg> 磁盘空间即将不足，请及时清理
-                                </div>
-                                <div class="rank-rows" v-if="statsData.rank && statsData.rank.length">
-                                    <div v-for="(item, idx) in statsData.rank" :key="idx" class="rank-row">
-                                        <div class="line">
-                                            <span class="nm">
-                                                <span class="idx">{{ String(idx + 1).padStart(2, '0') }}</span>
-                                                <span class="txt" :title="item.name">{{ item.name }}</span>
-                                            </span>
-                                            <span class="sz">{{ (item.size || 0).toFixed(2) }} GB</span>
-                                        </div>
-                                        <div class="rank-bar"><i :style="{width: (calculateRankPercent(item.size || 0) * 100) + '%', opacity: idx === 0 ? 1 : Math.max(0.4, 1 - idx * 0.16)}"></i></div>
-                                    </div>
-                                    <div class="rank-foot">TOP 5 合计 <b>{{ rankTotal.toFixed(2) }}</b> GB</div>
-                                </div>
-                                <div v-else class="tbl-empty" style="padding:40px 10px;">
-                                    <svg class="ic big"><use href="#i-check-c"/></svg>
-                                    <div class="t">暂无目录占用记录</div>
-                                    <div class="s">等待首次扫描后生成统计</div>
-                                </div>
-                            </div>
-                        </div>
-
                         <!-- 目录监控：一行一目录 -->
                         <div class="sec-head">
                             <div class="sec-title">目录监控<span class="mini">实时 · 共 {{ (systemStatus.dirs || []).length }} 个目录</span></div>
@@ -1760,10 +1774,10 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                         <th style="width:30%;">目录</th>
                                         <th>状态</th>
                                         <th>待处理</th>
-                                        <th>已上传</th>
-                                        <th>总文件</th>
+                                        <th class="col-sm-hide">已上传</th>
+                                        <th class="col-sm-hide">总文件</th>
                                         <th>累计上传</th>
-                                        <th>最后扫描</th>
+                                        <th class="col-sm-hide">最后扫描</th>
                                     </tr>
                                     </thead>
                                     <tbody>
@@ -3631,12 +3645,6 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                     </section>
                 </div>
                     </main>
-                    <!-- Context 右栏：本页目录（仅有章节结构的长页面显示；设置页用左侧 set-nav，不重复出右栏） -->
-                    <aside class="ctx" v-if="ctxItems.length && !isMobile && activeTab !== 'settings'" aria-label="本页目录">
-                        <div class="ctx-title">本页目录</div>
-                        <a v-for="c in ctxItems" :key="c.id" class="ctx-link" :class="{on: ctxActive === c.id}"
-                           href="javascript:void(0)" @click="ctxScroll(c.id)">{{ c.label }}</a>
-                    </aside>
                 </div>
             </div>
         </div>
@@ -4769,18 +4777,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
 
             /* ---- Context 右栏 / 设置页章节导航：本页目录 + 滚动高亮 ----
                页面锚点声明；设置页用左侧 set-nav 渲染同一份数据（ctxItems），其余页面走右侧 ctx 栏。 */
-            const pageContexts = {
-                pose_training: [
-                    {id: 'pose-sec-live', label: '实时过程'},
-                    {id: 'pose-sec-gate', label: '门参数与守护'},
-                    {id: 'pose-sec-sweep', label: '重定标网格'},
-                    {id: 'pose-sec-pool', label: '训练片池'}
-                ],
-                logs: [
-                    {id: 'logs-tools', label: '筛选与导出'},
-                    {id: 'logs-term', label: '日志内容'}
-                ]
-            };
+            const pageContexts = {};
             const setSections = [
                 {id: 'sec-engine', label: '引擎对接'},
                 {id: 'sec-transfer', label: '传输策略'},
@@ -4872,6 +4869,49 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                 });
                 return groups;
             });
+
+            /* ---- SaaS Overview：KPI sparkline / 存储环图 / 直播头像条 ---- */
+            const trendSpark = computed(() => {
+                const t = (statsData.trend || []).slice(-8);
+                const max = Math.max(1, ...t.map(i => i.size || 0));
+                return t.map((i, idx, arr) => ({h: Math.max(10, Math.round((i.size || 0) / max * 100)), on: idx === arr.length - 1}));
+            });
+            const dirShortName = (path) => {
+                const parts = String(path || '').split(/[\\/]+/).filter(Boolean);
+                return parts.length ? parts[parts.length - 1] : (path || '未知目录');
+            };
+            const isDarkNow = () => document.documentElement.getAttribute('data-theme') !== 'light';
+            const storePalette = () => isDarkNow()
+                ? ['#4096ff', '#22c55e', '#f59e0b', '#8b5cf6', '#52525b']
+                : ['#1677ff', '#16a34a', '#f59e0b', '#7c3aed', '#c6c6cd'];
+            const storeBase = computed(() => (systemStatus.dirs || []).map(d => ({
+                path: d.path || '',
+                name: dirShortName(d.path),
+                gb: Math.round(((d.uploadedSize || 0) / 1073741824) * 100) / 100
+            })));
+            const storeLegend = computed(() => {
+                const list = storeBase.value;
+                if (!list.length) return [];
+                const total = list.reduce((acc, d) => acc + d.gb, 0) || 1;
+                const palette = storePalette();
+                if (list.length <= 4) {
+                    return list.map((d, i) => ({name: d.name, path: d.path, pct: Math.round(100 * d.gb / total), color: palette[i % palette.length]}));
+                }
+                const top = list.slice(0, 3).map((d, i) => ({name: d.name, path: d.path, pct: Math.round(100 * d.gb / total), color: palette[i % palette.length]}));
+                const rest = list.slice(3);
+                top.push({name: '其他 ' + rest.length + ' 个目录', path: '', pct: Math.round(100 * rest.reduce((acc, d) => acc + d.gb, 0) / total), color: palette[4]});
+                return top;
+            });
+            const storeStat = computed(() => {
+                const gb = storeBase.value.reduce((acc, d) => acc + d.gb, 0);
+                if (gb >= 1024) return {val: (gb / 1024).toFixed(2), unit: 'TB 已上传'};
+                return {val: gb.toFixed(gb >= 100 ? 0 : 1), unit: 'GB 已上传'};
+            });
+            const recordingAvatars = computed(() => (builtinTasks.value || [])
+                .filter(t => isBuiltinLiveStatusJS(t.status) && t.avatar)
+                .slice(0, 5)
+                .map(t => ({key: t.platform + '_' + t.room_id, name: t.anchor_name, avatar: t.avatar})));
+            const refreshOverview = () => { fetchStatus(); fetchQueue(); fetchLiveTasks(); };
             const allFiltered = computed(() => cmdkResults.value.flatMap((g) => g.items));
             watch(cmdkQuery, () => {
                 const first = allFiltered.value[0];
@@ -6235,50 +6275,45 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
             const renderChart = () => {
                 if (activeTab.value !== 'overview') return;
                 nextTick(() => {
-                    const dom = document.getElementById('queueChart');
+                    const dom = document.getElementById('storeChart');
                     if (!dom) return;
-                    // 队列清空后容器随 v-if 销毁重建，需识别 DOM 变化并重建实例
                     if (!chartInstance || chartInstance.getDom() !== dom) {
                         if (chartInstance) chartInstance.dispose();
                         chartInstance = echarts.init(dom);
                     } else {
                         chartInstance.resize();
                     }
-                    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
-                    const option = {
+                    const dirs = storeBase.value;
+                    if (!dirs.length) return;
+                    const isDark = isDarkNow();
+                    const palette = storePalette();
+                    const data = (dirs.length <= 4 ? dirs : dirs.slice(0, 3).concat([
+                        {name: '其他', gb: dirs.slice(3).reduce((acc, d) => acc + d.gb, 0)}
+                    ])).map((d, i) => ({
+                        name: d.name,
+                        value: d.gb,
+                        itemStyle: {color: palette[i % palette.length]}
+                    }));
+                    chartInstance.setOption({
                         backgroundColor: 'transparent',
                         tooltip: {
                             trigger: 'item',
-                            backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
-                            borderColor: isDark ? 'rgba(255,255,255,0.12)' : '#e4e4e7',
+                            backgroundColor: isDark ? '#202023' : '#ffffff',
+                            borderColor: isDark ? 'rgba(255,255,255,0.12)' : '#e5e7eb',
                             textStyle: {color: isDark ? '#f4f4f5' : '#18181b', fontSize: 12},
-                            formatter: p => `${p.marker} ${p.name}：<b>${p.value}</b> 个（${p.percent}%）`
+                            formatter: parm => `${parm.marker} ${parm.name}：<b>${parm.value.toFixed(2)} GB</b>（${parm.percent}%）`
                         },
-                        color: isDark
-                            ? ['#3f3f46', '#60a5fa', '#22c55e', '#ef4444']
-                            : ['#d4d4d8', '#2563eb', '#16a34a', '#dc2626'],
                         series: [{
                             type: 'pie',
-                            radius: ['64%', '88%'],
+                            radius: ['62%', '85%'],
                             center: ['50%', '50%'],
                             avoidLabelOverlap: true,
-                            itemStyle: {
-                                borderRadius: 4,
-                                borderColor: isDark ? '#0f0f10' : '#ffffff',
-                                borderWidth: 2
-                            },
                             label: {show: false},
                             labelLine: {show: false},
-                            silent: false,
-                            data: [
-                                {value: queueStatus.waiting || 0, name: '等待处理'},
-                                {value: queueStatus.uploading || 0, name: '上传中'},
-                                {value: queueStatus.success || 0, name: '已完成'},
-                                {value: queueStatus.failed || 0, name: '失败'}
-                            ]
+                            itemStyle: {borderRadius: 4, borderColor: isDark ? '#18181b' : '#ffffff', borderWidth: 2},
+                            data
                         }]
-                    };
-                    chartInstance.setOption(option);
+                    });
                 });
             };
 
@@ -6390,7 +6425,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                 trendChartInstance.setOption(option);
             };
 
-            watch(queueStatus, renderChart, {deep: true});
+            watch(() => systemStatus.dirs, () => { renderChart(); }, {deep: true});
 
             const handleWindowResize = () => {
                 handleResize();
@@ -7819,6 +7854,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                 cmdkOpen, cmdkQuery, cmdkIndex, cmdkInput, cmdkResults, cmdkFlat, openCmdk, cmdkMove, cmdkPick,
                 handleLogin, handleLogout, wsStatus, wsStats, wsLatency, getLatencyColor, liveTaskFilter,
                 liveProcFilter, uploadingFiltered, recentDoneGroups, logPaused,
+                trendSpark, storeLegend, storeStat, recordingAvatars, refreshOverview,
                 systemStatus, queueStatus, liveTasks, uploadingTasks, completedTasks, uploadingCount, waitingCount,
                 liveTotalSize, completedPage, completedPageSize, completedPaged,
                 control, historyQuery, historyData, fetchHistory, onPageChange,
