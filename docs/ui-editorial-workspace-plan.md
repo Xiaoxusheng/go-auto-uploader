@@ -1,6 +1,6 @@
 # UI 重构计划 — Editorial Workspace / Automation Workspace
 
-> 状态：执行中（2026-09-30 启动）。本文件是本次 Web UI/UX 重构的唯一计划与进度真值来源。
+> 状态：**✅ 已完成**（2026-09-30）。本文件是本次 Web UI/UX 重构的唯一计划与进度真值来源。
 > 目标：把 Go Auto Uploader 控制台从「沉浸暗色仪表盘」重构为「Editorial Workspace / Automation Workspace」——
 > 一个成熟的自动化文件处理工作台，参考 Notion / Linear / GitBook / AI2CC Workspace 的信息架构与视觉语言。
 > **不是**把深色页面换成白色，而是重新设计信息架构、页面层级、Shell、表格、列表、设置与移动端。
