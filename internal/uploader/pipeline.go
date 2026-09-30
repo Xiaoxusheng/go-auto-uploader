@@ -125,7 +125,7 @@ func (p *Pipeline) HandleFile(ctx context.Context, path string, roots []string) 
 				Status:     "success(秒传)",
 			})
 		}
-		p.bumpDir(root, info.Size())
+		p.bumpDirInstant(root)
 		if p.Broadcast != nil {
 			p.Broadcast("taskDone", map[string]any{"status": "success", "size": info.Size()})
 		}
@@ -157,10 +157,24 @@ func (p *Pipeline) HandleFile(ctx context.Context, path string, roots []string) 
 	if p.RecordSuccess != nil {
 		p.RecordSuccess(remotePath, name, info.Size())
 	}
-	p.bumpDir(root, info.Size())
+	p.bumpDirUploaded(root, info.Size())
 }
 
-func (p *Pipeline) bumpDir(root string, size int64) {
+// bumpDirUploaded 真实上传完成：回收 Pending 名额，并累计该目录的
+// UploadedFiles/UploadedSize —— 这一份流量是新产生的，理应计入。
+func (p *Pipeline) bumpDirUploaded(root string, size int64) {
+	p.completeInRoot(root, true, size)
+}
+
+// bumpDirInstant 秒传完成：远端已有同哈希内容，本次没有产生新流量，
+// 且这份体积在当年真实上传时已经计过账 —— 只回收 Pending 名额，
+// 不再重复累计。否则源文件一旦滞留（删源失败、高光认领），每轮扫描
+// 都会把同一份体积原价再灌一遍（线上曾由此滚出 11.5TB 虚高累计）。
+func (p *Pipeline) bumpDirInstant(root string) {
+	p.completeInRoot(root, false, 0)
+}
+
+func (p *Pipeline) completeInRoot(root string, countUpload bool, size int64) {
 	if p.DirStatus == nil {
 		return
 	}
@@ -169,8 +183,10 @@ func (p *Pipeline) bumpDir(root string, size int64) {
 		if ds.PendingFiles > 0 {
 			ds.PendingFiles--
 		}
-		ds.UploadedFiles++
-		ds.UploadedSize += size
+		if countUpload {
+			ds.UploadedFiles++
+			ds.UploadedSize += size
+		}
 		ds.TotalFiles = ds.PendingFiles + ds.UploadedFiles
 		ds.Mu.Unlock()
 	}
