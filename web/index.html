@@ -121,7 +121,7 @@ body {
     padding: 0;
     background: var(--bg);
     color: var(--t1);
-    font-family: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
     font-size: 14px;
     line-height: 1.55;
     font-weight: 400;
@@ -354,6 +354,8 @@ a { color: inherit; text-decoration: none; }
 }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .card-sub { font-size: 12px; color: var(--t3); margin-top: 2px; line-height: 1.5; }
+.card-compact { padding: 16px; }
+@media (max-width: 600px) { .card, .card-compact { padding: 16px; } }
 .chart-foot { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--t3); padding: 10px 2px 0; }
 .card-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .card-title .mini { font-size: 12px; font-weight: 400; color: var(--t3); }
@@ -372,29 +374,28 @@ a { color: inherit; text-decoration: none; }
 .statrow.c4 { grid-template-columns: repeat(4, 1fr); }
 .stat-card {
     background: none; border: none; border-left: 1px solid var(--line-subtle);
-    border-radius: 0; padding: 12px 18px;
+    border-radius: 0; padding: 12px 20px;
     display: flex; flex-direction: column; gap: 3px;
 }
-.stat-card:first-child { border-left: none; padding-left: 2px; }
+.stat-card:first-child { border-left: none; }
 
 /* ===================== SaaS KPI / Mini Chart / 活动条 / 存储环图 ===================== */
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 2px 0 16px; }
 .kpi-card {
     background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg);
     box-shadow: var(--shadow); padding: 18px 20px; min-height: 126px;
-    display: flex; flex-direction: column; gap: 6px;
+    display: flex; flex-direction: column;
 }
 .kpi-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; }
 .kpi-k { font-size: 12.5px; font-weight: 500; color: var(--t3); display: inline-flex; align-items: center; gap: 6px; }
-.kpi-v { font-size: 31px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.1; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.kpi-v { font-size: 31px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.1; font-variant-numeric: tabular-nums; margin-top: 8px; margin-bottom: 5px; }
 .kpi-v .kpi-u { font-size: 13px; font-weight: 500; color: var(--t3); margin-left: 4px; letter-spacing: 0; }
-.kpi-info { font-size: 12px; line-height: 1.5; color: var(--t3); margin-top: 2px; }
-.kpi-bar { height: 4px; border-radius: 3px; background: var(--panel-3); overflow: hidden; margin-top: 4px; }
+.kpi-info { font-size: 12px; line-height: 1.5; color: var(--t3); }
+.kpi-bar { height: 4px; border-radius: 3px; background: var(--panel-3); overflow: hidden; margin-top: auto; }
 .kpi-info b { color: var(--t2); font-weight: 600; }
 .spark { display: flex; align-items: flex-end; justify-content: flex-end; gap: 3px; width: 88px; height: 34px; flex-shrink: 0; }
 .spark i { width: 4px; border-radius: 2px; background: var(--line-strong); min-height: 3px; }
 .spark i.on { background: var(--blue); }
-.kpi-bar { height: 4px; border-radius: 3px; background: var(--panel-3); overflow: hidden; margin-top: 4px; }
 .kpi-bar i { display: block; height: 100%; border-radius: 3px; background: var(--blue); transition: width 0.4s ease; }
 
 /* ===================== Compact Status Bar ===================== */
@@ -429,8 +430,9 @@ a { color: inherit; text-decoration: none; }
 .avatars .av:first-child { margin-left: 0; }
 .avatars .av-ph { display: flex; align-items: center; justify-content: center; color: var(--t4); }
 .avatars .a-more { font-size: 11px; color: var(--t3); margin-left: 8px; }
-.store-body { display: flex; gap: 20px; align-items: center; }
+.store-body { display: flex; gap: 20px; align-items: center; min-height: 200px; }
 .store-legend { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+.store-card .card-head { margin-bottom: 8px; }
 .sl-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
 .sl-dot { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
 .sl-name { flex: 1; min-width: 0; color: var(--t2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1236,9 +1238,9 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 .rec-cv .empty .ic { width: 42px; height: 42px; }
 .rec-cv .topbar { position: absolute; top: 9px; left: 9px; right: 9px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .rec-cv .pf-chip { background: rgba(10, 12, 11, 0.72); color: #e5e9e6; font-size: 10.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px; }
-.live-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
-.live-chip.on { background: rgba(10, 12, 11, 0.72); color: #fff; }
-.live-chip.off { background: rgba(28, 32, 30, 0.78); color: #c9cfca; }
+.live-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 0; border-radius: 0; }
+.live-chip.on { background: none; color: #f87171; }
+.live-chip.off { background: none; color: #c9cfca; }
 .live-chip .dot { width: 5px; height: 5px; }
 .live-chip.on .dot { background: var(--red); animation: dotPulse 1.4s ease infinite; }
 .live-chip.off .dot { background: #9aa19b; }
@@ -1291,7 +1293,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
     .rec-grid { grid-template-columns: repeat(3, 1fr); }
     .statrow, .pose-page .statrow { grid-template-columns: repeat(3, 1fr); }
     .statrow.c4 { grid-template-columns: repeat(2, 1fr); }
-    .stat-card { border-left: none; padding-left: 2px; }
+    .stat-card { border-left: none; }
     .statrow { gap: 0 18px; border-top: none; border-bottom: none; }
     .frm-grid, .frm-grid.c4 { grid-template-columns: repeat(2, 1fr); }
     .frm-switches.c4 { grid-template-columns: repeat(2, 1fr); }
@@ -1629,7 +1631,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                             <div class="kpi-card">
                                 <div class="kpi-top">
                                     <span class="kpi-k"><span class="dot" :class="trafficMetrics.speed > 0 ? 'run pulse' : 'gray'"></span> 当前速度</span>
-                                    <span class="chip xs" :class="{good: trafficMetrics.speed > 0}"><span class="dot" :class="trafficMetrics.speed > 0 ? 'run pulse' : 'gray'"></span> 实时</span>
+                                    <span class="kpi-k" style="color:var(--t4);">实时</span>
                                 </div>
                                 <div class="kpi-v">{{ formatSpeed(trafficMetrics.speed) }}</div>
                                 <div class="kpi-info">实时上行速率 · <span v-if="queueStatus.failed"><b style="color:var(--red);">{{ queueStatus.failed }}</b> 个失败</span><span v-else>无失败任务</span></div>
@@ -1651,13 +1653,10 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                 扫描引擎
                                 <b>{{ engineView.key === 'scanning' ? '进行中' : (engineView.key === 'paused' ? '已暂停' : '运行中') }}</b>
                             </span>
-                            <span class="stat-item" v-if="engineView.key !== 'paused'">下次扫描 <b>{{ engineView.key === 'scanning' ? '进行中…' : nextScanClock }}</b></span>
-                            <i class="v-sep"></i>
                             <span class="stat-item">
                                 <span class="dot" :class="wsStatus === 'connected' ? 'run' : (wsStatus === 'connecting' ? 'warn pulse' : 'err')"></span>
                                 实时信道
                                 <b :style="{color: wsStatus === 'connected' ? getLatencyColor(wsLatency) : ''}">{{ wsStatus === 'connected' ? wsLatency + ' ms' : '离线' }}</b>
-                                <b>{{ Number(wsStats.msgCount || 0).toLocaleString() }} 条</b>
                             </span>
                             <i class="v-sep"></i>
                             <span class="stat-item">上传并发 <b>{{ systemStatus.workers || 0 }} 线程</b></span>
@@ -1713,10 +1712,12 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                 <div class="chart-foot"><span>蓝色 = 上传流量</span><span>灰虚线 = 文件数</span></div>
                             </div>
 
-                            <div class="card">
+                            <div class="card store-card">
                                 <div class="card-head">
-                                    <div class="card-title">存储占用</div>
-                                    <span class="sub">累计已上传</span>
+                                    <div>
+                                        <div class="card-title">存储占用</div>
+                                        <div class="card-sub">累计已上传</div>
+                                    </div>
                                 </div>
                                 <div class="store-body" v-if="(systemStatus.dirs || []).length">
                                     <div class="donut-wrap">
