@@ -62,6 +62,8 @@ func main() {
 		cmdCleanupSources(os.Args[2:])
 	case "audio-probe":
 		cmdAudioProbe(os.Args[2:])
+	case "videomae-probe":
+		cmdVideomaeProbe(os.Args[2:])
 	case "de-auc":
 		cmdDeAUC(os.Args[2:])
 	case "-h", "--help", "help":
@@ -85,6 +87,7 @@ func usage() {
   pose-scan   批量帧目录 → 每秒姿态特征 JSON（供 metrics -pose）
   review-ingest 新切片自动入池：抽帧+姿态推理+模型预标 → 复核页
   autogold-sweep 金标重定标：8s 窗网格搜 (vis/face/det) → autogold_result.json
+  videomae-probe VideoMAE 视频分类头 Go ORT 推理验证（单窗嵌入+K400 top5）
 
 probe 参数:
   -src <视频>        必填
