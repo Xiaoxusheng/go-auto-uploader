@@ -1026,3 +1026,138 @@ gesture 判舞率长期压不下来，根因**可能不是特征表达不出 ges
 - C1 再增 ~10GB/日；保留期方案用户未选，明日今日产物/截图自动变为可删组
 - v5 观察次日核查（本节附带）：v5 期出片率 **59.2%**（103 片）> v3 期 52.0%；卷卷零段率
   76%（v3期）→67%（v5期）非误杀是内容低产出——**无系统性误杀，观察继续至 09-29 22:30**
+
+## §47 飞轮第 8 批全流程 + v10——OOS 不动点第五次确认，v5 保持（2026-09-29 11:1x-12:5x，用户令「继续训练」）
+
+- 全流程复刻 §46（工具链零改动）：verdict 导出 360 窗（keep 180/reject 180，seed 42，池 1,267 片，
+  冻结 v3 主播源头护栏零命中）→ 15 张 ratio sheet + 8 窗 zoom（新增 `_make_zoom8.py`）→
+  盲标（产品定义 v2）：dance 36/gesture 232/chat 40/closeup 15/other 12/none 25 →
+  并入（备份 .bak-batch8-20260929，双护栏零命中）→ **金标 1,419 片 / 20,435 窗 / dance 7,177**
+- zoom 改判 6 窗：151/271→dance（编排舞/PK 主画面舞）、182→gesture（甩发+手臂下肢不动）、
+  242/354→chat、021→closeup（走近镜头）
+- v10（GBC 300 树）：OOF F1 0.7261 / AUC 0.8770（v9 0.7357/0.8815）；导出自校验 2.2e-16；
+  **Go parity PASS**（HEAD_PARITY_GOLDEN/MODEL 指向 v10）
+- 冻结 v3 OOS（自校验 0.00e+00，freeze_v3_eval_v10.json）：**v10 F1 0.8459 / P 0.8806 / R 0.8138 /
+  AUC 0.9406 / 判舞率 37.2%** vs v5 0.8737/0.8649/0.8828/0.9519/41.1%
+- **预注册三条件全败（F1❌/R❌/方向审查 0.71❌）→ 不换装，v5 保持生产**
+- **不动点第五次确认**：232 个 gesture 难负例入训反而更保守（较 v8/v9 验收集再降 0.007，
+  新拒绝 14 窗真舞 10）——第 6/7 批+CLIP+定义翻转+本批五重证据，18 维特征 OOS 天花板维持；
+  keep 类窗 64% 为站姿手势，v5 残余误报结构未变且特征不可分（§42 机理）
+- 产出：uncertainty_batch8.json / usheets8(15) / labels8.jsonl / _zoom8(8) / _merge_batch8.py /
+  _train_gate_head_v10.py / gate_head_v10_{trees,parity,metadata} / freeze_v3_eval_v10.json
+- 顺带：internal/uploader 秒传计量修复（bumpDirInstant/bumpDirUploaded 拆分，防 11.5TB 虚高累计）
+  为今晨另一会话遗留未提交改动，本会话已验证 vet/test 绿，按「用户未要求不提交」原则保持未提交
+
+## 磁盘清理跨日续跑（2026-09-29 14:xx，用户令「清理录制文件继续」）
+
+- 触发：D 盘 12GB（97%）；延续 cleanup_exec.py 既有分组模式（A0/B0/C0 今日硬护栏，
+  历史组可删），09-28 批次按方案自动落为可删组
+- **执行器修正（_diag/cleanup_exec.py）**：①`TODAY` 硬编码 2026-09-28 → `time.strftime`
+  动态日期（不改则 09-28 批次被误判为今日活跃组拒绝删除，方案跨日语义才真正生效）；
+  ②过时「os.remove 走回收站需 purge」注释/输出修正为直接真删（09-28 审计实测结论）
+- Dry-run 与独立扫描逐字一致（A1 8/0.34GB 队列保护、A2 77/2.01GB、B1 3/0.16GB、
+  C1 15,150/16.66GB）→ A2+C1 真删 **15,227 个/18.67GB 零失败**；B1 手工删 2 个
+  analyzed segs=0 死 .ts（卷卷卷上头_002 + 爱喝旺仔_014）
+- 保留：薯饼超可耐_007 .ts（状态文件无记录=高光分析积压队列中，删了丢待判内容）；
+  A1 8 个 09-26 投稿队列 mp4；今日组 294 .ts/52.6GB + 8,008 png/9.3GB + 18 mp4 全未触碰
+- 删前核查：09-28 mp4 最新 mtime 22h 前（无裁切中半成品）
+- 结果：D 盘 12 → **27GB（92%）**，审计 _diag/_deleted_A2B1_20260928.md §三次追加
+- ⚠️ 烧速结构变化：今日 .ts 已写 52.6GB（26 路录制）为绝对大头，截图 ~10GB/日次之；
+  按 1-1.5 天再度吃紧。长期治理三件（enableUpload=true 传完即删 / 投稿接口 21150 修复 /
+  Screenshots 保留期自动化）**仍待用户拍板**——只删不治每日都得手工续跑
+
+## Editorial Workspace UI 全量重构（2026-09-30，用户贴 50 节重构规范 + 参考截图）
+
+- **任务**：把控制台从「沉浸暗色仪表盘」重构为「Editorial Workspace / Automation Workspace」
+  （Notion/Linear/GitBook 质感）：浅色默认 + 黑白灰主体 + 排版驱动层级 + 三栏 Workspace Shell。
+  业务功能/后端 API/WS 协议零改动，10 个页签一个不删。
+- **计划与结果真值**：docs/ui-editorial-workspace-plan.md（含 16 节计划 + 实施结果 + 偏差说明）。
+- **改动文件**：web/index.html（CSS 3 块合一重写 + Shell/总览/设置模板重构 + 命令面板/Context/移动抽屉/
+  导航树 JS）、docs/ui-editorial-workspace-plan.md（新）、AGENTS.md §五（风格速查换新体系）、本文件。
+  未触碰 web/embed.go、vendor、后端代码与他人未提交改动（internal/uploader/*、docs/highlight-progress.md）。
+- **关键实现**：Token 变量名零改动（姿态/高光动效体系无迁移成本，循环动画 ≤3 纪律保留）；侧栏分组树
+  （工作台/录制/智能/系统/设置，展开态持久化）；Header 52px + 面包屑 + 全局搜索；命令面板 Ctrl/⌘+K
+  （页面/设置章节/直播任务/操作，纯前端数据）；Context 右栏 + IntersectionObserver 滚动高亮（pose/logs）；
+  设置页 Row 化 + 左侧章节导航；总览去 Dashboard 化（Inline Status Row + 统计条 + 编辑式列表 + 骨架屏，
+  队列环形图移除但 renderChart 保留 no-op）；页题 Workspace 化更名；移动端抽屉 + 顶栏；图表双主题重配色。
+- **测试锚点保全**：embed_test 全绿（无 CDN / viewport 缩放 / highlight_exit_ratio·min_ac1 绑定 /
+  pose_training 页签标记逐字保留 `{key: 'pose_training', icon: 'i-grid', label: '姿态训练'}`）。
+- **验证**：go vet ./... ✅；go test ./... 22 包全绿 ✅；go build ✅；两段内联 JS node --check ✅；
+  浏览器实测（_diag/ui_preview/server.mjs :8135 mock）：总览亮/暗、上传队列、直播任务（高光卡/传送带）、
+  设置、姿态训练亮/暗（骨架/瞄准框/流动线全在）、运行日志、上传历史、B站空态、命令面板、390 移动端 +
+  抽屉导航全部通过。截图期修复 4 问题：①总览/设置拼接丢 `</section>` 致页签嵌套切页空白；②桌面汉堡未隐藏
+  （.icobtn 优先级）；③a href 默认下划线；④设置页左右导航重复。
+- **坑（复用）**：无头后台标签动画/过渡时钟冻结会造成截图伪影（pageIn 半透明、主题过渡卡中途），
+  前台浏览器无此问题；截图验收注入 0.01ms 冻结样式 + 重触发 data-theme 绕过。mock 服务器 8135 已停，
+  未触碰用户 8131 复核页进程。
+- **未提交 git**（用户未令提交）；遗留可选：移动端表格 List 化重排、命令面板任务项直达详情抽屉。
+
+## UI 重构双分支落盘（2026-09-30，用户令「两个分支都更新，姿态训练代码不加进去」）
+
+- pose-gate：8c4b60d feat(web) Editorial Workspace 全量重构（含姿态训练页/高光实时队列卡）
+  + 3eec7ed docs(ui-plan) 状态收尾；工作区此前已有的重构未提交态由此落盘
+- main（基线，无姿态门）：151c918 feat(web) 同版 UI 但剥离：①姿态训练页全套 ②高光判定实时队列卡
+  （依赖 main 不存在的 /highlight/live、/highlight/thumb 端点）③min_ac1 与 分析并行路数 两个
+  main 后端没有的设置项；保留 main 全部既有功能（含 ExitRatio）。验证：worktree 内
+  go vet/test/build 全绿 + 浏览器实测零 JS 错误 + 姿态/高光队列残留引用为零
+- 操作方式：git worktree（D:/upload-main-ui，已移除），全程未触碰主工作区另一会话的未提交改动
+  （internal/uploader/*、docs/highlight-progress.md、本文件其他会话段落原样）
+- 未 push：pose-gate 仅本地红线继续遵守；origin/main 未动（用户未要求 push）
+- AGENTS.md 只在 pose-gate 被跟踪，main 未提交（main 树里本无此文件）
+### main 推送 GitHub（2026-09-30，用户令「把main分支提交到GitHub」）
+- git push origin main：5a45c50..151c918 快进，共 3 个提交上远程（0ffffce 高光 ExitRatio 参数包 /
+  f38bd8c README 基线标注 / 151c918 Editorial UI 无姿态门版）；已核实推送内容零姿态门代码。
+  **09-26 的「origin/main 不动」红线经用户本次指令解除**（pose-gate 仅限本地的红线不变，仍未 push）。
+## Editorial 二期打磨（2026-09-30，用户令「继续修改前端」+ 重贴 50 节规范）
+
+- 承接一期遗留，纯前端第二轮：①移动端 ≤640px 表格列裁剪（.col-sm-hide ×29，队列/历史/目录/B站/外部引擎，
+  min-width 480，390 视口零横向溢出）②命令面板直播任务项直达详情抽屉（switchTab+openRecDrawer）
+  ③总览最近完成按「N月N日」日期分组 ④上传队列处理中视图 全部/上传中/等待中 筛选 ⑤日志页 暂停实时
+  （logPaused 挂起 WS 插入）/清空视图 ⑥输入控件 36px 对齐规范
+- 提交：pose-gate 722102c；main 2568a62（worktree 剥离镜像，残留归零，go test/build 绿）
+- 浏览器验收：390 移动队列（零溢出+筛选 chips）/总览日期分组/日志新按钮/面板搜「小鹿酱」直达 480px 抽屉
+- 注意：本地 uploader.exe（08:21 版）不含二期改动，需重编译才会在 8080 控制台生效；用户训练中未代重建
+- 未 push（用户本次未指令；main 上次已推至 151c918）
+## 三轮视觉转向：Premium Minimal SaaS Dashboard（2026-09-30，用户贴 SaaS 规范拍板弃 Editorial）
+
+- 全局换肤：App 底 #F5F6F8（暗 #111113）、卡片 --card 白（暗 #18181B）、主色蓝 #1677FF（暗 #4096FF）、
+  圆角 14/10/8、轻阴影 0 2px 8px .03 + hover、Header 56px、内容宽 1400px；卡片为 primary container。
+- 去文档化：Context 右栏移除（设置页左导航保留）；Sidebar 折叠树 → 静态分组产品导航。
+- Overview 重建：KPI 卡×4（上传中/已完成/当前速度/录制中 LIVE，30px + 近 7 日 spark 迷你柱关键柱蓝）→
+  系统状态 → 任务动态条（直播头像叠层）→ 上传趋势（蓝线）| 存储占用（ECharts 环图：目录 uploadedSize
+  真实数据 + 中心累计 + 图例≤4 色蓝绿橙紫）→ 最近完成（日期分组）→ 目录监控；
+  队列环形图退役，renderChart 重写为存储环图（watch dirs）。
+- 数据诚实：KPI 不伪造 vs yesterday；趋势仅 7 天不做 30/90 假切换；存储环图全部真实目录数据。
+- 姿态/高光动效体系仅随 Token 换色，结构零改动；embed_test 锚点无损。
+- 提交：pose-gate 9c8f9d3；main f0ac5bf（worktree 剥离镜像，残留归零，go test/build 绿）。
+- AGENTS.md §五 已重写为 SaaS 体系真值；浏览器验收浅/暗 Overview + 设置分节卡 + 390 移动端。
+- 本地 uploader.exe（08:21 版）为 Editorial 版 UI，需重编译才会是 SaaS 版；训练中未代重建。
+- 未 push（用户未指令）。
+## README 更新（2026-09-30，用户令「更新一下readme」）
+
+- img/1-8.png 全部重拍为 SaaS 浅色界面（1600×900）：登录/Overview(KPI 卡+环图)/运行日志/设置分节卡/
+  上传队列(筛选 chips)/上传历史/直播任务+详情抽屉/引擎 Cookie 面板；mock 服务器 8139 已停
+- 文本三处：简介「暗色沉浸风格」→「Premium 浅色 SaaS 风格（默认浅色，支持暗色）」；
+  「现代化 Web 控制台」章节改为 SaaS Dashboard 描述（KPI 卡/存储环图/命令面板/移动抽屉）；
+  ECharts 特性改为上传趋势折线+存储环图
+- 提交：pose-gate 94135f0；main 48b8975（分支各自定向修改，未整文件拷贝——main 无姿态章节）
+- 未 push（用户未指令）
+### main 推送 GitHub（2026-09-30 二次，用户令「把main分支推送了」）
+- git push origin main：151c918..48b8975 快进，3 个提交上远程（二期打磨 2568a62 / SaaS 转向 f0ac5bf / README 48b8975）；
+  均已核实零姿态门代码。pose-gate 仅限本地红线不变（9c8f9d3+94135f0 未推送）。
+## SaaS V2.1 精修（2026-09-30，用户贴 V2.1 规范令「继续」，拍板不换方向只精修）
+
+- 计划：docs/ui-saas-polish-plan.md（问题清单/方案/数据诚实红线/验收标准）
+- Token：边框 #E8EAED/#DADDE2、muted #8A8F98、disabled #B8BCC3、hover 阴影 16px、
+  --shadow-modal 独立（xmod 卡用，cmdk 保持 pop）、Input 圆角 9px、搜索框 34px、grid 1.6:1
+- Overview：状态区两段卡 → 单行紧凑状态条（引擎/下次扫描/信道/并发/内存/磁盘/运行 + chips）；
+  KPI 去重——上传中 spark 柱 / 已完成真实成功率进度条(success/(success+failed)) / 当前速度「● 实时」chip /
+  录制中 LIVE；最近完成「今天/昨天/M月D日」；趋势图去渐变面积（quiet line，#1677FF/#4096FF+#D9DEE7）
+- 组件：进度条绿→蓝、失败红；live-chip 红色实心块→深色 scrim+红点呼吸；脚注渐变 .82→.55；
+  封面占位渐变→纯色；外部引擎容器卡→一行状态摘要（去掉页头重复 chip）；
+  语义类 .text-danger/success/blue/warning 替换 7 处行内颜色；≤900px Header 只留 Menu/页名/搜索；
+  死 CSS 清理（.ov-status/.sys-*/.ctx 残留）；表头 12px；活动条减重至 ~56px
+- 提交：pose-gate 8245538；main a890255（worktree 剥离镜像：残留归零、go test/build 绿）
+- 验证：静态全绿 + 浏览器实测（Overview 状态条/KPI 差异化、外部引擎一行摘要、
+  390 移动零溢出 + Header 三元素）；未动姿态/高光动效体系；未伪造任何数据
+- 未 push（用户未指令；main 远程在 48b8975）
