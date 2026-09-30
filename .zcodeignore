@@ -1,0 +1,135 @@
+# =========================
+# 构建产物
+# =========================
+/uploader
+downloads/
+ffmpeg-master-latest-win64-gpl-shared/
+.gocache
+.gomodcache
+.gotmp
+covers/
+dist/
+.trae
+*.exe
+*.out
+.idea/
+文档.md
+/builtin_config.json
+/builtin_cookies.json
+/config.json
+builtin_urls.txt
+upload_success.json
+
+# =========================
+# 运行时生成文件
+# =========================
+uploaded_hash.db
+*.log
+
+# =========================
+# 临时文件
+# =========================
+tmp/
+temp/
+*.tmp
+
+# =========================
+# 编辑器文件
+# =========================
+.vscode/
+*.swp
+*.swo
+
+# =========================
+# 系统文件
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Go 编译缓存
+# =========================
+*.test
+*.prof
+
+# =========================
+# 私密配置（如果以后有）
+# =========================
+config.local.yaml
+.env
+.env.*
+
+
+# runtime junk
+2.mp4
+bilibili_config.json
+dir_status.json
+upload.html
+uploader-windows-amd64.tar.gz
+uploader.exe~
+uploader_linux
+uploader_linux_deploy
+*.py
+
+# =========================
+# 本地备份与临时目录（含 cookies 等敏感信息，禁止入库）
+# =========================
+.ssh_tmp/
+*.json.bak
+
+# =========================
+# 本地调试脚本与临时构建产物
+# =========================
+/.workbuddy-ai/
+/cpu_*.sh
+/douyin_*.sh
+/lwm_*.sh
+/vwm_*.sh
+/wm_*.sh
+/wm_*.png
+/path_check.sh
+/time_check.sh
+/uploader_verify
+
+# =========================
+# 本地工作区会话/诊断脚本与产物（不入库）
+# =========================
+.agent/
+.workbuddy/
+_diag/
+release/
+config.json.bak*
+_rel_test.sh
+/分布式文件上传系统-控制台重设计.pdf
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+node_modules/
+bower_components/
+jspm_packages/
+__pycache__/
+site-packages/
+venv/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+cdk.out/
+*.egg-info/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）
