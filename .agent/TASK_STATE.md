@@ -1200,3 +1200,7 @@ gesture 判舞率长期压不下来，根因**可能不是特征表达不出 ges
 - 教训：自建比对脚本帧配对 bug（Go 16 槽 f0,f0,f1,f1 vs Python concat 两段）曾误判「帧 5 JPEG 解码器差异」，目检调试图（_dbg_go5/py5.png 完全一致）推翻——跨实现比对必须先核配对
 - 桌面可视化：_progress_window.py 实扫胶片窗（插值进度条+当前窗 8 帧+扫描线，seed42 确定性顺序重建"正在算哪一窗"）；_train_monitor.py 连续训练监控窗（启动/抽帧/推理/入池/重定标/待机状态机 + 帧目录实拍胶片，守护重启自动恢复，全程只读）
 - 并行答复：本机与 26 路录制共存故单进程 6 线程；并行正确场景在服务器（多 worker 池模式，Go ORT 会话可并发 Run）
+- **清理（2026-09-30 晚，用户令「把下载的东西删掉」）**：_vendor/videomae/（权重 88MB+ONNX 90.7MB）已删；
+  pip 新装 32 包（torch/transformers/onnxscript 及依赖链，ESP-IDF 基线 Python）全数卸载，
+  基线 numpy/PIL/sklearn/onnxruntime 验证完好；_videomae_probe/ 脚本+嵌入缓存+结果 51MB 按探针先例留档。
+  重放路径=重下权重+重导出 ONNX（§47.5 头部有全程记录）。_vendor/clip/（§44 重下 351MB，已关线）待用户定夺。
