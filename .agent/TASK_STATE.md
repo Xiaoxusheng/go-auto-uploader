@@ -1188,3 +1188,15 @@ gesture 判舞率长期压不下来，根因**可能不是特征表达不出 ges
   水平居中，标签/描述/输入框全部悬中且输入框不满宽；修复=移动端 align-items:stretch +
   直接子级 .inp 满宽。390 实测左缘对齐/满宽/零溢出
 - 提交：pose-gate 4e8ca01；main 46d094e；uploader.exe 已重编译（用户手机刷新即得修复）
+
+## §47.5 VideoMAE 视频动作识别探针——关线 + Go ORT 链路验证（2026-09-30，用户令「按你说的做先提交方便回退」「可移植」「能用 go 吗」）
+
+- 预注册协议与 §44 CLIP 探针同考卷：同一 probe_sample.json（7,772 窗×51 主播）、同主播分组 5 折 AUC≥0.85 判定线
+- 模型 videomae-small-finetuned-kinetics → 单文件 ONNX 90.7MB（torch 仅本机一次性导出，torch/ORT parity 8e-6；dynamo=False 经典导出器避免权重外置 .data）
+- **判定：关线**——主播分组 5 折 OOF AUC **0.6286**（CLIP 0.702 / 线 0.85，folds 0.49-0.76 两折塌穿 0.5）；按片分组 0.926（§44 跨主播塌点原样复现）；盲区专项 dance vs gesture **0.334 反向**；零样本 K400 舞蹈类聚合仅 0.711/0.696
+- **第六次独立确认**：预训练运动语义（时序视频模型）也不破天花板——塌点在「边界与主播风格相关」的任务结构，不在特征族
+- 资产：_diag/train/_videomae_probe/（embed/eval 脚本 + 39 part 嵌入缓存 + result JSON）；CPU 1.21s/窗（6 线程，batch 4）；预注册升级线（base 复跑）因 <0.80 不触发
+- **Go 链路验证（新命令 hleval videomae-probe）**：onnxruntime_go 加载同 ONNX 推理 ✓；逐帧预处理余弦 **0.9994×8**（Go 手写 box 面积加权 vs PIL bicubic，残差=重采样核）；嵌入级 cos 0.919 = 核差异经 16 帧累积（非链路错误）；3 单测全绿；hleval_vmae.exe 独立构建不碰生产 hleval.exe；服务器可移植路径=只带 ONNX + 现有 sysroot ORT
+- 教训：自建比对脚本帧配对 bug（Go 16 槽 f0,f0,f1,f1 vs Python concat 两段）曾误判「帧 5 JPEG 解码器差异」，目检调试图（_dbg_go5/py5.png 完全一致）推翻——跨实现比对必须先核配对
+- 桌面可视化：_progress_window.py 实扫胶片窗（插值进度条+当前窗 8 帧+扫描线，seed42 确定性顺序重建"正在算哪一窗"）；_train_monitor.py 连续训练监控窗（启动/抽帧/推理/入池/重定标/待机状态机 + 帧目录实拍胶片，守护重启自动恢复，全程只读）
+- 并行答复：本机与 26 路录制共存故单进程 6 线程；并行正确场景在服务器（多 worker 池模式，Go ORT 会话可并发 Run）
