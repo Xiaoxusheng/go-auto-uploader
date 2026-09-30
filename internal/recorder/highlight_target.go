@@ -1,6 +1,9 @@
 package recorder
 
-import "path/filepath"
+import (
+	"os"
+	"path/filepath"
+)
 
 // HighlightDirName 是高光产物存放的子目录名。
 // 与原片目录平行：<savePath>/<主播>/<日期>/*.ts 是原片，
@@ -28,11 +31,10 @@ type HighlightTarget struct {
 // globalOn 是全局「高光」开关，onlyGlobal 是全局「只传高光」开关；
 // 单主播三态（0=跟随全局 / 1=强制开 / 2=强制关）优先于对应的全局值。
 // 供离线后处理调度使用：调用方拿到目录后自行扫描切片文件。
+// 存储溢出护栏切换后主播的录像可能分散在主目录与备选目录，因此逐根探测，
+// 只返回实际存在的目录（冷路径，os.Stat 开销可忽略）。
 func HighlightTargets(globalOn, onlyGlobal bool) []HighlightTarget {
-	baseDir := getBuiltinSavePath()
-	if baseDir == "" {
-		return nil
-	}
+	roots := RecordRoots()
 	var out []HighlightTarget
 	for _, t := range GetBuiltinRecorderTasks() {
 		if !triStateOn(t.Highlight, globalOn) {
@@ -43,13 +45,19 @@ func HighlightTargets(globalOn, onlyGlobal bool) []HighlightTarget {
 		if safe == "" {
 			safe = t.RoomID
 		}
-		out = append(out, HighlightTarget{
-			Platform:      t.Platform,
-			RoomID:        t.RoomID,
-			AnchorName:    t.AnchorName,
-			SaveDir:       filepath.Join(baseDir, safe),
-			OnlyHighlight: triStateOn(t.HighlightOnly, onlyGlobal),
-		})
+		for _, baseDir := range roots {
+			dir := filepath.Join(baseDir, safe)
+			if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+				continue
+			}
+			out = append(out, HighlightTarget{
+				Platform:      t.Platform,
+				RoomID:        t.RoomID,
+				AnchorName:    t.AnchorName,
+				SaveDir:       dir,
+				OnlyHighlight: triStateOn(t.HighlightOnly, onlyGlobal),
+			})
+		}
 	}
 	return out
 }
@@ -58,12 +66,9 @@ func HighlightTargets(globalOn, onlyGlobal bool) []HighlightTarget {
 //
 // 上传管线用它判断：属于这些目录、但不在其「高光」子目录下的文件应当跳过上传。
 // 刻意不复用 GetBuiltinRecorderTasks——那个会遍历目录统计大小，而本函数位于上传
-// 热路径上会被频繁调用，这里只读内存状态。
+// 热路径上会被频繁调用，这里只读内存状态、纯字符串拼接（含备选目录，不做 Stat）。
 func HighlightOnlyPrefixes(globalOnly bool) []string {
-	baseDir := getBuiltinSavePath()
-	if baseDir == "" {
-		return nil
-	}
+	roots := RecordRoots()
 	var out []string
 	builtinStatusMap.Range(func(_, value interface{}) bool {
 		task := *value.(*BuiltinTaskStatus)
@@ -75,7 +80,9 @@ func HighlightOnlyPrefixes(globalOnly bool) []string {
 		if safe == "" {
 			safe = task.RoomID
 		}
-		out = append(out, filepath.Join(baseDir, safe))
+		for _, baseDir := range roots {
+			out = append(out, filepath.Join(baseDir, safe))
+		}
 		return true
 	})
 	return out

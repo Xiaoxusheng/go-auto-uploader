@@ -243,9 +243,7 @@ func GetBuiltinRecorderTasks() []BuiltinTaskStatus {
 		if safeName == "" {
 			safeName = task.RoomID
 		}
-		baseDir := getBuiltinSavePath()
-		targetDir := filepath.Join(baseDir, safeName)
-		task.FileSize = getBuiltinDirSizeStr(targetDir)
+		task.FileSize = getBuiltinAnchorSizeStr(safeName)
 		list = append(list, task)
 		return true
 	})
@@ -304,10 +302,27 @@ func formatBuiltinDuration(d time.Duration) string {
 	return FormatDuration(d)
 }
 
-// getBuiltinDirSizeStr 遍历并计算指定保存目录的总物理文件大小
-func getBuiltinDirSizeStr(path string) string {
+// getBuiltinAnchorSizeStr 汇总某主播在全部落盘根目录（主 + 备选）下的目录体积。
+// 存储溢出护栏切换后，同一主播的录像可能分散在多个根目录。
+func getBuiltinAnchorSizeStr(safeName string) string {
+	var total int64
+	for _, base := range RecordRoots() {
+		dir := filepath.Join(base, safeName)
+		if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+			continue
+		}
+		total += getBuiltinDirSize(dir)
+	}
+	if total == 0 {
+		return "0 B"
+	}
+	return formatBuiltinBytes(total)
+}
+
+// getBuiltinDirSize 遍历并计算指定目录的总物理文件大小（字节）
+func getBuiltinDirSize(path string) int64 {
 	var size int64
-	err := filepath.WalkDir(path, func(_ string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(path, func(_ string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -319,10 +334,7 @@ func getBuiltinDirSizeStr(path string) string {
 		}
 		return nil
 	})
-	if err != nil || size == 0 {
-		return "0 B"
-	}
-	return formatBuiltinBytes(size)
+	return size
 }
 
 // formatBuiltinBytes 将庞大的字节数据格式化为易读的 KB/MB/GB 规格字符串

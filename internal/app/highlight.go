@@ -185,7 +185,7 @@ func highlightSweepExpiredSources() {
 	}
 	highlightLastSweep = now
 
-	removed, freed := highlightSweepRoots(AppCfg().Dirs, now.AddDate(0, 0, -days))
+	removed, freed := highlightSweepRoots(ScanRoots(), now.AddDate(0, 0, -days))
 	if removed > 0 {
 		log.Printf("[HIGHLIGHT] 🧹 兜底清理：删除 %d 个超过 %d 天的源片，释放 %.1f MB",
 			removed, days, float64(freed)/1048576)

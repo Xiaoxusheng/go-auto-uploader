@@ -23,6 +23,7 @@ import (
 	"upload/internal/app"
 	"upload/internal/auth"
 	"upload/internal/cryptox"
+	"upload/internal/fsutil"
 	"upload/internal/recorder"
 	"upload/internal/storage"
 )
@@ -296,9 +297,11 @@ func (s *Server) sendJSONError(w http.ResponseWriter, r *http.Request, statusCod
 
 // ---------- sys stats ----------
 
-// getDiskFreeSpaceStd 按平台分文件实现：
-//   - windows: disk_windows.go（Win32 GetDiskFreeSpaceEx）
-//   - 其他:    disk_unix.go（statfs）
+// getDiskFreeSpaceStd 返回路径所在卷对当前用户可用的剩余空间（字节）。
+// 平台实现统一收敛到 internal/fsutil（windows: GetDiskFreeSpaceEx / 其他: statfs）。
+func getDiskFreeSpaceStd(pathStr string) int64 {
+	return fsutil.FreeSpace(pathStr)
+}
 
 func getFFmpegMemoryStd() int64 {
 	var totalMem int64
@@ -470,7 +473,8 @@ func (s *Server) buildStatusData() map[string]interface{} {
 		dyn = int64(cfg.ScanInterval)
 	}
 	dirs := make([]map[string]interface{}, 0)
-	for _, dir := range cfg.Dirs {
+	// 存储溢出护栏：备选落盘目录也展示存储卡（ScanRoots = cfg.Dirs + 备选目录）
+	for _, dir := range app.ScanRoots() {
 		dir = strings.TrimSpace(dir)
 		if dir == "" {
 			continue

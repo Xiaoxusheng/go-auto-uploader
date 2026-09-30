@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -130,7 +131,7 @@ func HandleFile(path string) {
 	if shouldSkipUpload(path) {
 		return
 	}
-	ensurePipeline().HandleFile(context.Background(), path, AppCfg().Dirs)
+	ensurePipeline().HandleFile(context.Background(), path, ScanRoots())
 }
 
 // RecordSuccess 记录上传成功。
@@ -195,6 +196,10 @@ func Run(opts Options) {
 	if len(AppCfg().Dirs) == 0 {
 		log.Println("[CONFIG] ⚠️ 未配置扫描目录：可通过 -dirs 参数指定，或在 config.json / Web 控制台中配置 dirs 后再启动扫描")
 	}
+
+	// 存储溢出护栏告警出口：录制引擎落盘空间不足时下发控制台告警
+	// （recorder 不可反向 import app，只能由 app 注入）
+	recorder.AlertHook = SendAlert
 
 	// 运行时数据统一落到 config.dataDir，并迁移启动目录里的历史数据文件
 	ApplyDataDir()
@@ -397,9 +402,35 @@ func PauseOnFailure(reason string) {
 	}
 }
 
+// ScanRoots 上传扫描与文件归属判定的根目录集合：config.dirs + 录制备选落盘目录。
+// 存储溢出护栏切换后，备选目录里的录制文件必须能被扫描上传、被 DetectRoot 归属
+// （否则 pipeline 会按 NO_ROOT_MATCH 直接跳过），并参与源片兜底清理。
+// cfg.Dirs 各项保持原样返回（兼容既有 dir_status 键），备选目录以归一化形式追加。
+func ScanRoots() []string {
+	cfg := AppCfg()
+	out := make([]string, 0, len(cfg.Dirs)+4)
+	seen := make(map[string]bool, len(cfg.Dirs)+4)
+	for _, d := range cfg.Dirs {
+		key := filepath.Clean(strings.TrimSpace(d))
+		if key == "" || key == "." || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, d)
+	}
+	for _, fb := range recorder.FallbackRoots() {
+		if seen[fb] {
+			continue
+		}
+		seen[fb] = true
+		out = append(out, fb)
+	}
+	return out
+}
+
 // DetectRoot 根目录反推。
 func DetectRoot(path string) string {
-	return naming.DetectRoot(path, AppCfg().Dirs)
+	return naming.DetectRoot(path, ScanRoots())
 }
 
 // ApplyDataDir 解析 dataDir、迁移历史数据文件，并把各持久化 store 重定向过去。

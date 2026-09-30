@@ -62,86 +62,88 @@ func getBuiltinRecorderStats() *RecorderStats {
 // 日期目录名即归属日期；散落在主播目录下的历史文件只计入总量，不参与按日趋势。
 func computeRecorderStats() *RecorderStats {
 	stats := &RecorderStats{GeneratedAt: time.Now().Format("2006-01-02 15:04:05")}
-	base := getBuiltinSavePath()
 
-	anchors, err := os.ReadDir(base)
-	if err != nil {
-		return stats
-	}
-
+	// 遍历全部落盘根目录（主 + 备选）：存储溢出护栏切换后，
+	// 同一主播的录像可能分散在多个根目录，按主播名归并、日期目录名去重。
 	dailyIndex := make(map[string]*DailyStat)
+	anchorIndex := make(map[string]*AnchorStat)
+	anchorLastMod := make(map[string]time.Time)
+	anchorDates := make(map[string]map[string]bool)
 
-	for _, a := range anchors {
-		if !a.IsDir() {
-			continue
-		}
-		anchorStat := AnchorStat{Anchor: a.Name()}
-		anchorDir := filepath.Join(base, a.Name())
-		var lastMod time.Time
-
-		dates, err := os.ReadDir(anchorDir)
+	for _, base := range RecordRoots() {
+		anchors, err := os.ReadDir(base)
 		if err != nil {
 			continue
 		}
 
-		for _, d := range dates {
-			if !d.IsDir() || !builtinDateDirName.MatchString(d.Name()) {
+		for _, a := range anchors {
+			if !a.IsDir() {
 				continue
 			}
-			dateStat := dailyIndex[d.Name()]
-			_ = filepath.WalkDir(filepath.Join(anchorDir, d.Name()), func(path string, entry os.DirEntry, err error) error {
-				if err != nil || entry == nil {
-					return nil
-				}
-				if entry.IsDir() {
-					// Screenshots 目录为截图归档，不计入录制量统计
-					if entry.Name() == "Screenshots" {
-						return filepath.SkipDir
-					}
-					return nil
-				}
-				info, err := entry.Info()
-				if err != nil || info.IsDir() {
-					return nil
-				}
-				anchorStat.SizeBytes += info.Size()
-				anchorStat.Files++
-				if info.ModTime().After(lastMod) {
-					lastMod = info.ModTime()
-				}
-				if dateStat == nil {
-					dateStat = &DailyStat{Date: d.Name()}
-					dailyIndex[d.Name()] = dateStat
-				}
-				dateStat.Bytes += info.Size()
-				dateStat.Files++
-				return nil
-			})
-		}
+			anchorStat := anchorIndex[a.Name()]
+			if anchorStat == nil {
+				anchorStat = &AnchorStat{Anchor: a.Name()}
+				anchorIndex[a.Name()] = anchorStat
+			}
+			anchorDir := filepath.Join(base, a.Name())
 
-		if !lastMod.IsZero() {
-			anchorStat.LastRecord = lastMod.Format("2006-01-02 15:04")
-		}
-		if anchorStat.Files > 0 {
-			anchorStat.Size = formatBuiltinBytes(anchorStat.SizeBytes)
-			stats.Anchors = append(stats.Anchors, anchorStat)
-			stats.TotalBytes += anchorStat.SizeBytes
-			stats.TotalFiles += anchorStat.Files
+			dates, err := os.ReadDir(anchorDir)
+			if err != nil {
+				continue
+			}
+
+			for _, d := range dates {
+				if !d.IsDir() || !builtinDateDirName.MatchString(d.Name()) {
+					continue
+				}
+				if anchorDates[a.Name()] == nil {
+					anchorDates[a.Name()] = make(map[string]bool)
+				}
+				anchorDates[a.Name()][d.Name()] = true
+				dateStat := dailyIndex[d.Name()]
+				_ = filepath.WalkDir(filepath.Join(anchorDir, d.Name()), func(path string, entry os.DirEntry, err error) error {
+					if err != nil || entry == nil {
+						return nil
+					}
+					if entry.IsDir() {
+						// Screenshots 目录为截图归档，不计入录制量统计
+						if entry.Name() == "Screenshots" {
+							return filepath.SkipDir
+						}
+						return nil
+					}
+					info, err := entry.Info()
+					if err != nil || info.IsDir() {
+						return nil
+					}
+					anchorStat.SizeBytes += info.Size()
+					anchorStat.Files++
+					if info.ModTime().After(anchorLastMod[a.Name()]) {
+						anchorLastMod[a.Name()] = info.ModTime()
+					}
+					if dateStat == nil {
+						dateStat = &DailyStat{Date: d.Name()}
+						dailyIndex[d.Name()] = dateStat
+					}
+					dateStat.Bytes += info.Size()
+					dateStat.Files++
+					return nil
+				})
+			}
 		}
 	}
 
-	// 单主播「有录像的日期数」按目录名去重统计（与文件遍历解耦，成本可忽略）
-	for i := range stats.Anchors {
-		days := 0
-		dates, err := os.ReadDir(filepath.Join(base, stats.Anchors[i].Anchor))
-		if err == nil {
-			for _, d := range dates {
-				if d.IsDir() && builtinDateDirName.MatchString(d.Name()) {
-					days++
-				}
-			}
+	for _, as := range anchorIndex {
+		if !anchorLastMod[as.Anchor].IsZero() {
+			as.LastRecord = anchorLastMod[as.Anchor].Format("2006-01-02 15:04")
 		}
-		stats.Anchors[i].Days = days
+		as.Days = len(anchorDates[as.Anchor])
+		if as.Files > 0 {
+			as.Size = formatBuiltinBytes(as.SizeBytes)
+			stats.Anchors = append(stats.Anchors, *as)
+			stats.TotalBytes += as.SizeBytes
+			stats.TotalFiles += as.Files
+		}
 	}
 
 	// 近 14 天趋势（含今天），按日期倒序

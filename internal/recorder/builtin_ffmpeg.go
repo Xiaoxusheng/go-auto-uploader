@@ -295,7 +295,8 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 		safeName = roomID
 	}
 
-	baseDir := getBuiltinSavePath()
+	// 存储溢出护栏：主目录快满时自动切备选目录（只在白名单内选，不乱找）
+	baseDir := ResolveRecordRoot()
 
 	// ✨ 修改内容：提取当前日期并构建日期命名的子文件夹作为落盘根目录
 	dateStr := time.Now().Format("2006-01-02")

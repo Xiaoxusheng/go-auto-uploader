@@ -86,6 +86,12 @@ func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 				b.HighlightAnalyzeWorkers = c.HighlightAnalyzeWorkers
 			}
 			b.HighlightOnlyUpload = c.HighlightOnlyUpload
+			// 存储溢出护栏：备选目录整体替换（nil=未提交保留现值，空数组=清空即关闭）；
+			// 阈值直接赋值，缺省与归一化交给 ApplyDefaults。
+			if c.SavePathFallbacks != nil {
+				b.SavePathFallbacks = c.SavePathFallbacks
+			}
+			b.MinFreeGB = c.MinFreeGB
 		})
 
 		if err := PersistConfig(); err != nil {

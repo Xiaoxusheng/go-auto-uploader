@@ -3764,6 +3764,21 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                     <label>录制保存路径</label>
                     <input class="inp" v-model="builtinSettings.save_path" placeholder="./downloads">
                 </div>
+
+                <div class="frm-divider">存储溢出护栏</div>
+                <div class="f-item" style="margin-bottom:13px;">
+                    <label>备选落盘目录（每行一个，主目录剩余空间不足时自动切换）</label>
+                    <textarea class="inp" rows="2" v-model="builtinSettings.save_path_fallbacks_text"
+                        placeholder="每行一个，如 D:\rec_store。只在白名单内选择剩余空间最大的目录，绝不自动扫盘；请使用专用空目录，其中的文件与主目录一样按上传后删源处理。"></textarea>
+                </div>
+                <div class="frm-grid c2" style="margin-bottom:6px;">
+                    <div class="f-item">
+                        <label>空间阈值 (GB，低于即切换，0=默认 10)</label>
+                        <input type="number" class="inp" v-model.number="builtinSettings.min_free_gb" min="0" step="1" placeholder="10">
+                    </div>
+                    <div class="f-item"></div>
+                </div>
+
                 <div class="frm-grid c2" style="margin-bottom:6px;">
                     <div class="f-item">
                         <label>默认录制画质</label>
@@ -5168,6 +5183,8 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                 segment_time: 0,
                 screenshot_interval: 20,
                 save_path: './downloads',
+                save_path_fallbacks_text: '',
+                min_free_gb: 10,
                 watermark_enable: false,
                 video_watermark_enable: false,
                 watermark_text: '',
@@ -5866,6 +5883,8 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                         builtinSettings.value.segment_time = res1.data.segment_time || 0;
                         builtinSettings.value.screenshot_interval = res1.data.screenshot_interval || 20;
                         builtinSettings.value.save_path = res1.data.save_path || './downloads';
+                        builtinSettings.value.save_path_fallbacks_text = (res1.data.save_path_fallbacks || []).join('\n');
+                        builtinSettings.value.min_free_gb = res1.data.min_free_gb ?? 10;
 
                         builtinSettings.value.watermark_enable = res1.data.watermark_enable || false;
                         builtinSettings.value.video_watermark_enable = res1.data.video_watermark_enable || false;
@@ -5915,7 +5934,12 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
             const saveBuiltinConfig = async () => {
                 builtinSaving.value = true;
                 try {
-                    await api.post('/builtin_recorder/config', builtinSettings.value);
+                    // 备选目录以 textarea 每行一个编辑，提交时拆为数组并去掉空行
+                    const payload = { ...builtinSettings.value };
+                    payload.save_path_fallbacks = String(builtinSettings.value.save_path_fallbacks_text || '')
+                        .split('\n').map(s => s.trim()).filter(Boolean);
+                    delete payload.save_path_fallbacks_text;
+                    await api.post('/builtin_recorder/config', payload);
                     Message.success("内置引擎水印与录制参数已生效！");
                     showBuiltinSettingsModal.value = false;
                 } catch (e) {

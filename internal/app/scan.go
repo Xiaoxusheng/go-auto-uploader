@@ -29,8 +29,8 @@ func RunOnce(triggerReason string, currentDynamicInterval int) int {
 
 	currentWorkers := AppCfg().Workers
 	cfg := AppCfg()
-	currentDirs := make([]string, len(cfg.Dirs))
-	copy(currentDirs, cfg.Dirs)
+	// 存储溢出护栏：备选落盘目录并入扫描根，其中的录制文件才能被上传与清理
+	currentDirs := ScanRoots()
 	enableUpload := cfg.EnableUpload
 
 	if !IsRunning() {

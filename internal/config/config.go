@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -140,6 +141,14 @@ type BuiltinSettings struct {
 	// 分析要解一遍码 + 跑姿态门推理，多路并行会与录制抢 CPU/磁盘 IO ——
 	// 分析吞吐追不上录制速度时（积压持续增长）才调大，服务器弱机建议 2-3。
 	HighlightAnalyzeWorkers int `json:"highlight_analyze_workers"`
+
+	// —— 存储溢出护栏：主落盘目录快满时自动把新录制切到备选目录（docs/plans/2026-09-30-storage-fallback.md）——
+	// SavePathFallbacks 备选落盘根目录白名单。只在主目录剩余空间跌破 MinFreeGB 时才切换，
+	// 且只在白名单内选剩余空间最大且达标的目录——绝不自动扫盘乱找。空 = 功能关闭。
+	// 务必使用专用目录：备选目录下的文件与主目录一样按「上传后删源」语义处理。
+	SavePathFallbacks []string `json:"save_path_fallbacks"`
+	// MinFreeGB 主目录剩余空间阈值（GB），低于即视为「满」。配置了备选目录且 ≤0 时默认 10。
+	MinFreeGB float64 `json:"min_free_gb"`
 
 	// Cookies 原 builtin_cookies.json
 	Cookies BuiltinCookies `json:"cookies"`
@@ -323,6 +332,26 @@ func (b *BuiltinSettings) ApplyDefaults() {
 	}
 	if b.SavePath == "" {
 		b.SavePath = "./downloads"
+	}
+	// 存储溢出护栏：归一化备选目录（trim/去空/Clean/去重/去与主目录重复），
+	// 阈值只在配置了备选目录时给缺省 10GB；负值夹到 0（≤0 交由上面补缺省）。
+	primarySave := filepath.Clean(b.SavePath)
+	seenFb := make(map[string]bool, len(b.SavePathFallbacks))
+	fbs := make([]string, 0, len(b.SavePathFallbacks))
+	for _, fb := range b.SavePathFallbacks {
+		fb = filepath.Clean(strings.TrimSpace(fb))
+		if fb == "" || fb == "." || fb == primarySave || seenFb[fb] {
+			continue
+		}
+		seenFb[fb] = true
+		fbs = append(fbs, fb)
+	}
+	b.SavePathFallbacks = fbs
+	if len(b.SavePathFallbacks) > 0 && b.MinFreeGB <= 0 {
+		b.MinFreeGB = 10
+	}
+	if b.MinFreeGB < 0 {
+		b.MinFreeGB = 0
 	}
 	if b.WatermarkFormat == "" {
 		b.WatermarkFormat = "%Y-%m-%d %H:%M:%S"

@@ -1,6 +1,7 @@
 //go:build windows
 
-package httpapi
+// Package fsutil 文件系统辅助：原子写、磁盘剩余空间探测。
+package fsutil
 
 import (
 	"path/filepath"
@@ -9,10 +10,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// getDiskFreeSpaceStd 返回路径所在卷对当前用户可用的剩余空间（字节）。
+// FreeSpace 返回路径所在卷对当前用户可用的剩余空间（字节），出错返回 0。
 // 直接调用 Win32 GetDiskFreeSpaceEx：不依赖外部进程。
 // （旧实现走 wmic，但 wmic 已被新版 Windows 11 移除，会导致剩余空间恒为 0。）
-func getDiskFreeSpaceStd(pathStr string) int64 {
+func FreeSpace(pathStr string) int64 {
 	if pathStr == "" {
 		pathStr = "."
 	}
