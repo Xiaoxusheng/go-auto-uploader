@@ -224,6 +224,18 @@ Phase 3 Tokens+CSS 重写 → Phase 4 Shell（Header/树状 Sidebar/移动顶栏
 - 截图期间发现的 4 个问题已当场修复：①总览/设置两段拼接丢失 `</section>` 导致页签嵌套（切页整页空白）；②桌面端汉堡按钮未隐藏（`.icobtn` 优先级覆盖）；③`href` 触发链接默认下划线（补全局 `text-decoration:none`）；④设置页右栏与左侧导航重复（右栏排除 settings）。
 - 注：无头后台标签页存在动画/过渡时钟冻结的截图伪影（pageIn 停在半透明、主题切换过渡停在中途），前台真实浏览器不受影响；截图验收时以注入冻结样式 + 重触发主题属性的方式绕过。
 
+## 三轮转向：Premium Minimal SaaS Dashboard（2026-09-30，用户令「SaaS Dashboard 重构」）
+
+用户拍板放弃 Editorial 文档风，转向 **Premium Minimal SaaS Analytics Dashboard**（Linear 克制感 × Stripe 信息组织 × 白卡灰底）。本轮为全局换肤 + Overview 重建：
+
+1. **Token 换血**：App 底 #F5F6F8（暗 #111113）、卡片 `--card` 白（暗 #18181B）、主色蓝 #1677FF（暗 #4096FF）、圆角 14/10/8、阴影 0 2px 8px .03 + hover、Header 56px、内容宽 1400。
+2. **去文档化**：移除 Context 右栏与 pose/logs 页目录（设置页左导航保留，规范 §21）；Sidebar 折叠树 → 静态分组产品导航（38px 项、active #F1F3F5、蓝 icon）。
+3. **Overview 重建**：KPI 卡×4（上传中/已完成/当前速度/录制中，30px 数字 + 近 7 日 spark 迷你柱，关键柱蓝）→ 系统状态行卡 → 任务动态条（+直播中头像叠层）→ 上传趋势（蓝线）| 存储占用（环图：目录 uploadedSize 真实数据，中心累计值 + 图例 ≤4 色蓝绿橙紫）→ 最近完成 → 目录监控。队列环形图彻底退役，renderChart 重写为存储环图（watch dirs）。
+4. **卡片语言**：.card/.statrow/.set-sec/弹层全部白卡+轻阴影；主按钮蓝底白字；日志区白卡；输入 36px 圆角 8-10。
+5. 数据诚实：KPI 不伪造「vs yesterday」（用等待/累计/实时等真实副文案）；趋势仅 7 天（后端只有 7 日数据，不做 30/90 假切换）。
+
+验证：verify 静态全绿 + embed_test 锚点无损 + go test ✅；浏览器：浅/暗 Overview（KPI/环图/趋势/蓝主色）、设置分节卡、390 移动端（KPI 单列零溢出）✅。AGENTS.md §五 已同步为 SaaS 体系真值。
+
 ## 二期打磨（2026-09-30，同日第二轮）
 
 承接一期遗留与规范差距项，全部为纯前端改动：
