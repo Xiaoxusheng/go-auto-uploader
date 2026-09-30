@@ -187,3 +187,30 @@ func TestUncertaintyExportFrozenStreamerExcluded(t *testing.T) {
 		}
 	}
 }
+
+// TestUeFilterStreamers -streamers 定向白名单过滤：空 spec 原样返回、
+// 按主播名过滤、冻结 v3 主播即使点名也被剔除（红线优先）。
+func TestUeFilterStreamers(t *testing.T) {
+	cfg := []clipConfigEntry{
+		{Clip: "淮也_2026-09-29_15-29-26_007"},
+		{Clip: "Lumi静_2026-09-30_14-31-37_004"},
+		{Clip: "小妤_2026-09-30_10-08-04_000"},
+		{Clip: "倦_2026-09-30_09-00-00_000"},
+	}
+	if got := ueFilterStreamers(cfg, ""); len(got) != len(cfg) {
+		t.Fatalf("空 spec 应原样返回，got %d want %d", len(got), len(cfg))
+	}
+	got := ueFilterStreamers(cfg, "淮也, Lumi静")
+	if len(got) != 2 {
+		t.Fatalf("白名单过滤后应剩 2 片，got %d", len(got))
+	}
+	for _, e := range got {
+		s := ueStreamerName(e.Clip)
+		if s != "淮也" && s != "Lumi静" {
+			t.Errorf("混入白名单外主播: %s", e.Clip)
+		}
+	}
+	if got := ueFilterStreamers(cfg, "倦,淮也"); len(got) != 1 || ueStreamerName(got[0].Clip) != "淮也" {
+		t.Fatalf("冻结 v3 主播点名也应被剔除: %v", got)
+	}
+}

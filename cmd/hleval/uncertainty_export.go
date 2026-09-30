@@ -42,6 +42,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"upload/internal/pose"
@@ -119,6 +120,29 @@ func ueStreamerName(clip string) string {
 		return m[1]
 	}
 	return ""
+}
+
+// ueFilterStreamers -streamers 白名单过滤（定向补采）：空 spec=原样返回；
+// 逗号分隔主播名，与 ueStreamerName 同口径。冻结 v3 主播即使写进白名单也被剔除
+// （红线优先于定向）。
+func ueFilterStreamers(cfg []clipConfigEntry, spec string) []clipConfigEntry {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return cfg
+	}
+	allow := map[string]bool{}
+	for _, s := range strings.Split(spec, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			allow[s] = true
+		}
+	}
+	out := cfg[:0]
+	for _, e := range cfg {
+		if allow[ueStreamerName(e.Clip)] && !ueFrozenStreamers[ueStreamerName(e.Clip)] {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // ueFrozenStreamers 冻结集 v3 验收主播（主播级双 OOS 红线）：其任何窗不得进入
@@ -244,6 +268,7 @@ func cmdUncertaintyExport(args []string) {
 	perClip := fs.Int("per-clip", 8, "每片窗上限（band=带内窗上限；verdict=每类上限取其半、向上取整；segment 不适用）")
 	total := fs.Int("total", 360, "导出总窗上限（segment 模式约束 C 类补量，A/B 段不受限）")
 	seed := fs.Int64("seed", 42, "随机种子")
+	streamers := fs.String("streamers", "", "逗号分隔主播名白名单（定向补采，如新手势型主播），空=全池")
 	fs.Parse(args)
 
 	switch *mode {
@@ -261,6 +286,7 @@ func cmdUncertaintyExport(args []string) {
 		fmt.Fprintf(os.Stderr, "解析池配置失败: %v\n", err)
 		os.Exit(1)
 	}
+	cfg = ueFilterStreamers(cfg, *streamers)
 	excludeClip := map[string]bool{}
 	excludeWins := map[string]map[int]bool{} // segment 模式窗级排除：已标注窗
 	for _, p := range []string{*goldPath, *exclude2} {
