@@ -354,8 +354,7 @@ a { color: inherit; text-decoration: none; }
 }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .card-sub { font-size: 12px; color: var(--t3); margin-top: 2px; line-height: 1.5; }
-.card-compact { padding: 16px; }
-@media (max-width: 600px) { .card, .card-compact { padding: 16px; } }
+@media (max-width: 600px) { .card { padding: 16px; } }
 .chart-foot { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--t3); padding: 10px 2px 0; }
 .card-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .card-title .mini { font-size: 12px; font-weight: 400; color: var(--t3); }
@@ -381,6 +380,9 @@ a { color: inherit; text-decoration: none; }
 
 /* ===================== SaaS KPI / Mini Chart / 活动条 / 存储环图 ===================== */
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 2px 0 16px; }
+/* [组件职责] .kpi-card=Overview 一级指标（Label/Value/Meta/Visual）
+   .statrow+.stat-card=次级统计条（白卡内无边框分列）  .stats-cell=弹窗 Metric（紧凑）
+   .status-bar=系统状态摘要  .card=通用内容容器（图表/设置/活动） */
 .kpi-card {
     background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg);
     box-shadow: var(--shadow); padding: 18px 20px; min-height: 126px;
@@ -409,6 +411,7 @@ a { color: inherit; text-decoration: none; }
 .status-bar .stat-item b { color: var(--t1); font-weight: 600; font-variant-numeric: tabular-nums; }
 .status-bar .v-sep { width: 1px; height: 12px; background: var(--line); flex-shrink: 0; }
 .status-bar .v-spacer { flex: 1; }
+.status-bar .chip.xs { background: none; border-color: var(--line-subtle); color: var(--t4); font-weight: 500; }
 
 /* ===================== 语义色 / 轻工具类 ===================== */
 .flex-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -769,9 +772,10 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 
 /* ===================== 统计弹窗条形图 ===================== */
 .stats-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-bottom: 16px; }
-.stats-cell { background: var(--card); border: 1px solid var(--line); border-radius: var(--r-md); padding: 13px 15px; }
+/* Metric：弹窗内次级统计，比 KPI 紧凑一档 */
+.stats-cell { background: var(--card); border: 1px solid var(--line); border-radius: var(--r-md); padding: 12px 14px; }
 .stats-cell .k { font-size: 11.5px; color: var(--t3); }
-.stats-cell .v { font-size: 20px; font-weight: 650; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.stats-cell .v { font-size: 18px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .stats-cell .v.green { color: var(--green); }
 .stat-bars { display: flex; flex-direction: column; gap: 8px; }
 .stat-bar-row { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 11px; font-size: 12px; }
@@ -1232,7 +1236,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 }
 .rec-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-hover); }
 .rec-card.menu-open { position: relative; z-index: 80; }
-.rec-cv { position: relative; aspect-ratio: 16/9; background: #1c2126; overflow: hidden; border-radius: var(--r-lg) var(--r-lg) 0 0; }
+.rec-cv { position: relative; aspect-ratio: 16/9; max-height: 175px; background: #1c2126; overflow: hidden; border-radius: var(--r-lg) var(--r-lg) 0 0; }
 .rec-cv img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .rec-cv .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(148, 163, 184, 0.4); }
 .rec-cv .empty .ic { width: 42px; height: 42px; }
@@ -1241,7 +1245,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 .live-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 0; border-radius: 0; }
 .live-chip.on { background: none; color: #f87171; }
 .live-chip.off { background: none; color: #c9cfca; }
-.live-chip .dot { width: 5px; height: 5px; }
+.live-chip .dot { width: 6px; height: 6px; }
 .live-chip.on .dot { background: var(--red); animation: dotPulse 1.4s ease infinite; }
 .live-chip.off .dot { background: #9aa19b; }
 .rec-cv .footbar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 16px 10px 7px; background: linear-gradient(transparent, rgba(4, 6, 5, 0.55)); color: #dfe4e0; font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -1351,9 +1355,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 }
 
 /* ===================== 过渡动画 ===================== */
-.fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease, transform 0.2s ease; }
-.fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(6px); }
-.drop-enter-active, .drop-leave-active { transition: opacity 0.15s ease, transform 0.15s ease; }
+, .drop-leave-active { transition: opacity 0.15s ease, transform 0.15s ease; }
 .drop-enter-from, .drop-leave-to { opacity: 0; transform: translateY(-5px) scale(0.99); }
 .mod-enter-active, .mod-leave-active { transition: opacity 0.18s ease; }
 .mod-enter-from, .mod-leave-to { opacity: 0; }
@@ -1365,10 +1367,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 .drw-enter-from .xdrw-mask, .drw-leave-to .xdrw-mask { opacity: 0; }
 .drw-enter-active .xdrw, .drw-leave-active .xdrw { transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1); }
 .drw-enter-from .xdrw, .drw-leave-to .xdrw { transform: translateX(105%); }
-.slide-enter-active, .slide-leave-active { transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1); }
-.slide-enter-from, .slide-leave-to { transform: translateX(100%); }
-
-/* ===================== 动效层（Motion） =====================
+（Motion） =====================
    动画只服务于状态变化/空间关系/操作反馈，120–260ms，ease-out。
    不做漂浮、发光、粒子等装饰动画。prefers-reduced-motion 全量降级。 */
 .tabpane.anim { animation: pageIn 0.24s ease; }
@@ -1659,9 +1658,9 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                 <b :style="{color: wsStatus === 'connected' ? getLatencyColor(wsLatency) : ''}">{{ wsStatus === 'connected' ? wsLatency + ' ms' : '离线' }}</b>
                             </span>
                             <i class="v-sep"></i>
-                            <span class="stat-item">上传并发 <b>{{ systemStatus.workers || 0 }} 线程</b></span>
+                            <span class="stat-item">并发 <b>{{ systemStatus.workers || 0 }} 线程</b></span>
                             <i class="v-sep"></i>
-                            <span class="stat-item">引擎内存 <b>{{ formatSize(systemStatus.ffmpegMem) || '0 B' }}</b></span>
+                            <span class="stat-item">内存 <b>{{ formatSize(systemStatus.ffmpegMem) || '0 B' }}</b></span>
                             <i class="v-sep"></i>
                             <span class="stat-item">磁盘 <b>{{ formatSize(systemStatus.diskFree) }}</b></span>
                             <i class="v-sep"></i>
