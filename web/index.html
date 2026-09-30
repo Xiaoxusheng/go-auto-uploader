@@ -28,13 +28,13 @@
     --panel-2: #f5f6f8;
     --panel-3: #f1f3f5;
     --card: #ffffff;
-    --line: #eaecef;
-    --line-strong: #e5e7eb;
+    --line: #e8eaed;
+    --line-strong: #dadde2;
     --line-subtle: #f0f1f3;
     --t1: #18181b;
     --t2: #52525b;
-    --t3: #a1a1aa;
-    --t4: #c6c6cd;
+    --t3: #8a8f98;
+    --t4: #b8bcc3;
     --green: #16a34a;
     --green-bright: #15803d;
     --green-dim: rgba(22, 163, 74, 0.09);
@@ -55,8 +55,9 @@
     --ring: rgba(22, 119, 255, 0.12);
     --blueprint: rgba(24, 24, 27, 0.035);
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
-    --shadow-hover: 0 4px 14px rgba(0, 0, 0, 0.05);
-    --shadow-pop: 0 4px 20px rgba(16, 24, 40, 0.10);
+    --shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.05);
+    --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.10);
+    --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.12);
     --sb-w: 232px;
     --header-h: 56px;
     --ctx-w: 188px;
@@ -99,8 +100,9 @@ html[data-theme='dark'] {
     --ring: rgba(64, 150, 255, 0.18);
     --blueprint: rgba(255, 255, 255, 0.025);
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.20);
-    --shadow-hover: 0 4px 14px rgba(0, 0, 0, 0.30);
+    --shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.30);
     --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.55);
+    --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.60);
 }
 
 
@@ -211,7 +213,7 @@ a { color: inherit; text-decoration: none; }
 .hd-crumb b { color: var(--t1); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hd-search {
     display: flex; align-items: center; gap: 8px;
-    width: 300px; height: 32px; padding: 0 8px 0 10px;
+    width: 300px; height: 34px; padding: 0 8px 0 10px;
     border: 1px solid var(--line); border-radius: 10px;
     background: var(--panel-2); color: var(--t3);
     font-size: 12.5px; font-family: inherit; cursor: pointer;
@@ -386,10 +388,30 @@ a { color: inherit; text-decoration: none; }
 .spark { display: flex; align-items: flex-end; gap: 3px; height: 34px; flex-shrink: 0; }
 .spark i { width: 5px; border-radius: 2px; background: var(--line-strong); min-height: 3px; }
 .spark i.on { background: var(--blue); }
+.kpi-bar { height: 4px; border-radius: 3px; background: var(--panel-3); overflow: hidden; margin-top: 2px; }
+.kpi-bar i { display: block; height: 100%; border-radius: 3px; background: var(--blue); transition: width 0.4s ease; }
+
+/* ===================== Compact Status Bar ===================== */
+.status-bar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: var(--shadow); padding: 9px 16px; margin-bottom: 14px;
+    font-size: 12px; color: var(--t3);
+}
+.status-bar .stat-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.status-bar .stat-item b { color: var(--t1); font-weight: 600; font-variant-numeric: tabular-nums; }
+.status-bar .v-sep { width: 1px; height: 12px; background: var(--line); flex-shrink: 0; }
+.status-bar .v-spacer { flex: 1; }
+
+/* ===================== 语义色 / 轻工具类 ===================== */
+.text-danger { color: var(--red); }
+.text-success { color: var(--green-bright); }
+.text-blue { color: var(--blue); }
+.text-warning { color: var(--orange-bright); }
 .activity-strip {
     display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
-    background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg);
-    box-shadow: var(--shadow); padding: 13px 20px; margin-bottom: 14px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: var(--shadow); padding: 10px 20px; margin-bottom: 14px;
 }
 .activity-strip .a-main { min-width: 0; }
 .activity-strip .a-t { font-size: 13.5px; font-weight: 600; }
@@ -422,20 +444,6 @@ a { color: inherit; text-decoration: none; }
 .v.c-blue { color: var(--blue); }
 .v.c-red { color: var(--red); }
 
-/* 内联状态行（总览） */
-.ov-status { padding: 4px 20px; margin-bottom: 20px; }
-.ov-status .sys-block { padding: 9px 0; border-bottom: 1px solid var(--line-subtle); }
-.ov-status .sys-block:last-child { border-bottom: none; }
-
-.sys-blocks { display: flex; flex-direction: column; }
-.sys-block { padding: 10px 0; border-bottom: 1px dashed var(--line); }
-.sys-block:last-child { border-bottom: none; padding-bottom: 0; }
-.sys-block:first-child { padding-top: 0; }
-.sys-line { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; padding: 3.5px 0; gap: 12px; }
-.sys-line > span:first-child { color: var(--t3); }
-.sys-line b { font-weight: 500; color: var(--t1); font-variant-numeric: tabular-nums; }
-.sys-name { display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--t1); font-size: 13px; }
-
 /* Editorial 列表（最近完成） */
 .ed-list { display: flex; flex-direction: column; }
 .ed-item {
@@ -454,7 +462,7 @@ a { color: inherit; text-decoration: none; }
 .ed-meta { flex-shrink: 0; color: var(--t2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .ed-st { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; min-width: 64px; }
 
-.grid-main { display: grid; grid-template-columns: 1.8fr 1fr; gap: 14px; margin-bottom: 14px; }
+.grid-main { display: grid; grid-template-columns: 1.6fr 1fr; gap: 14px; margin-bottom: 14px; }
 .trend-box { height: 230px; }
 
 .rank-rows { display: flex; flex-direction: column; gap: 11px; }
@@ -507,7 +515,7 @@ a { color: inherit; text-decoration: none; }
 .inp {
     height: 36px; padding: 0 11px;
     background: var(--ctl-bg); border: 1px solid var(--line-strong);
-    color: var(--t1); border-radius: 8px;
+    color: var(--t1); border-radius: 9px;
     font-size: 13px; font-family: inherit;
     outline: none; min-width: 0;
     transition: border-color 0.12s ease, box-shadow 0.12s ease;
@@ -617,7 +625,7 @@ html[data-theme='dark'] input[type='time'].inp::-webkit-calendar-picker-indicato
 .tbl-scroll { overflow-x: auto; }
 table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 720px; }
 .tbl thead th {
-    text-align: left; font-weight: 500; color: var(--t3); font-size: 11.5px;
+    text-align: left; font-weight: 500; color: var(--t3); font-size: 12px;
     letter-spacing: 0.02em;
     padding: 9px 18px; border-bottom: 1px solid var(--line);
     background: transparent;
@@ -634,8 +642,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
 
 .prog { display: flex; align-items: center; gap: 10px; min-width: 160px; }
 .prog .bar { flex: 1; height: 4px; border-radius: 3px; background: var(--panel-3); overflow: hidden; }
-.prog .bar i { display: block; height: 100%; border-radius: 3px; background: var(--green); transition: width 0.4s ease; }
-.prog .bar.orange i { background: var(--orange); }
+.prog .bar i { display: block; height: 100%; border-radius: 3px; background: var(--blue); transition: width 0.4s ease; }
+.prog .bar.orange i { background: var(--red); }
 .prog .pct { font-size: 12px; color: var(--t2); width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
 
 .tbl-foot {
@@ -852,7 +860,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 }
 .xmod-card {
     background: var(--card); border: 1px solid var(--line);
-    border-radius: 12px; box-shadow: var(--shadow-pop);
+    border-radius: 12px; box-shadow: var(--shadow-modal);
     width: 520px; max-width: 96vw; max-height: 88vh;
     display: flex; flex-direction: column;
     animation: modIn 0.2s ease;
@@ -1212,19 +1220,19 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 }
 .rec-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-hover); }
 .rec-card.menu-open { position: relative; z-index: 80; }
-.rec-cv { position: relative; aspect-ratio: 16/9; background: linear-gradient(160deg, #1c2126, #14181d); overflow: hidden; border-radius: var(--r-lg) var(--r-lg) 0 0; }
+.rec-cv { position: relative; aspect-ratio: 16/9; background: #1c2126; overflow: hidden; border-radius: var(--r-lg) var(--r-lg) 0 0; }
 .rec-cv img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .rec-cv .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(148, 163, 184, 0.4); }
 .rec-cv .empty .ic { width: 42px; height: 42px; }
 .rec-cv .topbar { position: absolute; top: 9px; left: 9px; right: 9px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .rec-cv .pf-chip { background: rgba(10, 12, 11, 0.72); color: #e5e9e6; font-size: 10.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px; }
 .live-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
-.live-chip.on { background: rgba(220, 38, 38, 0.92); color: #fff; }
+.live-chip.on { background: rgba(10, 12, 11, 0.72); color: #fff; }
 .live-chip.off { background: rgba(28, 32, 30, 0.78); color: #c9cfca; }
 .live-chip .dot { width: 5px; height: 5px; }
-.live-chip.on .dot { background: #fff; animation: dotPulse 1.4s ease infinite; }
+.live-chip.on .dot { background: var(--red); animation: dotPulse 1.4s ease infinite; }
 .live-chip.off .dot { background: #9aa19b; }
-.rec-cv .footbar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 16px 10px 7px; background: linear-gradient(transparent, rgba(4, 6, 5, 0.82)); color: #dfe4e0; font-size: 11px; font-variant-numeric: tabular-nums; }
+.rec-cv .footbar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 16px 10px 7px; background: linear-gradient(transparent, rgba(4, 6, 5, 0.55)); color: #dfe4e0; font-size: 11px; font-variant-numeric: tabular-nums; }
 .rec-cv .footbar .left { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .rec-cv .dl-btn { position: absolute; right: 9px; bottom: 34px; width: 26px; height: 26px; border-radius: 50%; border: none; cursor: pointer; background: rgba(10, 12, 11, 0.72); color: #cfd6d1; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.15s ease; }
 .rec-card:hover .dl-btn { opacity: 1; }
@@ -1300,6 +1308,7 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
     .hd-search { width: 32px; padding: 0; justify-content: center; }
     .hd-search .sl, .hd-search .kbd { display: none; }
     .hd-conn { display: none; }
+    .hd-actions .icobtn { display: none; }
     .mn { padding: 16px 14px 44px; }
     .statrow, .pose-page .statrow, .statrow.c4 { grid-template-columns: repeat(2, 1fr); gap: 0 18px; }
     .rec-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1601,15 +1610,16 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                             <div class="kpi-card">
                                 <div class="kpi-top">
                                     <span class="kpi-k"><span class="dot run"></span> 已完成</span>
-                                    <div class="spark" title="近 7 日上传量趋势" aria-hidden="true"><i v-for="(b, i) in trendSpark" :key="i" :style="{height: b.h + '%'}" :class="{on: b.on}"></i></div>
+                                    <span class="chip xs" :class="successRate >= 90 ? 'good' : ''">成功率 {{ successRate }}%</span>
                                 </div>
                                 <div class="kpi-v">{{ queueStatus.success || 0 }}</div>
-                                <div class="kpi-info">累计归档任务 · 含秒传<template v-if="queueStatus.retrying > 0"> · <b>{{ queueStatus.retrying }}</b> 重试中</template></div>
+                                <div class="kpi-bar"><i :style="{width: successRate + '%'}"></i></div>
+                                <div class="kpi-info">累计归档 · 含秒传<template v-if="queueStatus.retrying > 0"> · <b>{{ queueStatus.retrying }}</b> 重试中</template></div>
                             </div>
                             <div class="kpi-card">
                                 <div class="kpi-top">
                                     <span class="kpi-k"><span class="dot" :class="trafficMetrics.speed > 0 ? 'run pulse' : 'gray'"></span> 当前速度</span>
-                                    <div class="spark" title="近 7 日上传量趋势" aria-hidden="true"><i v-for="(b, i) in trendSpark" :key="i" :style="{height: b.h + '%'}" :class="{on: b.on}"></i></div>
+                                    <span class="chip xs" :class="{good: trafficMetrics.speed > 0}"><span class="dot" :class="trafficMetrics.speed > 0 ? 'run pulse' : 'gray'"></span> 实时</span>
                                 </div>
                                 <div class="kpi-v">{{ formatSpeed(trafficMetrics.speed) }}</div>
                                 <div class="kpi-info">实时上行速率 · <span v-if="queueStatus.failed"><b style="color:var(--red);">{{ queueStatus.failed }}</b> 个失败</span><span v-else>无失败任务</span></div>
@@ -1624,37 +1634,33 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                             </div>
                         </div>
 
-                        <!-- 系统状态：Inline Status Row -->
-                        <div class="card ov-status">
-                            <div class="sys-block">
-                                <div class="sys-line">
-                                    <span class="sys-name">
-                                        <span class="dot" :class="engineView.key === 'paused' ? 'warn' : (engineView.key === 'scanning' ? 'blue pulse' : 'run pulse')"></span>
-                                        {{ engineView.key === 'scanning' ? '正在扫描' : (engineView.key === 'paused' ? '扫描引擎已挂起' : '扫描引擎运行正常') }}
-                                    </span>
-                                    <span style="display:inline-flex;align-items:center;gap:8px;">
-                                        <span class="chip xs" v-if="systemStatus.dynamicInterval < systemStatus.scanningInterval">狂暴模式</span>
-                                        <span class="chip xs" v-else>节能休眠</span>
-                                        <span class="chip xs" v-if="engineView.key !== 'paused'">下一次扫描 {{ engineView.key === 'scanning' ? '进行中…' : nextScanClock }}</span>
-                                    </span>
-                                </div>
-                                <div class="sys-line"><span>扫描周期 · 引擎运行</span><b>{{ systemStatus.dynamicInterval || systemStatus.scanningInterval }} 分/次 · {{ uptimeText }}</b></div>
-                            </div>
-                            <div class="sys-block">
-                                <div class="sys-line">
-                                    <span class="sys-name">
-                                        <span class="dot" :class="wsStatus === 'connected' ? 'run' : (wsStatus === 'connecting' ? 'warn pulse' : 'err')"></span>
-                                        {{ wsText }}
-                                    </span>
-                                    <span class="chip xs" v-if="cryptoOn()" title="上传指令与实时数据经 RSA+AES 加密信道传输">RSA + AES</span>
-                                </div>
-                                <div class="sys-line">
-                                    <span>延迟 · 收发</span>
-                                    <b><span :style="{color: getLatencyColor(wsLatency)}">{{ wsStatus === 'connected' ? wsLatency + ' ms' : '--' }}</span>
-                                        <span style="color:var(--t4);"> · </span>{{ Number(wsStats.msgCount || 0).toLocaleString() }} 条</b>
-                                </div>
-                                <div class="sys-line"><span>录制引擎内存 · 上传并发</span><b>{{ formatSize(systemStatus.ffmpegMem) || '0 B' }} · {{ systemStatus.workers || 0 }} 线程</b></div>
-                            </div>
+                        <!-- 系统状态：Compact Status Bar -->
+                        <div class="status-bar">
+                            <span class="stat-item">
+                                <span class="dot" :class="engineView.key === 'paused' ? 'warn' : (engineView.key === 'scanning' ? 'blue pulse' : 'run pulse')"></span>
+                                扫描引擎
+                                <b>{{ engineView.key === 'scanning' ? '进行中' : (engineView.key === 'paused' ? '已暂停' : '运行中') }}</b>
+                            </span>
+                            <span class="stat-item" v-if="engineView.key !== 'paused'">下次扫描 <b>{{ engineView.key === 'scanning' ? '进行中…' : nextScanClock }}</b></span>
+                            <i class="v-sep"></i>
+                            <span class="stat-item">
+                                <span class="dot" :class="wsStatus === 'connected' ? 'run' : (wsStatus === 'connecting' ? 'warn pulse' : 'err')"></span>
+                                实时信道
+                                <b :style="{color: wsStatus === 'connected' ? getLatencyColor(wsLatency) : ''}">{{ wsStatus === 'connected' ? wsLatency + ' ms' : '离线' }}</b>
+                                <b>{{ Number(wsStats.msgCount || 0).toLocaleString() }} 条</b>
+                            </span>
+                            <i class="v-sep"></i>
+                            <span class="stat-item">上传并发 <b>{{ systemStatus.workers || 0 }} 线程</b></span>
+                            <i class="v-sep"></i>
+                            <span class="stat-item">引擎内存 <b>{{ formatSize(systemStatus.ffmpegMem) || '0 B' }}</b></span>
+                            <i class="v-sep"></i>
+                            <span class="stat-item">磁盘 <b>{{ formatSize(systemStatus.diskFree) }}</b></span>
+                            <i class="v-sep"></i>
+                            <span class="stat-item">运行 <b>{{ uptimeText }}</b></span>
+                            <span class="v-spacer"></span>
+                            <span class="chip xs" v-if="systemStatus.dynamicInterval < systemStatus.scanningInterval">狂暴模式</span>
+                            <span class="chip xs" v-else>节能休眠</span>
+                            <span class="chip xs" v-if="cryptoOn()" title="上传指令与实时数据经 RSA+AES 加密信道传输">RSA + AES</span>
                         </div>
 
                         <!-- 今日动态 / 最近主播 -->
@@ -1747,10 +1753,10 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                         <span class="ed-meta col-sm-hide">{{ formatDurationSeconds(record.duration) }}</span>
                                         <span class="ed-st" style="min-width:78px; justify-content:flex-end;">
                                             <template v-if="String(record.status || '').includes('fail')">
-                                                <span class="dot err"></span><span style="color:var(--red);">失败</span>
+                                                <span class="dot err"></span><span class="text-danger">失败</span>
                                             </template>
                                             <template v-else>
-                                                <span class="dot run"></span><span style="color:var(--green-bright);">{{ formatStatusText(record.status) }}</span>
+                                                <span class="dot run"></span><span class="text-success">{{ formatStatusText(record.status) }}</span>
                                             </template>
                                         </span>
                                     </div>
@@ -1880,8 +1886,8 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                         <td class="num col-sm-hide">{{ getElapsedTime(record.startTime) }}</td>
                                         <td>
                                             <span v-if="String(record.status).toLowerCase().includes('fail')" class="ed-st" style="min-width:auto;"><span class="dot err"></span><span style="color:var(--red);">{{ formatStatusText(record.status) }}</span></span>
-                                            <span v-else-if="record.status === 'uploading'" class="ed-st" style="min-width:auto;"><span class="dot blue pulse"></span><span style="color:var(--blue);">上传中</span></span>
-                                            <span v-else-if="record.status === 'waiting' && record.error" class="ed-st" style="min-width:auto;"><span class="dot warn pulse"></span><span style="color:var(--orange-bright);">重试中</span></span>
+                                            <span v-else-if="record.status === 'uploading'" class="ed-st" style="min-width:auto;"><span class="dot blue pulse"></span><span class="text-blue">上传中</span></span>
+                                            <span v-else-if="record.status === 'waiting' && record.error" class="ed-st" style="min-width:auto;"><span class="dot warn pulse"></span><span class="text-warning">重试中</span></span>
                                             <span v-else-if="record.status === 'waiting'" class="ed-st" style="min-width:auto;"><span class="dot gray"></span><span class="sub">等待</span></span>
                                             <span v-else class="ed-st" style="min-width:auto;"><span class="dot warn"></span><span style="color:var(--orange-bright);">{{ formatStatusText(record.status) }}</span></span>
                                         </td>
@@ -1924,8 +1930,8 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                         <td class="num col-sm-hide">{{ formatSize(record.size) }}</td>
                                         <td class="num col-sm-hide">{{ formatDurationSeconds(record.duration) }}</td>
                                         <td class="col-sm-hide">
-                                            <span v-if="String(record.status || '').includes('fail')" class="ed-st" style="min-width:auto;"><span class="dot err"></span><span style="color:var(--red);">失败</span></span>
-                                            <span v-else class="ed-st" style="min-width:auto;"><span class="dot run"></span><span style="color:var(--green-bright);">{{ formatStatusText(record.status) }}</span></span>
+                                            <span v-if="String(record.status || '').includes('fail')" class="ed-st" style="min-width:auto;"><span class="dot err"></span><span class="text-danger">失败</span></span>
+                                            <span v-else class="ed-st" style="min-width:auto;"><span class="dot run"></span><span class="text-success">{{ formatStatusText(record.status) }}</span></span>
                                         </td>
                                         <td class="col-sm-hide">
                                             <span v-if="record.error" style="color:var(--red-bright); font-size:12px;">{{ record.error }}</span>
@@ -2523,39 +2529,36 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                 <div class="sub">Docker 容器录制引擎 · 名单写入 config.ini 后由引擎读取</div>
                             </div>
                             <div class="pg-tools">
-                                <span class="chip" :class="{good: recorderStatus === 'running'}">
-                                    <span class="dot" :class="recorderStatus === 'running' ? 'run' : (recorderStatus === 'exited' ? 'err' : 'warn')"></span>
-                                    容器 {{ recorderStatus === 'running' ? 'Running' : (recorderStatus === 'exited' ? 'Exited' : recorderStatus) }}
-                                </span>
+                                <button class="pill" @click="fetchStreamers">
+                                    <svg class="ic"><use href="#i-refresh"/></svg> 刷新名单
+                                </button>
+                                <button class="pill sm" @click="openLogsModal">
+                                    <svg class="ic"><use href="#i-terminal"/></svg> 容器日志
+                                </button>
                             </div>
                         </div>
 
-                        <div class="card" style="margin-bottom:12px;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
-                                <div style="display:flex; align-items:center; gap:11px; min-width:0;">
-                                    <span class="icobtn" style="cursor:default;">
-                                        <svg class="ic"><use href="#i-box"/></svg>
-                                    </span>
-                                    <div>
-                                        <div style="font-weight:700; font-size:13.5px;">{{ configForm.recorderContainer || 'recorder-engine' }}</div>
-                                        <div style="font-size:11.5px; color:var(--t3);">外置版 · 容器名可在【上传参数】中修改</div>
-                                    </div>
-                                </div>
-                                <div style="display:flex; gap:9px; flex-wrap:wrap;">
-                                    <button class="pill primary sm" :disabled="recorderStatus === 'running' || recorderControlLoading" @click="controlRecorder('start')">
-                                        <svg class="ic"><use href="#i-play"/></svg> 启动
-                                    </button>
-                                    <button class="pill sm" :disabled="recorderControlLoading" @click="controlRecorder('restart')">
-                                        <svg class="ic" :class="{spin: recorderControlLoading}"><use href="#i-refresh"/></svg> 重启
-                                    </button>
-                                    <button class="pill sm" :disabled="recorderStatus !== 'running' || recorderControlLoading" @click="controlRecorder('stop')">
-                                        <svg class="ic"><use href="#i-pause"/></svg> 停止
-                                    </button>
-                                    <button class="pill sm" @click="openLogsModal">
-                                        <svg class="ic"><use href="#i-terminal"/></svg> 日志
-                                    </button>
-                                </div>
-                            </div>
+                        <div class="status-bar">
+                            <span class="stat-item">
+                                <span class="dot" :class="recorderStatus === 'running' ? 'run pulse' : (recorderStatus === 'exited' ? 'err' : 'warn')"></span>
+                                Docker <b>{{ recorderStatus === 'running' ? 'Running' : (recorderStatus === 'exited' ? 'Exited' : recorderStatus) }}</b>
+                            </span>
+                            <i class="v-sep"></i>
+                            <span class="stat-item">容器 <b>{{ configForm.recorderContainer || 'recorder-engine' }}</b></span>
+                            <span class="sub">外置版 · 容器名可在【设置】中修改</span>
+                            <span class="v-spacer"></span>
+                            <button class="pill primary sm" :disabled="recorderStatus === 'running' || recorderControlLoading" @click="controlRecorder('start')">
+                                <svg class="ic"><use href="#i-play"/></svg> 启动
+                            </button>
+                            <button class="pill sm" :disabled="recorderControlLoading" @click="controlRecorder('restart')">
+                                <svg class="ic" :class="{spin: recorderControlLoading}"><use href="#i-refresh"/></svg> 重启
+                            </button>
+                            <button class="pill sm" :disabled="recorderStatus !== 'running' || recorderControlLoading" @click="controlRecorder('stop')">
+                                <svg class="ic"><use href="#i-pause"/></svg> 停止
+                            </button>
+                            <button class="pill sm" @click="openLogsModal">
+                                <svg class="ic"><use href="#i-terminal"/></svg> 日志
+                            </button>
                         </div>
 
                         <div class="card" style="margin-bottom:12px;">
@@ -4876,6 +4879,11 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                 const max = Math.max(1, ...t.map(i => i.size || 0));
                 return t.map((i, idx, arr) => ({h: Math.max(10, Math.round((i.size || 0) / max * 100)), on: idx === arr.length - 1}));
             });
+            /* 成功率：queueStatus 真实计数（已完成 / 已完成+失败） */
+            const successRate = computed(() => {
+                const ok = queueStatus.success || 0, bad = queueStatus.failed || 0;
+                return ok + bad > 0 ? Math.round(100 * ok / (ok + bad)) : 100;
+            });
             const dirShortName = (path) => {
                 const parts = String(path || '').split(/[\\/]+/).filter(Boolean);
                 return parts.length ? parts[parts.length - 1] : (path || '未知目录');
@@ -6242,7 +6250,9 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                 let cur = null;
                 completedTasks.value.slice(0, 12).forEach((r) => {
                     const d = r.startTime ? new Date(r.startTime) : new Date();
-                    const key = (d.getMonth() + 1) + '月' + d.getDate() + '日';
+                    const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+                    const dayDiff = Math.floor((today0.getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 86400000);
+                    const key = dayDiff === 0 ? '今天' : (dayDiff === 1 ? '昨天' : (d.getMonth() + 1) + '月' + d.getDate() + '日');
                     const item = Object.assign({}, r, {hm: fmtClock(r.startTime)});
                     if (!cur || cur.date !== key) {
                         cur = {date: key, items: [item]};
@@ -6331,8 +6341,8 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                 const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
                 const textColor = isDark ? '#71717a' : '#a1a1aa';
                 const splitLineColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.045)';
-                const lineBlue = isDark ? '#60a5fa' : '#2563eb';
-                const lineGray = isDark ? '#52525b' : '#c6c6cd';
+                const lineBlue = isDark ? '#4096ff' : '#1677ff';
+                const lineGray = isDark ? '#52525b' : '#d9dee7';
                 const trend = statsData.trend || [];
                 const now = new Date(), p2 = (n) => String(n).padStart(2, '0');
                 const todayStr = p2(now.getMonth() + 1) + '-' + p2(now.getDate());
@@ -6402,13 +6412,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                             yAxisIndex: 0,
                             data: trend.map(i => Number((i.size || 0).toFixed(2))),
                             itemStyle: {color: lineBlue},
-                            lineStyle: {width: 2, color: lineBlue},
-                            areaStyle: {
-                                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{
-                                    offset: 0,
-                                    color: isDark ? 'rgba(96, 165, 250, 0.14)' : 'rgba(37, 99, 235, 0.08)'
-                                }, {offset: 1, color: 'rgba(37, 99, 235, 0)'}])
-                            }
+                            lineStyle: {width: 2, color: lineBlue}
                         },
                         {
                             name: '文件增长',
@@ -7854,7 +7858,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                 cmdkOpen, cmdkQuery, cmdkIndex, cmdkInput, cmdkResults, cmdkFlat, openCmdk, cmdkMove, cmdkPick,
                 handleLogin, handleLogout, wsStatus, wsStats, wsLatency, getLatencyColor, liveTaskFilter,
                 liveProcFilter, uploadingFiltered, recentDoneGroups, logPaused,
-                trendSpark, storeLegend, storeStat, recordingAvatars, refreshOverview,
+                trendSpark, storeLegend, storeStat, recordingAvatars, refreshOverview, successRate,
                 systemStatus, queueStatus, liveTasks, uploadingTasks, completedTasks, uploadingCount, waitingCount,
                 liveTotalSize, completedPage, completedPageSize, completedPaged,
                 control, historyQuery, historyData, fetchHistory, onPageChange,
