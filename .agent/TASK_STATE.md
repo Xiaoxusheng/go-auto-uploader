@@ -1161,3 +1161,30 @@ gesture 判舞率长期压不下来，根因**可能不是特征表达不出 ges
 - 验证：静态全绿 + 浏览器实测（Overview 状态条/KPI 差异化、外部引擎一行摘要、
   390 移动零溢出 + Header 三元素）；未动姿态/高光动效体系；未伪造任何数据
 - 未 push（用户未指令；main 远程在 48b8975）
+### main 推送 GitHub（2026-09-30 三次，用户令「提交main」）
+- git push origin main：48b8975..cfe554f 快进，2 个提交上远程（V2.1 精修 a890255 / V2.2 细节精修 cfe554f）；
+  均已核实零姿态门代码。pose-gate 仅限本地红线不变（68deb58 等 8 个未推送提交）。
+## SaaS V2.2 Final Polish（2026-09-30，用户贴 Final 规范令「继续」）
+
+- 统计条首列 2px 清除（统一 20px）；KPI 垂直节奏数字 8/5px、成功率条 margin-top:auto；
+  kpi-bar 重复定义合并（V2.2 遗留）；速度卡去重复 dot（右上改纯文字「实时」）；
+  状态条降密度（去消息数/下次扫描）；存储卡 min-height 200 垂直居中 + store-card 类；
+  直播卡 LIVE 红块→红点+红字纯文字；字体栈回归系统优先（去 Inter 前置，保持离线零外部字体）
+- 提交：pose-gate 9b540ea；main 5e9c8fd（镜像验证全绿）；uploader.exe 已重编译（最终版）
+- 未 push（用户未指令；main 远程在 cfe554f）
+### main 推送 GitHub（2026-09-30 四次，用户令「推送main」）
+- git push origin main：cfe554f..5e9c8fd 快进（Final Polish 上远程）；远程 main 与本地一致，
+  GitHub 上已是 SaaS Dashboard V2.2 最终形态。pose-gate 仅限本地红线不变。
+## SaaS V2.3 一致性收尾（2026-09-30，用户贴 V2.3 规范令「继续」）
+
+- 组件职责注释固化（kpi/statrow/stats-cell/status-bar/card 五类分工）；stats-cell（弹窗 Metric）
+  降档紧凑（12/14 padding、18px/600）；状态条标签简化（上传并发→并发、引擎内存→内存）+
+  辅助 chips 弱化（无边框底色、--t4）；直播卡 LIVE 红点 6px、缩略图 max-height 175px；
+  死 CSS 清理（grep 核实）：.card-compact（零使用）、.fade-*/.slide-* 过渡（模板无引用）
+- 提交：pose-gate 202234e；main e8e06bf（镜像验证全绿）；uploader.exe 已重编译
+- 未 push（用户未指令；main 远程在 5e9c8fd）
+### 设置页移动端布局修复（2026-09-30，用户截图报「这是什么」）
+- 根因：≤600px set-row 改纵向后未重置对齐——桌面 align-items:center 在 column 方向变成
+  水平居中，标签/描述/输入框全部悬中且输入框不满宽；修复=移动端 align-items:stretch +
+  直接子级 .inp 满宽。390 实测左缘对齐/满宽/零溢出
+- 提交：pose-gate 4e8ca01；main 46d094e；uploader.exe 已重编译（用户手机刷新即得修复）
