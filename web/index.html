@@ -412,6 +412,9 @@ a { color: inherit; text-decoration: none; }
     font-size: 13px;
 }
 .ed-item:last-child { border-bottom: none; }
+.ed-date { font-size: 11.5px; font-weight: 600; color: var(--t3); letter-spacing: 0.03em; padding: 12px 2px 3px; }
+.ed-group:first-child .ed-date { padding-top: 6px; }
+.ed-group:last-child .ed-item:last-child { border-bottom: none; }
 .ed-time { width: 92px; flex-shrink: 0; color: var(--t3); font-size: 12px; font-variant-numeric: tabular-nums; }
 .ed-main { flex: 1; min-width: 0; }
 .ed-name { color: var(--t1); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -470,7 +473,7 @@ a { color: inherit; text-decoration: none; }
 
 /* ===================== 输入控件 ===================== */
 .inp {
-    height: 34px; padding: 0 11px;
+    height: 36px; padding: 0 11px;
     background: var(--ctl-bg); border: 1px solid var(--line-strong);
     color: var(--t1); border-radius: 7px;
     font-size: 13px; font-family: inherit;
@@ -518,7 +521,7 @@ html[data-theme='dark'] input[type='time'].inp::-webkit-calendar-picker-indicato
 .xsel-btn {
     display: inline-flex; align-items: center; justify-content: space-between; gap: 8px;
     background: var(--ctl-bg); border: 1px solid var(--line-strong); color: var(--t1);
-    border-radius: 7px; padding: 0 10px; height: 34px; font-size: 13px; font-family: inherit;
+    border-radius: 7px; padding: 0 10px; height: 36px; font-size: 13px; font-family: inherit;
     cursor: pointer; min-width: 108px; transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 .xsel-btn:hover { border-color: var(--t4); }
@@ -1042,6 +1045,11 @@ html[data-theme='dark'] .ck-banner { color: #93c5fd; }
 @media (max-width: 1100px) {
     .ctx { display: none; }
 }
+@media (max-width: 640px) {
+    .col-sm-hide { display: none; }
+    table.tbl { min-width: 480px; }
+    .prog { min-width: 120px; }
+}
 @media (max-width: 900px) {
     .sb {
         position: fixed; left: 0; top: 0; bottom: 0; z-index: 95;
@@ -1459,22 +1467,25 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                         </div>
                         <div class="card" style="padding:4px 20px;">
                             <template v-if="completedTasks.length">
-                                <div class="ed-item" v-for="record in completedTasks.slice(0, 8)" :key="record.id">
-                                    <span class="ed-time">{{ fmtClock(record.startTime) }}</span>
-                                    <div class="ed-main">
-                                        <div class="ed-name">{{ record.filename }}</div>
-                                        <div class="ed-sub" v-if="record.error" style="color:var(--red);" :title="record.error">{{ record.error }}</div>
+                                <div class="ed-group" v-for="g in recentDoneGroups" :key="g.date">
+                                    <div class="ed-date">{{ g.date }}</div>
+                                    <div class="ed-item" v-for="record in g.items" :key="record.id">
+                                        <span class="ed-time">{{ record.hm }}</span>
+                                        <div class="ed-main">
+                                            <div class="ed-name">{{ record.filename }}</div>
+                                            <div class="ed-sub" v-if="record.error" style="color:var(--red);" :title="record.error">{{ record.error }}</div>
+                                        </div>
+                                        <span class="ed-meta col-sm-hide">{{ formatSize(record.size) }}</span>
+                                        <span class="ed-meta col-sm-hide">{{ formatDurationSeconds(record.duration) }}</span>
+                                        <span class="ed-st" style="min-width:78px; justify-content:flex-end;">
+                                            <template v-if="String(record.status || '').includes('fail')">
+                                                <span class="dot err"></span><span style="color:var(--red);">失败</span>
+                                            </template>
+                                            <template v-else>
+                                                <span class="dot run"></span><span style="color:var(--green-bright);">{{ formatStatusText(record.status) }}</span>
+                                            </template>
+                                        </span>
                                     </div>
-                                    <span class="ed-meta">{{ formatSize(record.size) }}</span>
-                                    <span class="ed-meta">{{ formatDurationSeconds(record.duration) }}</span>
-                                    <span class="ed-st" style="min-width:78px; justify-content:flex-end;">
-                                        <template v-if="String(record.status || '').includes('fail')">
-                                            <span class="dot err"></span><span style="color:var(--red);">失败</span>
-                                        </template>
-                                        <template v-else>
-                                            <span class="dot run"></span><span style="color:var(--green-bright);">{{ formatStatusText(record.status) }}</span>
-                                        </template>
-                                    </span>
                                 </div>
                             </template>
                             <div v-else class="tbl-empty" style="padding:32px 10px;">
@@ -1563,10 +1574,10 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                             </span>
                                         </td>
                                         <td class="num" :style="{color: dir.pendingFiles > 0 ? 'var(--blue)' : '', fontWeight: dir.pendingFiles > 0 ? 600 : ''}">{{ dir.pendingFiles || 0 }}</td>
-                                        <td class="num">{{ dir.uploadedFiles || 0 }}</td>
-                                        <td class="num">{{ dir.totalFiles || 0 }}</td>
+                                        <td class="num col-sm-hide">{{ dir.uploadedFiles || 0 }}</td>
+                                        <td class="num col-sm-hide">{{ dir.totalFiles || 0 }}</td>
                                         <td class="num">{{ formatSize(dir.uploadedSize) }}</td>
-                                        <td class="num">{{ dir.lastScanTime ? fmtClock(dir.lastScanTime) : '—' }}</td>
+                                        <td class="num col-sm-hide">{{ dir.lastScanTime ? fmtClock(dir.lastScanTime) : '—' }}</td>
                                     </tr>
                                     </tbody>
                                 </table>
@@ -1602,6 +1613,11 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                     已处理记录
                                 </button>
                             </div>
+                            <div class="segpills" v-if="liveTaskFilter === 'uploading'">
+                                <button :class="{on: liveProcFilter === 'all'}" @click="liveProcFilter = 'all'">全部</button>
+                                <button :class="{on: liveProcFilter === 'uploading'}" @click="liveProcFilter = 'uploading'">上传中 · {{ uploadingCount }}</button>
+                                <button :class="{on: liveProcFilter === 'waiting'}" @click="liveProcFilter = 'waiting'">等待中 · {{ waitingCount }}</button>
+                            </div>
                             <div class="lv-meta">
                                 <b>{{ uploadingCount }}</b> 个上传中 ·
                                 <b>{{ waitingCount }}</b> 个排队 ·
@@ -1615,15 +1631,15 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                     <thead>
                                     <tr>
                                         <th style="width:34%;">文件名</th>
-                                        <th>大小</th>
+                                        <th class="col-sm-hide">大小</th>
                                         <th style="width:22%;">进度</th>
-                                        <th>速度</th>
-                                        <th>已传时间</th>
+                                        <th class="col-sm-hide">速度</th>
+                                        <th class="col-sm-hide">已传时间</th>
                                         <th>状态</th>
                                     </tr>
                                     </thead>
                                     <tbody>
-                                    <tr v-for="record in uploadingTasks" :key="record.id">
+                                    <tr v-for="record in uploadingFiltered" :key="record.id">
                                         <td>
                                             <div class="fname">{{ record.filename }}</div>
                                             <span v-if="String(record.filename || '').toLowerCase().startsWith('highlight')" class="tag orange hlt-tag" style="margin-top:4px;">
@@ -1632,15 +1648,15 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                             <div v-if="record.path" class="sub" :title="record.path">{{ record.path }}</div>
                                             <div v-if="record.error" class="sub err" :title="record.error">重试中 · 上传错误: {{ record.error }}</div>
                                         </td>
-                                        <td class="num">{{ formatSize(record.size) }}</td>
+                                        <td class="num col-sm-hide">{{ formatSize(record.size) }}</td>
                                         <td>
                                             <div class="prog" :class="{orange: String(record.status).includes('fail')}">
                                                 <div class="bar"><i :style="{width: Math.min(100, calculatePercent(record.uploaded, record.size) * 100) + '%'}"></i></div>
                                                 <span class="pct">{{ Math.round(calculatePercent(record.uploaded, record.size) * 100) }}%</span>
                                             </div>
                                         </td>
-                                        <td class="num">{{ formatSpeed(record.speed) }}</td>
-                                        <td class="num">{{ getElapsedTime(record.startTime) }}</td>
+                                        <td class="num col-sm-hide">{{ formatSpeed(record.speed) }}</td>
+                                        <td class="num col-sm-hide">{{ getElapsedTime(record.startTime) }}</td>
                                         <td>
                                             <span v-if="String(record.status).toLowerCase().includes('fail')" class="ed-st" style="min-width:auto;"><span class="dot err"></span><span style="color:var(--red);">{{ formatStatusText(record.status) }}</span></span>
                                             <span v-else-if="record.status === 'uploading'" class="ed-st" style="min-width:auto;"><span class="dot blue pulse"></span><span style="color:var(--blue);">上传中</span></span>
@@ -1651,7 +1667,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                     </tr>
                                     </tbody>
                                 </table>
-                                <div v-if="uploadingTasks.length === 0" class="tbl-empty">
+                                <div v-if="uploadingFiltered.length === 0" class="tbl-empty">
                                     <svg class="ic big"><use href="#i-check-c"/></svg>
                                     <div class="t">暂时没有正在处理的任务</div>
                                     <div class="s">新文件被发现后将自动进入上传队列</div>
@@ -1672,10 +1688,10 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                     <thead>
                                     <tr>
                                         <th style="width:36%;">文件名</th>
-                                        <th>大小</th>
-                                        <th>传输耗时</th>
+                                        <th class="col-sm-hide">大小</th>
+                                        <th class="col-sm-hide">传输耗时</th>
                                         <th>状态</th>
-                                        <th>备注 / 错误信息</th>
+                                        <th class="col-sm-hide">备注 / 错误信息</th>
                                     </tr>
                                     </thead>
                                     <tbody>
@@ -1684,13 +1700,13 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                             <div class="fname">{{ record.filename }}</div>
                                             <div v-if="record.path" class="sub" :title="record.path">{{ record.path }}</div>
                                         </td>
-                                        <td class="num">{{ formatSize(record.size) }}</td>
-                                        <td class="num">{{ formatDurationSeconds(record.duration) }}</td>
-                                        <td>
+                                        <td class="num col-sm-hide">{{ formatSize(record.size) }}</td>
+                                        <td class="num col-sm-hide">{{ formatDurationSeconds(record.duration) }}</td>
+                                        <td class="col-sm-hide">
                                             <span v-if="String(record.status || '').includes('fail')" class="ed-st" style="min-width:auto;"><span class="dot err"></span><span style="color:var(--red);">失败</span></span>
                                             <span v-else class="ed-st" style="min-width:auto;"><span class="dot run"></span><span style="color:var(--green-bright);">{{ formatStatusText(record.status) }}</span></span>
                                         </td>
-                                        <td>
+                                        <td class="col-sm-hide">
                                             <span v-if="record.error" style="color:var(--red-bright); font-size:12px;">{{ record.error }}</span>
                                             <span v-else style="color:var(--t4);">—</span>
                                         </td>
@@ -2272,7 +2288,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                     <tr>
                                         <th style="width:18%;">主播名称</th>
                                         <th>直播间链接</th>
-                                        <th style="width:12%;">录制状态</th>
+                                        <th class="col-sm-hide" style="width:12%;">录制状态</th>
                                         <th style="width:9%; text-align:center;">监控</th>
                                         <th style="width:9%; text-align:center;">操作</th>
                                     </tr>
@@ -2294,7 +2310,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                                 {{ record.url }}
                                             </a>
                                         </td>
-                                        <td>
+                                        <td class="col-sm-hide">
                                             <span v-if="activeRecordingStreamers.includes(record.name) && record.active" class="tag red">
                                                 <span class="dot err pulse" style="width:5px;height:5px;"></span> 正在录制
                                             </span>
@@ -2361,10 +2377,10 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                     <tr>
                                         <th style="width:14%;">完成时间</th>
                                         <th style="width:30%;">文件名</th>
-                                        <th>大小</th>
-                                        <th>耗时</th>
+                                        <th class="col-sm-hide">大小</th>
+                                        <th class="col-sm-hide">耗时</th>
                                         <th>状态</th>
-                                        <th>失败详情</th>
+                                        <th class="col-sm-hide">失败详情</th>
                                     </tr>
                                     </thead>
                                     <tbody>
@@ -2373,8 +2389,8 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                         <td>
                                             <div class="fname">{{ record.filename }}</div>
                                         </td>
-                                        <td class="num">{{ formatSize(record.size) }}</td>
-                                        <td class="num">{{ formatDurationSeconds(record.duration) }}</td>
+                                        <td class="num col-sm-hide">{{ formatSize(record.size) }}</td>
+                                        <td class="num col-sm-hide">{{ formatDurationSeconds(record.duration) }}</td>
                                         <td>
                                             <span v-if="String(record.status || '').includes('fail')" class="rec-text is-error" style="display:inline-flex; align-items:center; gap:6px;">
                                                 <svg class="ic" style="width:13px;height:13px;color:var(--red-bright);"><use href="#i-x-c"/></svg> 失败
@@ -2434,6 +2450,13 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                             </div>
                             <button class="pill sm" @click="logQuery.page = 1; fetchLogs()">
                                 <svg class="ic"><use href="#i-history"/></svg> 拉取历史
+                            </button>
+                            <button class="pill sm" :class="{'tog-on': logPaused}" @click="logPaused = !logPaused"
+                                    :title="logPaused ? '实时推送已挂起，点击恢复' : '挂起新日志的实时插入，便于停留在当前位置查看'">
+                                <svg class="ic"><use :href="logPaused ? '#i-play' : '#i-pause'"/></svg> {{ logPaused ? '实时已暂停' : '暂停实时' }}
+                            </button>
+                            <button class="pill sm" @click="logData.items = []" title="仅清空当前视图，不影响服务器日志">
+                                <svg class="ic"><use href="#i-trash"/></svg> 清空视图
                             </button>
                             <div style="flex:1;"></div>
                             <x-select v-model="logExportLimit" :options="[
@@ -2858,13 +2881,13 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                     <thead>
                                     <tr>
                                         <th style="width:8%;">预览</th>
-                                        <th style="width:10%;">入队时间</th>
+                                        <th class="col-sm-hide" style="width:10%;">入队时间</th>
                                         <th style="width:7%;">主播</th>
                                         <th style="width:19%;">文件名</th>
-                                        <th style="width:9%;">内容</th>
+                                        <th class="col-sm-hide" style="width:9%;">内容</th>
                                         <th style="width:12%;">状态</th>
                                         <th style="width:9%;">稿件</th>
-                                        <th style="width:9%;">错误详情</th>
+                                        <th class="col-sm-hide" style="width:9%;">错误详情</th>
                                         <th style="width:16%; text-align:right;">操作</th>
                                     </tr>
                                     </thead>
@@ -2875,10 +2898,10 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                                  alt="封面预览" title="点击选择封面画面" @click="biliOpenCover(row)" @error="row._bad = true">
                                             <span v-else class="bili-thumb is-bad" title="点击选择封面画面" @click="biliOpenCover(row)">无预览</span>
                                         </td>
-                                        <td class="num">{{ (row.created_at || '').slice(5, 16) }}</td>
+                                        <td class="num col-sm-hide">{{ (row.created_at || '').slice(5, 16) }}</td>
                                         <td>{{ row.streamer }}</td>
                                         <td><div class="fname">{{ row.file_name }}</div></td>
-                                        <td class="num">{{ row.segments }} 段 · {{ biliTc(row.duration) }}</td>
+                                        <td class="num col-sm-hide">{{ row.segments }} 段 · {{ biliTc(row.duration) }}</td>
                                         <td>
                                             <span class="tag" :class="biliStatusMeta(row.status).cls"><span v-if="row.status === 'uploading'" class="bili-dot-live" aria-hidden="true"></span>{{ biliStatusMeta(row.status).text }}<template v-if="row.status === 'failed' && row.tries > 0"> · 已试 {{ row.tries }} 次</template></span>
                                             <div v-if="row.status === 'uploading'" class="bili-live" aria-hidden="true"><i></i></div>
@@ -2890,7 +2913,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                                             </a>
                                             <span v-else class="bili-none">—</span>
                                         </td>
-                                        <td>
+                                        <td class="col-sm-hide">
                                             <span v-if="row.err" class="bili-err" :title="row.err">{{ row.err.length > 60 ? row.err.slice(0, 60) + '…' : row.err }}</span>
                                             <span v-else class="bili-none">—</span>
                                         </td>
@@ -4212,7 +4235,11 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                     group: '直播任务', key: 'task:' + t.platform + '_' + t.room_id, icon: 'i-disc',
                     label: t.anchor_name || String(t.room_id || ''),
                     desc: builtinPlatformLabel(t.platform) + ' · ' + (t.status || ''),
-                    run: () => switchTab('builtin_recorder')
+                    run: () => {
+                        switchTab('builtin_recorder');
+                        const cur = (builtinTasks.value || []).find(x => x.platform === t.platform && x.room_id === t.room_id);
+                        if (cur) setTimeout(() => openRecDrawer(cur), 160);
+                    }
                 }));
                 out.push(
                     {group: '操作', key: 'act:rescan', icon: 'i-refresh', label: systemStatus.running ? '立即重新扫描' : '启动扫描引擎',
@@ -5542,6 +5569,14 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
             };
 
             const uploadingTasks = computed(() => liveTasks.value.filter(t => t.status === 'uploading' || t.status === 'waiting'));
+            // 处理中视图的状态筛选（全部/上传中/等待中）
+            const liveProcFilter = ref('all');
+            watch([liveTaskFilter, liveProcFilter], () => { if (liveTaskFilter.value !== 'uploading') liveProcFilter.value = 'all'; });
+            const uploadingFiltered = computed(() => {
+                if (liveProcFilter.value === 'uploading') return uploadingTasks.value.filter(t => t.status === 'uploading');
+                if (liveProcFilter.value === 'waiting') return uploadingTasks.value.filter(t => t.status === 'waiting');
+                return uploadingTasks.value;
+            });
             const completedTasks = computed(() => liveTasks.value.filter(t => t.status !== 'uploading' && t.status !== 'waiting'));
             const uploadingCount = computed(() => liveTasks.value.filter(t => t.status === 'uploading').length);
             const waitingCount = computed(() => liveTasks.value.filter(t => t.status === 'waiting').length);
@@ -5552,6 +5587,23 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                 const start = (completedPage.value - 1) * completedPageSize;
                 return completedTasks.value.slice(start, start + completedPageSize);
             });
+            // 总览「最近完成」按日期分组（Editorial List：日期行 + 条目）
+            const recentDoneGroups = computed(() => {
+                const groups = [];
+                let cur = null;
+                completedTasks.value.slice(0, 12).forEach((r) => {
+                    const d = r.startTime ? new Date(r.startTime) : new Date();
+                    const key = (d.getMonth() + 1) + '月' + d.getDate() + '日';
+                    const item = Object.assign({}, r, {hm: fmtClock(r.startTime)});
+                    if (!cur || cur.date !== key) {
+                        cur = {date: key, items: [item]};
+                        groups.push(cur);
+                    } else {
+                        cur.items.push(item);
+                    }
+                });
+                return groups;
+            });
 
             const historyQuery = reactive({page: 1, limit: 12, filename: '', status: ''});
             const historyData = reactive({items: [], total: 0});
@@ -5559,6 +5611,8 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
             const logQuery = reactive({page: 1, limit: 50, level: '', keyword: ''});
             const logData = reactive({items: [], total: 0});
             const logExportLimit = ref(200);
+            // 暂停实时：挂起 WS 新日志的实时插入（导出/拉取历史不受影响）
+            const logPaused = ref(false);
 
             const configForm = ref({});
             const configDirsString = ref('');
@@ -6094,7 +6148,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                             if (activeTab.value === 'history') fetchHistory();
                         } else if (msg.type === 'newLog') {
                             const log = msg.payload;
-                            if (logQuery.page === 1 && !logQuery.keyword && (!logQuery.level || logQuery.level === log.level)) {
+                            if (logQuery.page === 1 && !logQuery.keyword && !logPaused.value && (!logQuery.level || logQuery.level === log.level)) {
                                 logData.items.unshift(log);
                                 logData.total++;
                                 if (logData.items.length > logQuery.limit) {
@@ -6706,6 +6760,7 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
                 ctxItems, ctxActive, ctxScroll,
                 cmdkOpen, cmdkQuery, cmdkIndex, cmdkInput, cmdkResults, cmdkFlat, openCmdk, cmdkMove, cmdkPick,
                 handleLogin, handleLogout, wsStatus, wsStats, wsLatency, getLatencyColor, liveTaskFilter,
+                liveProcFilter, uploadingFiltered, recentDoneGroups, logPaused,
                 systemStatus, queueStatus, liveTasks, uploadingTasks, completedTasks, uploadingCount, waitingCount,
                 liveTotalSize, completedPage, completedPageSize, completedPaged,
                 control, historyQuery, historyData, fetchHistory, onPageChange,
