@@ -67,7 +67,7 @@
 | `onnx_dll` | exe 同目录 `onnxruntime.dll` | 运行库路径 |
 | `onnx_model` | exe 同目录 `yolov8n-pose.onnx` | 姿态模型路径 |
 | `head_filter_enable` | false | 学习型门头（GBDT 段级投票）开关。**默认关**，先跑通三阈值再开 |
-| `head_model` | `D:/upload/_diag/train/gate_head/gate_head_v2_trees.json` | 门头模型 JSON 路径（内置默认是 v2 灰度模型；生产配置当前指向 v5） |
+| `head_model` | `_diag/train/gate_head/gate_head_v2_trees.json`（相对部署工作目录） | 门头模型 JSON 路径（内置默认是 v2 灰度模型；生产配置当前指向 v5） |
 | `head_frac` | 0.5 | 段内头判舞窗占比 ≥ 它才保留整段；配置层限制在 0.3~0.9 |
 
 生产推荐组合：三阈值 `det 0.30 / vis 0.70 / face 0.12` + 门头 `head_frac 0.5`。
@@ -101,7 +101,7 @@
 
 ## 7. 服务器部署注意
 
-服务器（xyx.homes）是 CGO 姿态门版，**绝不能把本机交叉编译的 `CGO_ENABLED=0` 二进制传上去**——
+生产服务器是 CGO 姿态门版，**绝不能把本机交叉编译的 `CGO_ENABLED=0` 二进制传上去**——
 姿态门会静默退化成纯 Go 桩，日志里不会有任何报错，只有高光产出消失这一个症状。
 正确流程（源码包 + 服务器上 CGO=1 构建）完整写在 `docs/POSE_GATE_SERVER_RUNBOOK.md`，
 部署前先跑 `CGO_ENABLED=0 GOOS=linux go build ./...` 排除 Linux 专属文件冲突。
