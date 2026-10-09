@@ -284,12 +284,14 @@ func (s *Server) sendJSONError(w http.ResponseWriter, r *http.Request, statusCod
 	}
 	key, err := s.sessionKey(r)
 	if err != nil {
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"code":%d,"message":"%s"}`, statusCode, message)))
+		// 无法加密时退回明文 JSON：raw 已由 json.Marshal 正确转义。
+		// （原实现用 fmt.Sprintf 手拼，message 含引号/反斜杠时会产出非法 JSON。）
+		_, _ = w.Write(raw)
 		return
 	}
 	enc, err := encryptPayload(raw, key)
 	if err != nil {
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"code":%d,"message":"%s"}`, statusCode, message)))
+		_, _ = w.Write(raw)
 		return
 	}
 	_ = json.NewEncoder(w).Encode(cryptox.Envelope{Encrypted: enc})

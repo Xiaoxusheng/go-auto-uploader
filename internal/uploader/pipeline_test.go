@@ -45,17 +45,23 @@ func TestHandleFileSkipArtifact(t *testing.T) {
 }
 
 // newDirStatus 建一个带 1 个 Pending 的目录状态，返回 store 便于断言。
+//
+// key 必须与生产链路一致：scan.go / scanner.go / naming.DetectRoot 三处都用
+// filepath.Clean 后的路径作 DirStatusStore 的 key。若这里直接塞原始路径，
+// 一旦 t.TempDir() 返回混合分隔符（例如 TMP 被设成 "D:/x" 时得到 "D:/x\Test\001"），
+// DetectRoot 返回的 Clean 路径就取不到条目，测试会假失败。
 func newDirStatus(t *testing.T, root string) *storage.DirStatusStore {
 	t.Helper()
+	key := filepath.Clean(root)
 	store := storage.NewDirStatusStore(filepath.Join(t.TempDir(), "dir_status.json"))
-	store.Put(root, &storage.DirStatus{Path: root, PendingFiles: 1})
+	store.Put(key, &storage.DirStatus{Path: key, PendingFiles: 1})
 	return store
 }
 
 // 秒传 = 远端已有同哈希内容：不得重复累计 UploadedFiles/UploadedSize，
 // 但 Pending 名额要回收，否则目录卡的「待处理」永远清不掉。
 func TestHandleFileInstantUploadDoesNotRecount(t *testing.T) {
-	root := t.TempDir()
+	root := filepath.Clean(t.TempDir())
 	day := filepath.Join(root, "2026-09-29")
 	if err := os.MkdirAll(day, 0o755); err != nil {
 		t.Fatal(err)
@@ -92,7 +98,7 @@ func TestHandleFileInstantUploadDoesNotRecount(t *testing.T) {
 
 // 真实上传完成：正常累计 UploadedFiles/UploadedSize。
 func TestHandleFileRealUploadCounts(t *testing.T) {
-	root := t.TempDir()
+	root := filepath.Clean(t.TempDir())
 	day := filepath.Join(root, "2026-09-29")
 	if err := os.MkdirAll(day, 0o755); err != nil {
 		t.Fatal(err)

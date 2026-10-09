@@ -983,9 +983,27 @@ func PublishPosterFor(id string, sec int) (string, error) {
 	}
 	publishMu.Unlock()
 	if file == "" {
+		// 队列未命中时前端直接传产物绝对路径（候选列表的 id 即文件路径，见 PublishCandidates）。
+		// ⚠️ id 直接来自 URL 查询串，绝不能原样交给 ffmpeg 抽帧：否则任意登录用户都能用
+		// ?id=/任意路径/x.mp4 读取服务器上任意 mp4/ts（路径穿越 / 任意文件读取）。
+		// 必须确认它精确等于本系统当前的高光产物路径之一。
+		if !isHighlightOutputPath(id) {
+			return "", fmt.Errorf("预览目标不存在")
+		}
 		file = id
 	}
 	return publishPoster(file, sec)
+}
+
+// isHighlightOutputPath 判断 p 是否精确对应某个当前高光产物（highlightOutputs 的规范路径）。
+func isHighlightOutputPath(p string) bool {
+	target := filepath.Clean(p)
+	for _, out := range highlightOutputs() {
+		if filepath.Clean(out) == target {
+			return true
+		}
+	}
+	return false
 }
 
 // publishWarnMissingCookie 开了投稿但没填 Cookie 的节流警告（10 分钟一条）。
