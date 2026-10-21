@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"upload/internal/procutil"
-
 )
 
 // 全字段特征提取 —— 供离线训练与评估使用，主链路暂不依赖。
@@ -183,6 +182,16 @@ func ExtractFeatures(ctx context.Context, ffmpegBin, src string, threads int) (*
 		}
 		a.sum += val
 		a.n++
+	}
+
+	// 扫描器报错（单行超缓冲等）时停止读 stderr 会让 ffmpeg 阻塞在写管道上，
+	// 必须主动 kill 并返回明确错误，而不是挂到 ctx 超时。
+	if serr := sc.Err(); serr != nil {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("读取 ffmpeg 输出失败: %w", serr)
 	}
 
 	if err := cmd.Wait(); err != nil {

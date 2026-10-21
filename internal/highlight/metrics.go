@@ -6,15 +6,23 @@ package highlight
 
 // PR 是秒级二分类指标。
 type PR struct {
-	P, R, F1 float64
+	P, R, F1   float64
 	TP, FP, FN int
 }
 
 // SecondPRF 逐秒对比标签与预测。
+//
+// 两个序列长度不等时按「缺位视为 false」对齐继续算，而不是用 yTrue 的下标
+// 直接索引 yPred —— 后者在长度不一致时（离线评估传错参数）会直接 panic。
 func SecondPRF(yTrue, yPred []int) PR {
 	var tp, fp, fn int
-	for i := range yTrue {
-		t, p := yTrue[i] != 0, yPred[i] != 0
+	n := len(yTrue)
+	if len(yPred) > n {
+		n = len(yPred)
+	}
+	for i := 0; i < n; i++ {
+		t := i < len(yTrue) && yTrue[i] != 0
+		p := i < len(yPred) && yPred[i] != 0
 		switch {
 		case t && p:
 			tp++
@@ -40,7 +48,7 @@ func SecondPRF(yTrue, yPred []int) PR {
 
 // SegPR 段级 IoU@iouTh 一对一贪心匹配后的指标。
 type SegPR struct {
-	P, R, F1 float64
+	P, R, F1      float64
 	GT, Pred, Hit int
 }
 

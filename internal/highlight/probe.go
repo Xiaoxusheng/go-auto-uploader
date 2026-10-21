@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"upload/internal/procutil"
-
 )
 
 type sample struct {
@@ -105,6 +104,16 @@ func Probe(ctx context.Context, ffmpegBin, src string, threads int) (*Series, er
 				audio = append(audio, sample{curAT, v})
 			}
 		}
+	}
+
+	// 扫描器自身报错（单行超过 1MB 缓冲等）必须显式处理：否则停止读 stderr 后
+	// ffmpeg 会因管道写满而阻塞，cmd.Wait 一直挂到 ctx 超时（60 分钟）才返回。
+	if serr := sc.Err(); serr != nil {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("读取 ffmpeg 输出失败: %w", serr)
 	}
 
 	if err := cmd.Wait(); err != nil {

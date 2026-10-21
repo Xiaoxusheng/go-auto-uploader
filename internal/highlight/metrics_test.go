@@ -2,6 +2,20 @@ package highlight
 
 import "testing"
 
+// 长度不等时按「缺位=false」对齐，不能 panic（hleval 传错参数会走到这里）。
+func TestSecondPRFMismatchedLength(t *testing.T) {
+	// 预测比标签长：多出的预测记为 FP
+	pr := SecondPRF([]int{1, 1, 0}, []int{1, 1, 0, 1})
+	if pr.TP != 2 || pr.FP != 1 || pr.FN != 0 {
+		t.Fatalf("预测更长: %+v", pr)
+	}
+	// 标签比预测长：缺的预测记为 FN
+	pr = SecondPRF([]int{1, 0, 1}, []int{1, 0})
+	if pr.TP != 1 || pr.FP != 0 || pr.FN != 1 {
+		t.Fatalf("标签更长: %+v", pr)
+	}
+}
+
 func TestHysteresisHoldsThroughDip(t *testing.T) {
 	// 单阈值 1.5 会把 0.5s 的凹陷切成两段；迟滞 1.5/0.8*1.5=1.2 应粘住
 	scores := []float64{0, 2, 2, 1.3, 2, 2, 0}
