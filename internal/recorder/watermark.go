@@ -31,7 +31,29 @@ func SanitizeName(name string) string {
 	if name == "" {
 		return "未命名主播"
 	}
+	// Windows 设备名（CON/PRN/AUX/NUL/COM1-9/LPT1-9）不能作为目录名，
+	// MkdirAll 会一路失败。主播名命中时加后缀规避。
+	if isWindowsReservedName(name) {
+		name += "_"
+	}
 	return name
+}
+
+// isWindowsReservedName 判断是否为 Windows 保留设备名（大小写不敏感，
+// 带扩展名同样保留：CON.txt 也建不出来）。
+func isWindowsReservedName(name string) bool {
+	if i := strings.IndexByte(name, '.'); i >= 0 {
+		name = name[:i]
+	}
+	u := strings.ToUpper(strings.TrimRight(name, " "))
+	switch u {
+	case "CON", "PRN", "AUX", "NUL":
+		return true
+	}
+	if len(u) == 4 && (strings.HasPrefix(u, "COM") || strings.HasPrefix(u, "LPT")) {
+		return u[3] >= '1' && u[3] <= '9'
+	}
+	return false
 }
 
 // FormatDuration 将时长格式化为 X小时X分X秒 / X分X秒。

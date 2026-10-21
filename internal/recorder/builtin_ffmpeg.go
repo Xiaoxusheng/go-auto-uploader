@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 	"upload/internal/procutil"
-
 )
 
 type builtinTailBuffer struct {
@@ -73,7 +72,14 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string,
 	}
 	defer file.Close()
 
-	stat, _ := file.Stat()
+	// Stat 失败时必须直接返回：原实现丢掉 err 后调 stat.Size()，
+	// 文件在 Open 与 Stat 之间被清理（并发删除/句柄异常）就会 nil 解引用，
+	// 而本函数跑在截图协程里，panic 会把整个进程带走。
+	stat, err := file.Stat()
+	if err != nil {
+		log.Printf("[BUILTIN] ⚠️ 取录像文件信息失败 %s: %v", latestFile, err)
+		return false
+	}
 	size := stat.Size()
 
 	// 性能优化核心：仅截取文件尾部少量字节流数据，防范大文件 I/O 卡死。
@@ -133,16 +139,21 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string,
 
 	// 启动 FFmpeg 进程
 	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
 		log.Printf("[BUILTIN] ❌ FFmpeg 启动失败: %v", err)
 		return false
 	}
 
-	// 高速将内存字节注入 FFmpeg 管道，写完立即关闭 stdin 触发 EOF 处理
-	stdin.Write(buf)
-	stdin.Close()
+	// 高速将内存字节注入 FFmpeg 管道，写完立即关闭 stdin 触发 EOF 处理。
+	// 必须异步写：管道缓冲只有几十 KB，ffmpeg 卡在读入时 Write 会阻塞，
+	// 而本函数跑在截图协程里，阻塞即意味着任务永远收不了尾（wg.Wait 卡死）。
+	go func() {
+		_, _ = stdin.Write(buf)
+		_ = stdin.Close()
+	}()
 
-	// 等待底层图像渲染和编码结束
-	err = cmd.Wait()
+	// 等待底层图像渲染和编码结束（超时强杀，避免坏流把进程挂死）
+	err = waitWithKill(cmd, 30*time.Second)
 
 	// TS 尾部可能没有 I 帧导致 select 0 帧退出；此时不能直接按 null 从 GOP 中段起解
 	//（参考帧缺失会造成花屏/糊块，正是截图发糊的元凶之一）。
@@ -179,11 +190,14 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string,
 				continue
 			}
 			if startErr := retry.Start(); startErr != nil {
+				_ = stdin2.Close()
 				continue
 			}
-			stdin2.Write(buf)
-			stdin2.Close()
-			if retry.Wait() == nil {
+			go func() {
+				_, _ = stdin2.Write(buf)
+				_ = stdin2.Close()
+			}()
+			if waitWithKill(retry, 15*time.Second) == nil {
 				return true
 			}
 		}
@@ -206,6 +220,18 @@ func extractBuiltinCoverFromLocalFile(dir, prefix, coverPath, anchorName string,
 	}
 
 	return true
+}
+
+// waitWithKill 等待子进程退出；超时直接 Kill 并回收，避免 ffmpeg 卡在
+// 坏流/半开管道上时 Wait 永不返回。Kill 后 Wait 仍会正常返回（进程被回收）。
+func waitWithKill(cmd *exec.Cmd, timeout time.Duration) error {
+	t := time.AfterFunc(timeout, func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	})
+	defer t.Stop()
+	return cmd.Wait()
 }
 
 // tailStr 取字符串尾部若干字符，用于压缩超长的 ffmpeg stderr 输出（保留最贴近退出原因的行）
@@ -301,7 +327,13 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 	// ✨ 修改内容：提取当前日期并构建日期命名的子文件夹作为落盘根目录
 	dateStr := time.Now().Format("2006-01-02")
 	outDir := filepath.Join(baseDir, safeName, dateStr)
-	os.MkdirAll(outDir, os.ModePerm)
+	// 目录建不出来（磁盘满 / 权限 / Windows 保留名）时必须中止本轮：
+	// 原实现丢掉错误继续拉流，ffmpeg 秒退又被当「断流」每轮重试，日志里只剩噪音。
+	if err := os.MkdirAll(outDir, os.ModePerm); err != nil {
+		log.Printf("[BUILTIN] ❌ 创建录制目录失败 %s: %v（检查磁盘空间/目录权限）", outDir, err)
+		updateBuiltinStatus(platformName, roomID, anchorName, avatar, quality, "目录创建失败")
+		return
+	}
 
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
 
@@ -385,7 +417,9 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 		args = append(args, "-c:a", "copy", "-f", "mpegts", outPath)
 	}
 
-	fileName := fmt.Sprintf("%s_%s.png", platformName, roomID)
+	// roomID 允许非 URL 手填（API 不做格式校验），拼进封面路径前必须清洗：
+	// 否则 `..\..\x` 这类值会把封面写到 covers 目录之外。
+	fileName := fmt.Sprintf("%s_%s.png", platformName, sanitizeBuiltinFileName(roomID))
 	coverDir := filepath.Join(".", "covers")
 	os.MkdirAll(coverDir, os.ModePerm)
 	coverPath := filepath.Join(coverDir, fileName)
@@ -528,6 +562,21 @@ func RecordStream(ctx context.Context, streamURL, platformName, roomID, anchorNa
 	maxStopSent := false
 	windowStopSent := false
 
+	// 花屏（色度丢失）检测巡检：录制中周期性从当前分片尾部抽样帧判定。
+	// ticker 常驻（仅录屏会话创建），开关/动作/阈值每次触发时重读配置 → 热生效；
+	// 间隔变化也在触发时就地 Reset，无需重开会话。
+	segPrefix := fmt.Sprintf("%s_%s", safeName, timestamp)
+	var flawTicker *time.Ticker
+	var flawTick <-chan time.Time
+	flawInterval := time.Duration(Config().FlawDetectInterval) * time.Second
+	if flags.Record {
+		flawTicker = time.NewTicker(flawInterval)
+		defer flawTicker.Stop()
+		flawTick = flawTicker.C
+	}
+	var flawBadSegment string // 命中的坏分片，收尾后改名标记
+	var lastFlawRestart time.Time
+
 	// 核心生命周期管控模型（hitMax 为命名返回值：录满主动收尾时通知监控循环，本场不再续录）
 selectLoop:
 	for {
@@ -597,12 +646,75 @@ selectLoop:
 					}
 				})
 			}
+		case <-flawTick:
+			// 花屏（色度丢失）巡检：抽当前分片尾部的帧判定画面是否整帧纯色。
+			// 每次重读配置，开关/动作/阈值/间隔都可热改。
+			cfg := Config()
+			if !cfg.FlawDetectEnable {
+				continue
+			}
+			if want := time.Duration(cfg.FlawDetectInterval) * time.Second; want != flawInterval {
+				flawInterval = want
+				flawTicker.Reset(want)
+			}
+			// 冷却：距上次花屏重录不足冷却期时跳过，避免刚重开就再次判定造成抖动
+			if !lastFlawRestart.IsZero() && time.Since(lastFlawRestart) < flawRestartCooldown {
+				continue
+			}
+			seg := latestBuiltinSegment(outDir, segPrefix, flawMinSegBytes)
+			if seg == "" {
+				continue
+			}
+			v := probeChromaFlaw(seg, flawProbeFrames, cfg.FlawDetectRatio)
+			if v.Err != nil {
+				// 分片刚切出来时数据不够属正常，不刷日志；其它错误必须暴露出来
+				if !errors.Is(v.Err, errFlawSegmentTooSmall) {
+					log.Printf("⚠️ [花屏检测] %s | %s | 探测失败: %v", platformName, anchorName, v.Err)
+				}
+				continue
+			}
+			if !v.Flawed {
+				continue
+			}
+
+			key := platformName + "_" + roomID
+			n := flawCount(key)
+			if cfg.FlawDetectAction != "restart" {
+				log.Printf("\n⚠️ [花屏告警] %s | %s | %s（动作=log，仅记录不中断）\n", platformName, anchorName, v.String())
+				continue
+			}
+			if n >= cfg.FlawMaxRestarts {
+				log.Printf("\n🚨 [花屏] %s | %s | %s，本场自动重录已达上限 %d 次，停止重录（画面可能持续异常）\n",
+					platformName, anchorName, v.String(), cfg.FlawMaxRestarts)
+				continue
+			}
+
+			setFlawCount(key, n+1)
+			lastFlawRestart = time.Now()
+			flawBadSegment = seg
+			// 打「花屏重录」标记：监控循环据此立即重开，不报下播、不走 30 秒断流退避
+			markFlawRestart(key)
+			log.Printf("\n🔄 [花屏重录] %s | %s | %s，第 %d/%d 次自动重录，安全收尾后重新拉流...\n",
+				platformName, anchorName, v.String(), n+1, cfg.FlawMaxRestarts)
+			if stdin != nil {
+				io.WriteString(stdin, "q\n")
+				stdin.Close()
+			}
+			time.AfterFunc(10*time.Second, func() {
+				if cmd.Process != nil {
+					_ = cmd.Process.Kill()
+				}
+			})
 		}
 	}
 
 	cancelRecord()
 
 	wg.Wait() // 彻底等待旁路协程销毁
+
+	// 花屏重录：ffmpeg 已退出、文件句柄已释放，此时才能安全改名
+	//（录制中文件被占用，Windows 上 os.Rename 会失败）。
+	markBadSegment(flawBadSegment)
 
 	// 仅截屏：结束后强制清空本场全部残留临时 TS（含 2 分钟内的在写文件）
 	if !flags.Record {

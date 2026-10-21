@@ -92,6 +92,23 @@ func apiRecorderConfig(w http.ResponseWriter, r *http.Request) {
 				b.SavePathFallbacks = c.SavePathFallbacks
 			}
 			b.MinFreeGB = c.MinFreeGB
+			// 花屏检测：开关直接赋值；动作只在提交了非空值时才覆盖
+			//（空串 = 未提交保留现值，非法值由 ApplyDefaults 回落 log）；
+			// 数值项 0 都不是合法取值，用 > 0 判定。
+			// 这些项在检测 ticker 里每次触发都重读配置，属热生效，无需重开会话。
+			b.FlawDetectEnable = c.FlawDetectEnable
+			if c.FlawDetectAction != "" {
+				b.FlawDetectAction = c.FlawDetectAction
+			}
+			if c.FlawDetectInterval > 0 {
+				b.FlawDetectInterval = c.FlawDetectInterval
+			}
+			if c.FlawDetectRatio > 0 {
+				b.FlawDetectRatio = c.FlawDetectRatio
+			}
+			if c.FlawMaxRestarts > 0 {
+				b.FlawMaxRestarts = c.FlawMaxRestarts
+			}
 		})
 
 		if err := PersistConfig(); err != nil {

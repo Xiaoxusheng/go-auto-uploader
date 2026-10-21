@@ -12,10 +12,12 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 	platformName := p.GetPlatformName()
 	key := platformName + "_" + roomID
 
-	if _, exists := builtinActiveTasks.Load(key); exists {
+	// 原子占位：Load 后再 Store 的写法在并发 add/resume 下会同时放行两个协程，
+	// 两者往 builtinCancels 写同一个 key；旧协程收尾时无条件 Delete，
+	// 会把新协程的 cancel 句柄删掉（停止录制失效 + 同一房间双路 ffmpeg）。
+	if _, loaded := builtinActiveTasks.LoadOrStore(key, true); loaded {
 		return
 	}
-	builtinActiveTasks.Store(key, true)
 
 	go func() {
 		builtinTaskStates.Store(key, "running")
@@ -45,6 +47,7 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 				builtinStatusMap.Delete(key)
 				builtinActiveTasks.Delete(key)
 				clearBuiltinDebounce(key)
+				resetFlawCount(key)
 				return
 			}
 
@@ -165,6 +168,15 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 					continue
 				}
 
+				// 花屏重录：会话因检测到色度丢失被主动打断，立即重新拉流。
+				// 同样不走退避、不报下播 —— 流还在线，只是画面坏了。
+				if clearFlawRestart(key) {
+					log.Printf("🔄 [花屏重录] %s %s 已重新拉流（本场第 %d 次自动重录）", platformName, name, flawCount(key))
+					builtinCancels.Delete(key)
+					cancel()
+					continue
+				}
+
 				state, _ = builtinTaskStates.Load(key)
 				if state != "deleted" && state != "paused" {
 					// 录屏/截屏全关时仅探测，不进入断流冷却，避免状态横跳
@@ -199,8 +211,10 @@ func wrapperStartMonitorIfNotRunning(p BuiltinPlatform, roomID string) {
 					}
 				}
 			} else {
-				// 探测明确离线（未开播/已下播）：解除本场录满标记，下次开播恢复正常录制
+				// 探测明确离线（未开播/已下播）：解除本场录满标记与花屏重录计数，
+				// 下次开播从零开始
 				cappedThisLive = false
+				resetFlawCount(key)
 
 				// 这里曾经先写一次「监控中」再写「未开播等待中」（相隔 0.1~0.3ms），
 				// 两次调用的 name/avatar/quality 参数完全一致，纯属冗余。它唯一的效果

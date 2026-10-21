@@ -95,6 +95,27 @@ type BuiltinSettings struct {
 	WatermarkFontSize    int    `json:"watermark_font_size"`
 	WatermarkFontColor   string `json:"watermark_font_color"`
 
+	// —— 花屏（色度丢失）检测与自动重录 ——
+	// 录制走 -c:v copy 直通落盘，ffmpeg 不解码视频：上游推流端编码异常或丢包导致
+	// 参考帧缺失时，坏数据被原样写进 .ts，ffmpeg 全程不报任何错，播放时表现为
+	// 整块绿/紫/粉色度丢失（俗称花屏），整段录像报废。
+	// 这里在录制中周期性从当前分片尾部抽样帧，统计「异常纯色像素占比」来判定。
+	// 实测：正常直播 ≈0.000、绿幕直播间（20% 人物）≈0.792、整屏绿屏 1.000。
+	//
+	// FlawDetectEnable 总开关，默认关闭。
+	FlawDetectEnable bool `json:"flaw_detect_enable"`
+	// FlawDetectAction 命中后的动作："log" 只记录日志（不改动文件）；
+	// "restart" 立即断流重录并把坏分片标记为 .ts.flaw。
+	// 空或非法值回落 "log"（先观察确认准确率，再切 restart）。
+	FlawDetectAction string `json:"flaw_detect_action"`
+	// FlawDetectInterval 检测间隔（秒），默认 30，下限 10。
+	FlawDetectInterval int `json:"flaw_detect_interval"`
+	// FlawDetectRatio 异常纯色像素占比阈值（0,1]，默认 0.9。
+	FlawDetectRatio float64 `json:"flaw_detect_ratio"`
+	// FlawMaxRestarts 单场最多自动重录次数，默认 3。
+	// 上游推流端编码异常时重连无效，必须设上限防止无限重录。
+	FlawMaxRestarts int `json:"flaw_max_restarts"`
+
 	// Highlight* 高光切片：录制切片落盘后离线分析，自动裁出活跃片段。
 	// 判定用「画面运动量 + 音频能量」双因子，权重默认偏向运动量——
 	// 实测跳舞直播里音频与「跳舞」负相关（主播跳舞时停止说话）。
@@ -364,6 +385,24 @@ func (b *BuiltinSettings) ApplyDefaults() {
 	}
 	if b.WatermarkFontColor == "" {
 		b.WatermarkFontColor = "white@0.95"
+	}
+	// 花屏检测：动作只认 log/restart，其它一律回落 log（默认最保守：先观察不动文件）。
+	// 间隔下限 10 秒——单次检测要起一个 ffmpeg 抽帧进程，服务器弱机不能更密。
+	if b.FlawDetectAction != "restart" {
+		b.FlawDetectAction = "log"
+	}
+	if b.FlawDetectInterval <= 0 {
+		b.FlawDetectInterval = 30
+	}
+	if b.FlawDetectInterval < 10 {
+		b.FlawDetectInterval = 10
+	}
+	// 阈值必须落在 (0,1]；越界回落 0.9（POC 实测的安全分界：绿幕 0.79 / 花屏 1.0）。
+	if b.FlawDetectRatio <= 0 || b.FlawDetectRatio > 1 {
+		b.FlawDetectRatio = 0.9
+	}
+	if b.FlawMaxRestarts <= 0 {
+		b.FlawMaxRestarts = 3
 	}
 	// 高光参数：2026-09-24 用 13 条人工标注切片（features_v2）重训的落地候选，
 	// 留一切片 F1 0.842（旧 0.8/0.2 th1.5 仅 0.599），阈值扫描峰在 th≈1.2。
