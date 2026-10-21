@@ -1,5 +1,54 @@
 # 📝 Go Auto Uploader 迭代更新日志 (Changelog)
 
+### [v2.5.9] - 2026-10-21 (Disk Deadlock Fix & Stability)
+
+#### 💾 高光源片"只进不出"死锁（线上事故）
+* **现象**：65G 录制盘三天写满（日均 8–9G），本地堆了 26G 已上传的源片；磁盘写满后 XFS 连 inode 都分配不出来，ffmpeg `Failed to open segment ... No space left on device`，录制全线失败。上传链路本身没有故障（`[UPLOAD][DONE]` 正常），坏在**源片永远不删**。
+* **根因一：认领时间被每轮扫描刷新**。`highlightClaim` 每次调用都 `Store(time.Now())`，而上传扫描每 2 分钟就会扫到同一文件 —— 2 小时的 `highlightClaimTTL` 被无限续期，`highlightReapStaleClaims` 一次都没触发过。改为 `LoadOrStore`，首次认领时刻不可变。
+* **根因二：失败次数没有硬上限**。线上坏片 `attempts=306 / rounds=0`，而"真定论"只认 `rounds >= 3`，于是永远不算定论、源片永远不释放。新增 `highlightEntry.Total`（跨轮不清零）与累计 12 次硬上限，`highlightConcluded` / `highlightCanRetry` 同步判定。
+* **根因三：损坏文件被反复重试**。缺 `moov` 的 mp4 重试多少次都一样，单片白跑 300+ 次 ffmpeg。新增 `highlightPermanentFailure` 识别 `moov atom not found` / `Invalid data found` / `could not find codec parameters`，**一次判死**（直接推到轮数上限）。
+* **根因四：磁盘告急时高光不让路**。新增 `highlightDiskTight()`（阈值 = `max(min_free_gb, 5GB)`）：告急时 `highlightClaim` 直接放行删源，回收 TTL 从 2 小时压到 10 分钟。取舍明确 —— **盘满时高光主动让路保录制，空间恢复后自动恢复**。
+* **回归测试**：新增 5 个用例（认领时间不被刷新 / 告急让路 / 短 TTL 回收 / 累计失败定论 / 坏片一次判死），`go test ./...` 全绿。
+* **现场处置**：清理 Go 模块缓存、旧部署备份与断流残片，可用空间 20K → 11G；`save_path_fallbacks` 指向 `/opt/rec_fallback`、`min_free_gb=10`，新录制在空间紧张时自动切盘。
+
+#### 🛠 稳定性修复
+* **WebSocket 客户端通道竞态**：Hub 广播、慢客户端踢除、Unregister 三处可能同时操作 `send`，裸 `close` + 裸 `send` 会触发 `close of closed channel` / `send on closed channel`，而 `Hub.Run` 没有 recover，等于进程级 panic。改为 `sendMu + closed + closeOnce`，投递与关闭判定同锁内完成，关闭幂等。
+* **持久化协程上下文竞态**：`AppCtx` 原先在 `manageWorkers` 协程里赋值，`dirStatusPersistLoop` / `successLogPersistLoop` 在另一协程读取；调度顺序不定时拿到 nil，stop 通道永不关闭 —— 协程泄漏且停机丢失最后一批成功记录。改为 `Run` 在启动任何依赖它的协程前同步创建。
+* **队列 pending 重复扣减**：`Queue.Drop` 在 `Dequeue` 已扣过的情况下又扣一次，暂停期间 `pending` 会被扣成负数并灌进控制台「等待任务」计数。
+
+#### 🔬 分析工具
+* **VideoMAE 特征探测（`hleval videomae-probe` / `videomae-prep`）**：为高光判定提供语义级特征通路，直接对切片抽帧跑编码器导出向量；纯 Go 构建由 `videomae_probe_nocgo.go` 提供桩，保证静态编译不受影响。
+
+#### 📚 文档
+* README 重写「下载即用」与最新功能（花屏检测、存储护栏、死锁修复、日志分页），修正 `pose-gate` 分支说明与训练触发方式（已改为手动/定时）。
+* `docs/configuration.md` 补充 `builtin` 段完整字段表（落盘/存储护栏、花屏检测、高光与姿态门）。
+
+---
+
+### [v2.5.8] - 2026-10-09 (Chroma Flaw Detection & Auto Re-record)
+#### 🩺 画面异常检测 (Chroma Flaw Detection)
+* **花屏（色度丢失）检测与自动重录 (`internal/recorder/builtin_flaw.go`)**：录制走 `-c:v copy` 直通落盘，ffmpeg 全程**不解码视频**——上游推流端编码异常或网络丢包导致参考帧缺失时，坏数据被原样写进 `.ts`，**ffmpeg 不报任何错**，播放时表现为整块绿/紫/粉色度丢失（俗称花屏），整段录像报废。新增检测协程：周期性从当前分片**尾部读 12MB** 交 ffmpeg 抽帧（`fps=1,scale=64:36,rawvideo`），取最靠近文件尾部的 3 帧统计「异常纯色像素占比」——正常画面几乎不可能整帧纯色，而色度丢失恰好就是整帧纯色。实测标定：正常直播 0.000 / 绿幕直播间（20% 人物）0.792 / 整屏绿屏 1.000，阈值 0.9 可将三者完全分开。
+* **命中后的动作**：`log` 仅记录日志（不改动文件）；`restart` 立即向 ffmpeg 发送优雅收尾并**重新拉流**（复用配置重载通道，不走 30 秒断流退避、不误报下播），命中分片改名 `xxx.ts.flaw` **保留**（不删除，便于排查成因；后缀非 `.ts`，不会被上传/高光/统计流程收走）。单场自动重录上限默认 3 次——上游推流端编码坏了时重连无效，必须设上限防死循环。
+* **配置项**（`builtin` 段，默认关闭）：`flaw_detect_enable` 总开关、`flaw_detect_action`（log/restart）、`flaw_detect_interval`（默认 30 秒，下限 10）、`flaw_detect_ratio`（默认 0.9）、`flaw_max_restarts`（默认 3）。开关/动作/阈值/上限**均热生效**，无需重开会话。
+* **控制台适配**：引擎设置「基础设置」新增「画面异常检测」区块，含总开关与展开后的命中动作、检测间隔、异常占比阈值、单场最多重录，并提示 `.ts.flaw` 保留语义。
+
+#### 📱 移动端适配 (Mobile)
+* **运行日志页窄屏可读性修复**：390px 下日志条目是三列 flex（时间戳 | 级别 | 消息），时间戳与级别均为 `flex-shrink: 0`（合计占 ~197px），消息列只剩 ~110px，每行仅容 8~10 个字符、完全无法阅读。≤600px 改为堆叠布局：时间戳+级别一行、消息另起一行占满宽度，条目间加虚线分隔；同时把 `word-break: break-all` 换成 `overflow-wrap: anywhere`，避免正常中文词组被硬断。
+* **添加监控输入框 placeholder 截断修复**：390px 下平台选择器（`min-width:104px`）与链接输入框并排，输入框只剩 ~244px，占位文案被截成「…按 Enter 快速添」。≤600px 让 `.qc-row` 纵向堆叠、子元素全宽。
+* **顺带修复两处 CSS 文件损坏**：`.drop-enter-active` 选择器丢失导致下拉过渡动画整条规则失效；动效段落注释的 `/*` 丢失使注释文本裸露在样式表中（可能吞掉后续规则）。
+* **高光判定卡标题断行修复**：`.card-title` 是 flex，图标 + 标题文字 + `.mini` 描述三个 item 并排需 ~406px，390px 下只有 ~326px，标题被压断成「高光判定·实时」/「队列」。窄屏改为标题独占一行、描述另起一行并对齐到标题文字。
+* **页头工具栏未占满修复**：4 个按钮并排需 ~364px，`flex-wrap` 折成 3+1，第二行只剩「批量添加」+ 右侧大片空白。窄屏改两列网格，按钮平分宽度。
+* **工具栏奇数按钮落单修复**：两列网格下奇数个按钮会落单（总览页 5 个 → 排 3 行，末行只占一格、右侧留空）。用 `:last-child:nth-child(odd) { grid-column: span 2 }` 让落单按钮跨满两列。
+* **「最近判定」日期被截断修复**：`.hlq-done-strip .dmeta` 的 `max-width: 88px` 装不下「未检出 · 09-30 22:28」（约需 100px），时间被省略号截掉。窄屏改为 `max-width: 96px` + `white-space: normal` 允许折行，实测 6 条元信息 0 条截断。
+* **任务列表主播名换行修复**：主播列宽 24%（≈115px）装不下「80px 预览图 + gap 11px + 名字」，长名字（如「闲闲饭。（孤独的羊）」）被折成两行。移动端列宽提到 42% + `.fname` 单行省略（模板已有 `:title`，悬停可看全名）。
+* 勘察方式：`_diag/mobile_probe.mjs`（**半真实环境**：复用真实的 326 行主播名单与上传历史数据、主播全部 `#` 暂停不会录制 + Edge CDP，多视口 × 多页面截图 + 水平溢出探测），覆盖 10 个页面 + 设置弹窗；390/768 两视口水平溢出均为 0，侧栏抽屉与菜单点击自动收起均正常。任务列表的真实数据状态（324 个任务、6 条最近判定）也已纳入核对。
+
+#### 🔧 其他 (Misc)
+* **`apiRecorderConfig` 白名单更新补映射**：该接口是逐字段白名单式赋值（非整体替换），新增配置项必须同步加映射，否则前端保存的字段会被**静默丢弃**（页面显示正常但后端不生效）。
+* **新增单测与集成测试**：`analyzeFlawFrame` 纯色判定、`latestBuiltinSegment` 筛选、`readTail` 边界、坏分片改名、标记与计数生命周期；以及直接驱动 `RecordStream` 拉本地限速绿屏流的**录制链路集成测试**，验证「检测命中 → 打断会话 → 坏分片标记」全链路（实测 15.5s 内完成）。
+* **修复两个 Windows 专属陷阱**：①抽帧探测中「先写满 stdin 再读 stdout」会因输出管道缓冲满而双方互等，**Windows 上表现为 `exit status 1` 且 stderr 为空**，极难排查，改为写读并发；②`os.ReadDir` 返回的 `DirEntry.Info()` 对**正在写入**的文件报 `size=0`（Linux 用 lstat 实时、不受影响），会导致正在录制的分片被大小过滤跳过、检测静默失效，改用 `os.Stat`。
+
+---
 ### [v2.5.7] - 2026-09-23 (Disk Hygiene & Source Retention)
 #### 🧹 磁盘治理 (Disk Hygiene)
 * **源片兜底清理接线上 (`highlight_source_retention_days`)**：这个配置项此前只有定义和默认值（7 天），**没有任何调用点**，等于从未生效。现由 `highlightSweepExpiredSources()` 每小时扫一遍录像根目录，删除 mtime 超过保留期的源片；显式配 `0` 或负值可关闭。它专门兜住正常路径碰不到的三类文件：**上传反复失败重试耗尽的**、**高光分析队列永远排不上队的**（`findStableClips` 按 mtime 倒序，新片永远插队，老片会饿死）、**主播已从名单移除留下的孤儿目录**。取舍与 `highlightClaimTTL` 一致：宁可漏掉一个没传出去的源片，也不让磁盘被吃满。
