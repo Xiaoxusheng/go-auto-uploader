@@ -239,11 +239,29 @@ func swapHighlightTargetDirs(dirs []string) func() {
 	}
 }
 
+// stubAmpleDisk 让「磁盘告急」判定看到充足空间。
+// 认领逻辑依赖真实 statfs，测试机剩余空间不可控，必须显式注入。
+func stubAmpleDisk(t *testing.T) {
+	t.Helper()
+	old := highlightDiskFreeFn
+	highlightDiskFreeFn = func(string) int64 { return 1 << 40 } // 1TB
+	t.Cleanup(func() { highlightDiskFreeFn = old })
+}
+
+// stubTightDisk 让「磁盘告急」判定成立。
+func stubTightDisk(t *testing.T) {
+	t.Helper()
+	old := highlightDiskFreeFn
+	highlightDiskFreeFn = func(string) int64 { return 1 << 30 } // 1GB
+	t.Cleanup(func() { highlightDiskFreeFn = old })
+}
+
 // 回归：上传流程删源前必须被高光拦下。
 //
 // 曾经的故障：pipeline 上传/秒传成功后立刻 os.Remove(源)，而高光要等 3 分钟稳定期
 // 才动手，于是每个切片都以「No such file or directory」收场，产出恒为 0。
 func TestHighlightClaimBlocksRemovalOfPendingClip(t *testing.T) {
+	stubAmpleDisk(t)
 	root := t.TempDir()
 	day := filepath.Join(root, "2026-09-22")
 	if err := os.MkdirAll(day, 0o755); err != nil {
@@ -277,6 +295,7 @@ func TestHighlightClaimBlocksRemovalOfPendingClip(t *testing.T) {
 
 // 不该被拦的文件：非高光目标、以及高光产物自己（否则会自我递归）。
 func TestHighlightClaimAllowsIrrelevantPaths(t *testing.T) {
+	stubAmpleDisk(t)
 	root := t.TempDir()
 	resetHighlightState(t.TempDir())
 	defer swapHighlightTargetDirs([]string{filepath.ToSlash(root)})()
@@ -308,6 +327,7 @@ func TestHighlightClaimAllowsIrrelevantPaths(t *testing.T) {
 // 但拿去做高光分析只会白跑一次 ffmpeg（"未解析到采样点"），
 // 还会把 pipeline 的正常清理拖到分析结束之后。
 func TestHighlightClaimIgnoresNonClips(t *testing.T) {
+	stubAmpleDisk(t)
 	root := t.TempDir()
 	day := filepath.Join(root, "2026-09-22")
 	if err := os.MkdirAll(day, 0o755); err != nil {
@@ -343,6 +363,7 @@ func TestHighlightClaimIgnoresNonClips(t *testing.T) {
 // 已有定论的切片不再认领（避免白占盘）：已产出高光、明确未检出、失败已达重试上限。
 // 注意「失败但没到上限」仍要认领 —— 留着重试正是这次修的东西。
 func TestHighlightClaimAllowsSettledClips(t *testing.T) {
+	stubAmpleDisk(t)
 	root := t.TempDir()
 	day := filepath.Join(root, "2026-09-22")
 	if err := os.MkdirAll(day, 0o755); err != nil {
@@ -402,6 +423,7 @@ func TestHighlightClaimAllowsSettledClips(t *testing.T) {
 
 // 认领超时必须被回收：高光循环若停摆，这些文件会一直占盘。
 func TestHighlightReapStaleClaims(t *testing.T) {
+	stubAmpleDisk(t)
 	root := t.TempDir()
 	resetHighlightState(t.TempDir())
 	defer swapHighlightTargetDirs([]string{filepath.ToSlash(root)})()
@@ -429,6 +451,127 @@ func TestHighlightReapStaleClaims(t *testing.T) {
 	}
 	if _, ok := highlightClaimed.Load(fresh); !ok {
 		t.Fatal("未超时的认领记录应保留")
+	}
+}
+
+// 回归：重复扫描不能刷新认领时间戳。
+//
+// 曾经的故障：上传扫描每两分钟对同一文件调一次 highlightClaim，每次都用
+// Store(time.Now()) 重置时刻，2 小时的 TTL 永远不到期 —— 认领退化成「永久保留」，
+// 源片只进不出，最终把 26G 堆到录制盘写满。
+func TestHighlightClaimKeepsFirstClaimTime(t *testing.T) {
+	stubAmpleDisk(t)
+	root := t.TempDir()
+	day := filepath.Join(root, "2026-10-21")
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resetHighlightState(t.TempDir())
+	defer swapHighlightTargetDirs([]string{filepath.ToSlash(root)})()
+
+	src := filepath.Join(day, "a_001.mp4")
+	writeSizedFile(t, src, 2<<20)
+
+	// 模拟「三小时前就被认领了」的现存记录
+	first := time.Now().Add(-3 * time.Hour)
+	highlightClaimed.Store(src, first)
+
+	if highlightClaim(src) {
+		t.Fatal("认领中的切片不应放行删除")
+	}
+	v, ok := highlightClaimed.Load(src)
+	if !ok {
+		t.Fatal("认领记录不应被清掉")
+	}
+	if ts := v.(time.Time); !ts.Equal(first) {
+		t.Fatalf("重复扫描刷新了认领时间戳（%v → %v），TTL 将永不到期", first, ts)
+	}
+
+	highlightReapStaleClaims()
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatalf("超过 TTL 的认领应被回收，stat err = %v", err)
+	}
+}
+
+// 磁盘告急必须停止认领：宁可少一个高光，也不能把录制盘写死。
+func TestHighlightClaimYieldsUnderDiskPressure(t *testing.T) {
+	stubTightDisk(t)
+	root := t.TempDir()
+	day := filepath.Join(root, "2026-10-21")
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resetHighlightState(t.TempDir())
+	defer swapHighlightTargetDirs([]string{filepath.ToSlash(root)})()
+
+	src := filepath.Join(day, "a_002.mp4")
+	writeSizedFile(t, src, 2<<20)
+
+	if !highlightClaim(src) {
+		t.Fatal("磁盘告急时应放行删除（保录制优先）")
+	}
+	if _, ok := highlightClaimed.Load(src); ok {
+		t.Fatal("磁盘告急时不应登记认领")
+	}
+}
+
+// 磁盘告急时认领有效期缩短到 10 分钟，尽快把空间还给录制。
+func TestHighlightReapUsesShortTTLUnderPressure(t *testing.T) {
+	stubTightDisk(t)
+	root := t.TempDir()
+	day := filepath.Join(root, "2026-10-21")
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resetHighlightState(t.TempDir())
+
+	src := filepath.Join(day, "a_003.mp4")
+	writeSizedFile(t, src, 2<<20)
+	highlightClaimed.Store(src, time.Now().Add(-20*time.Minute))
+
+	highlightReapStaleClaims()
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatalf("告急时应按 10 分钟 TTL 回收，stat err = %v", err)
+	}
+}
+
+// 累计失败到硬上限即定论：兜住 Rounds 涨不上去的异常路径。
+// 线上坏片的 attempts 涨到 306、rounds 仍是 0，于是永远不算定论、源片永不释放。
+func TestHighlightConcludedByTotalAttempts(t *testing.T) {
+	resetHighlightState(t.TempDir())
+	src := "D:/downloads/抖音直播/主播A/2026-10-21/a_004.mp4"
+	highlightStateSet(src, highlightEntry{
+		Err:        "boom",
+		Attempts:   maxHighlightAttempts,
+		Rounds:     0,
+		Total:      maxHighlightTotalAttempts,
+		AnalyzedAt: time.Now().Format("2006-01-02 15:04:05"),
+	})
+	e, _ := highlightStateGet(src)
+	if !highlightConcluded(e) {
+		t.Fatalf("累计失败 %d 次应为定论: %+v", e.Total, e)
+	}
+	if highlightCanRetry(src) {
+		t.Fatal("累计失败到硬上限不应再重试")
+	}
+}
+
+// 文件本身损坏（moov 缺失）必须一次判死，不能耗到硬上限。
+func TestHighlightPermanentFailureConcludesImmediately(t *testing.T) {
+	resetHighlightState(t.TempDir())
+	src := "D:/downloads/抖音直播/主播A/2026-10-21/a_005.mp4"
+	highlightLogFailure("分析", "a_005.mp4", src,
+		errors.New("[mov,mp4,m4a,3gp,3g2,mj2 @ 0x1] moov atom not found / a.mp4: Invalid data found"))
+
+	e, _ := highlightStateGet(src)
+	if !highlightConcluded(e) {
+		t.Fatalf("损坏文件应立刻定论: %+v", e)
+	}
+	if highlightCanRetry(src) {
+		t.Fatal("损坏文件不应再重试")
+	}
+	if e.Rounds != maxHighlightRetryRounds {
+		t.Fatalf("应把轮数推到上限，实际 %d", e.Rounds)
 	}
 }
 
@@ -646,7 +789,6 @@ func TestHighlightSweepRootsKeepsFilesNewerThanCutoff(t *testing.T) {
 		t.Fatalf("文件不该被删除: %v", err)
 	}
 }
-
 
 // highlightOptions 对 ExitRatio 的契约：0=关（默认），(0,1) 透传，非法不透传。
 // 这是 T2 的「pass-through」验收；回落语义在 config 层另有测试。

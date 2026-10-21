@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"upload/internal/config"
+	"upload/internal/fsutil"
 	"upload/internal/hashstore"
 	"upload/internal/highlight"
 	"upload/internal/pose"
@@ -38,10 +39,25 @@ const (
 	// highlightClaimTTL 认领后的最长保留时间。认领的前提是高光循环会来处理它，
 	// 若循环停摆（服务暂停、协程卡住）这些文件会一直占盘，所以超时即放弃认领。
 	highlightClaimTTL = 2 * time.Hour
+	// highlightClaimPressureTTL 磁盘告急时的认领有效期。
+	// 正常 2 小时是按「分析排队能追上」估的；盘快满时必须先把空间还给录制，
+	// 所以压到 10 分钟 —— 还没轮到的片子会被上传流程按「已上传即删源」处理。
+	highlightClaimPressureTTL = 10 * time.Minute
+	// highlightClaimMinFreeGB 录制盘「告急」阈值下限（GB）。
+	// 低于该值不再认领源片：认领意味着源片要等分析结束才删，盘快满时继续认领
+	// 只会让录制先死。宁可少一个高光，也不能把录制盘写死。
+	highlightClaimMinFreeGB = 5
+	// highlightDiskWarnEvery 磁盘告急日志的节流间隔。
+	highlightDiskWarnEvery = 30 * time.Minute
 	// maxHighlightAttempts 同一个切片最多尝试分析几次。
 	// 失败不再是一次性死判：切片可能只是赶上了转换进程正在读同一个文件、
 	// 或磁盘 IO 抖动 —— 线上就有一个完全正常的切片因一次这样的失败被永久跳过。
 	maxHighlightAttempts = 3
+	// maxHighlightTotalAttempts 单个切片的累计失败硬上限（跨轮不清零）。
+	// 正常路径靠 Rounds 收敛；这里兜住「Rounds 涨不上去」的异常路径 ——
+	// 线上出现过 attempts 涨到 306、rounds 仍是 0 的切片：永远不算定论，
+	// 源片就永远不被删除，最终把录制盘写满。
+	maxHighlightTotalAttempts = 12
 )
 
 // highlightEntry 是单个切片的分析结果记录，用于避免重复分析。
@@ -51,10 +67,13 @@ type highlightEntry struct {
 	Output     string `json:"output,omitempty"` // 产出的高光文件名；空 = 未检出
 	Size       int64  `json:"size,omitempty"`
 	Err        string `json:"err,omitempty"`
-	// Attempts 累计失败次数，只在 Err 非空时有意义；达到上限进入冷却期。
+	// Attempts 本轮已失败次数，只在 Err 非空时有意义；达到上限进入冷却期。
 	Attempts int `json:"attempts,omitempty"`
 	// Rounds 冷却重试已开的轮数（见 highlightRetryCooldown）；达到上限彻底放弃。
 	Rounds int `json:"rounds,omitempty"`
+	// Total 累计失败次数，跨轮不清零，用于兜住 Rounds 异常不增长的路径。
+	// 旧状态文件没有该字段，反序列化为 0，天然兼容。
+	Total int `json:"total,omitempty"`
 	// —— 投稿扩展字段（B 站自动投稿）：裁切成功时补记首段/末段秒数与最高段评分，
 	// 供投稿队列渲染标题简介。旧状态文件没有这些字段，反序列化即零值，天然兼容。
 	StartSec int     `json:"start_sec,omitempty"`
@@ -67,6 +86,10 @@ var (
 	highlightState    = map[string]highlightEntry{}
 	highlightStatePos string
 	highlightLoaded   bool
+
+	// highlightStateSaveMu 串行化「全量快照 → 落盘」：多 worker 并发写时，
+	// 后落盘的快照必须包含先落盘的条目，否则会互相覆盖。
+	highlightStateSaveMu sync.Mutex
 
 	// highlightClaimed 记录「上传流程已处理完、但高光还没分析」的源文件（path → 认领时刻）。
 	// uploader.Pipeline 删源前通过 highlightClaim 询问，认领成功就不删，
@@ -235,6 +258,12 @@ func highlightSweepRoots(roots []string, cutoff time.Time) (int, int64) {
 						continue
 					}
 					full := filepath.Join(dir, e.Name())
+					// 仍在上传队列 / 高光队列里的切片不能删：这些文件还没被处理完，
+					// 删掉会让队头任务指向不存在的文件（上传长期失败时正好会躺满保留期），
+					// 等于静默丢数据。
+					if TaskQueue.Contains(full) || mapKeyExists(&highlightInFlight, full) || mapKeyExists(&highlightClaimed, full) {
+						continue
+					}
 					size := info.Size()
 					if err := os.Remove(full); err != nil {
 						continue
@@ -246,6 +275,12 @@ func highlightSweepRoots(roots []string, cutoff time.Time) (int, int64) {
 		}
 	}
 	return removed, freed
+}
+
+// mapKeyExists 判断 sync.Map 是否含某个 key。
+func mapKeyExists(m *sync.Map, key string) bool {
+	_, ok := m.Load(key)
+	return ok
 }
 
 // highlightPass 执行一轮扫描。
@@ -287,7 +322,12 @@ func highlightSchedulePass() {
 			highlightDisposeSource(path)
 			return true
 		}
-		// 冷却中的失败片：保留认领，等冷却期满（canRetry 恢复 true）再投递
+		// 冷却中的失败片：保留认领记录，等冷却期满（canRetry 恢复 true）再投递。
+		// 这里必须真的判一次 canRetry —— 否则每轮 tick 都会把冷却片重新塞进队列，
+		// 每次失败又刷新 AnalyzedAt，冷却永远重新计时、Rounds 永不递增（永不放弃）。
+		if !highlightCanRetry(path) {
+			return true
+		}
 		outDir := highlightOutDirFor(path)
 		if outDir == "" {
 			highlightDisposeSource(path)
@@ -356,6 +396,46 @@ func highlightRefreshTargets() {
 	highlightTargetDirsMu.Unlock()
 }
 
+// highlightDiskFreeFn 录制盘剩余空间探测，测试可注入替换。
+var highlightDiskFreeFn = fsutil.FreeSpace
+
+// highlightDiskTight 录制盘是否已低于安全水位。
+//
+// 阈值取 min_free_gb 与 highlightClaimMinFreeGB 的较大者：前者是录制侧
+// 「快满了要切备选盘」的口径，高光让路不能比它更晚。探测失败（返回 0）按
+// 「不紧张」处理，避免因为一次 statfs 异常就停掉全部高光。
+func highlightDiskTight() bool {
+	roots := recorder.RecordRoots()
+	if len(roots) == 0 {
+		return false
+	}
+	free := highlightDiskFreeFn(roots[0])
+	if free <= 0 {
+		return false
+	}
+	minGB := AppCfg().Builtin.MinFreeGB
+	if minGB < highlightClaimMinFreeGB {
+		minGB = highlightClaimMinFreeGB
+	}
+	return free < int64(minGB*1073741824)
+}
+
+var (
+	highlightDiskWarnMu sync.Mutex
+	highlightDiskWarnAt time.Time
+)
+
+// warnHighlightDiskPressure 磁盘告急日志节流：每 30 分钟最多一条，避免刷屏。
+func warnHighlightDiskPressure() {
+	highlightDiskWarnMu.Lock()
+	defer highlightDiskWarnMu.Unlock()
+	if time.Since(highlightDiskWarnAt) < highlightDiskWarnEvery {
+		return
+	}
+	highlightDiskWarnAt = time.Now()
+	log.Printf("[HIGHLIGHT] 💾 录制盘剩余空间低于 %dGB，暂停认领源片：优先保证录制，上传完成后直接删源", highlightClaimMinFreeGB)
+}
+
 // highlightClaim 供 uploader.Pipeline.BeforeRemove 调用：判断这个源文件能不能删。
 //
 // 返回 true = 放行删除；false = 高光接管，pipeline 不要删。
@@ -382,7 +462,15 @@ func highlightClaim(path string) bool {
 	if highlightOutDirFor(path) == "" {
 		return true
 	}
-	highlightClaimed.Store(path, time.Now())
+	// 磁盘告急：不再认领，让上传流程上传成功后立刻删源。高光分析本身也要写临时
+	// 文件，盘满时它必然失败 —— 继续认领只会把「既没高光、又没空间录制」两头都输掉。
+	if highlightDiskTight() {
+		warnHighlightDiskPressure()
+		return true
+	}
+	// 只在首次认领时记录时刻。每次扫描都刷新时间戳会让 TTL 永远不到期，
+	// 认领就退化成「永久保留」—— 线上 26G 源片堆到写满磁盘正是这么来的。
+	highlightClaimed.LoadOrStore(path, time.Now())
 	return false
 }
 
@@ -403,6 +491,9 @@ func highlightCanRetry(path string) bool {
 	if e.Err == "" {
 		return false // 未检出，是有效结论
 	}
+	if e.Total >= maxHighlightTotalAttempts {
+		return false // 累计失败到硬上限，不再浪费 CPU
+	}
 	if e.Rounds >= maxHighlightRetryRounds {
 		return false // 重试轮数耗尽，彻底放弃
 	}
@@ -422,7 +513,11 @@ func highlightConcluded(e highlightEntry) bool {
 	if e.Err == "" && e.AnalyzedAt != "" {
 		return true // 未检出
 	}
-	return e.Rounds >= maxHighlightRetryRounds
+	if e.Rounds >= maxHighlightRetryRounds {
+		return true
+	}
+	// 累计失败硬上限：兜住 Rounds 涨不上去的异常路径（见 maxHighlightTotalAttempts）。
+	return e.Err != "" && e.Total >= maxHighlightTotalAttempts
 }
 
 // highlightRetryCooldown 失败达上限后的冷却期：磁盘满/IO 抖动这类「时段性」故障
@@ -467,12 +562,19 @@ func highlightMaybeRevive(src string) {
 // 必须「读旧值 → 改 → 写回」，不能直接覆盖整个 entry ——
 // 那样 Attempts 永远是 1，重试就没了上限。
 func highlightRecordFailure(src string, err error) int {
+	return highlightRecordFailureSeg(src, 0, err)
+}
+
+// highlightRecordFailureSeg 记录失败并累计次数，segments 用于保留「检出 N 段」
+// 这类展示信息（MkdirAll 失败等场景需要）。
+func highlightRecordFailureSeg(src string, segments int, err error) int {
 	prev, _ := highlightStateGet(src)
-	prev.Segments = 0
+	prev.Segments = segments
 	prev.Output = ""
 	prev.Size = 0
 	prev.Err = err.Error()
 	prev.Attempts++
+	prev.Total++
 	prev.StartSec = 0
 	prev.EndSec = 0
 	prev.Score = 0
@@ -480,8 +582,44 @@ func highlightRecordFailure(src string, err error) int {
 	return prev.Attempts
 }
 
+// highlightPermanentFailure 识别「文件本身坏了」的 ffmpeg 报错。
+//
+// 这类错误重试多少次结果都一样（截断的 MP4 没有 moov，永远解不开），
+// 必须一次性判死：否则每轮都重新分析同一个坏片，源片永远等不到「定论」，
+// 于是一直占着磁盘 —— 实测单片被重试了 300+ 次。
+func highlightPermanentFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, s := range []string{
+		"moov atom not found",
+		"Invalid data found when processing input",
+		"could not find codec parameters",
+	} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
 // highlightLogFailure 记录失败并打日志，把「还会不会重试」说清楚。
 func highlightLogFailure(stage, base, src string, err error) {
+	if highlightPermanentFailure(err) {
+		prev, _ := highlightStateGet(src)
+		prev.Segments = 0
+		prev.Output = ""
+		prev.Size = 0
+		prev.Err = err.Error()
+		prev.StartSec, prev.EndSec, prev.Score = 0, 0, 0
+		prev.Attempts = maxHighlightAttempts
+		prev.Rounds = maxHighlightRetryRounds
+		prev.Total = maxHighlightTotalAttempts
+		highlightStateSet(src, prev)
+		log.Printf("[HIGHLIGHT] ❌ %s失败 %s: %v（文件已损坏，永久跳过）", stage, base, err)
+		return
+	}
 	n := highlightRecordFailure(src, err)
 	if n >= maxHighlightAttempts {
 		log.Printf("[HIGHLIGHT] ❌ %s失败 %s: %v（已试 %d 次，放弃重试）", stage, base, err, n)
@@ -573,6 +711,11 @@ func highlightShouldDeleteSource(claimed, concluded, uploaded, onlyTarget bool) 
 // 认领的前提是高光循环会来处理；若循环停摆，宁可漏一个高光也不要吃满磁盘。
 func highlightReapStaleClaims() {
 	now := time.Now()
+	// 磁盘告急时缩短认领有效期：这时候「保住录制」比「多留一会儿等高光」重要。
+	ttl := highlightClaimTTL
+	if highlightDiskTight() {
+		ttl = highlightClaimPressureTTL
+	}
 	highlightClaimed.Range(func(k, v interface{}) bool {
 		path, ok := k.(string)
 		if !ok {
@@ -580,7 +723,7 @@ func highlightReapStaleClaims() {
 			return true
 		}
 		ts, _ := v.(time.Time)
-		if now.Sub(ts) < highlightClaimTTL {
+		if now.Sub(ts) < ttl {
 			return true
 		}
 		highlightClaimed.Delete(path)
@@ -876,7 +1019,9 @@ func analyzeClip(src, outDir string, opts highlight.Options) {
 
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		log.Printf("[HIGHLIGHT] ⚠️ 创建高光目录失败 %s: %v", outDir, err)
-		highlightStateSet(src, highlightEntry{Segments: len(segs), Err: err.Error()})
+		// 必须读旧值累加 Attempts：直接写全新 entry 会把重试计数清零，
+		// 磁盘长期不可写时该片每轮都「第一次失败」，重试上限彻底失效。
+		highlightRecordFailureSeg(src, len(segs), err)
 		return
 	}
 	out := highlightOutputPath(outDir, src)
@@ -952,9 +1097,17 @@ func highlightOutputs() []string {
 }
 
 // highlightStateSet 记录分析结果并落盘。
+//
+// 并发约束：多个分析 worker 会同时写。序列化必须「取全量快照 → 写盘」整体串行，
+// 否则后写盘的旧快照会把先写入的新条目覆盖掉（表现为切片被反复重新分析、
+// Attempts/Rounds 丢失）。临时文件由 fsutil.AtomicWrite 生成唯一名，
+// 避免固定 .tmp 名被并发 truncate 成半截 JSON。
 func highlightStateSet(path string, e highlightEntry) {
 	highlightStateLoad()
 	e.AnalyzedAt = time.Now().Format("2006-01-02 15:04:05")
+
+	highlightStateSaveMu.Lock()
+	defer highlightStateSaveMu.Unlock()
 
 	highlightMu.Lock()
 	highlightState[path] = e
@@ -965,14 +1118,8 @@ func highlightStateSet(path string, e highlightEntry) {
 	if err != nil || pos == "" {
 		return
 	}
-	// 临时文件 + 改名：半写会让状态文件损坏，导致全部切片被重新分析一遍。
-	tmp := pos + ".tmp"
-	if werr := os.WriteFile(tmp, data, 0o644); werr != nil {
+	if werr := fsutil.AtomicWrite(pos, data, 0o644); werr != nil {
 		log.Printf("[HIGHLIGHT] ⚠️ 写入高光状态失败: %v", werr)
-		return
-	}
-	if rerr := os.Rename(tmp, pos); rerr != nil {
-		log.Printf("[HIGHLIGHT] ⚠️ 提交高光状态失败: %v", rerr)
 	}
 }
 
@@ -1000,7 +1147,11 @@ func highlightStateLoad() {
 	}
 	highlightMu.Lock()
 	for k, v := range loaded {
-		highlightState[k] = v
+		// 内存里已有的条目更新（载入期间并发 worker 刚写入的结果），
+		// 绝不能用磁盘旧值覆盖，否则那次分析结论会丢失、切片被重跑。
+		if _, exists := highlightState[k]; !exists {
+			highlightState[k] = v
+		}
 	}
 	highlightMu.Unlock()
 }
@@ -1062,17 +1213,17 @@ type HighlightToday struct {
 
 // HighlightQueueSnapshot 一次快照的全部字段。
 type HighlightQueueSnapshot struct {
-	Enabled         bool                 `json:"enabled"`          // 高光总开关
-	Running         bool                 `json:"running"`          // 系统运行中（暂停时不分析）
-	GateEnabled     bool                 `json:"gate_enabled"`     // 姿态语义门是否启用
-	Pending         int                  `json:"pending"`          // 待分析积压（含认领优先片）
-	QueueHead       []HighlightQueueItem `json:"queue_head"`       // 队头预览（认领片在最前）
-	Current         HighlightCurrent     `json:"current"`          // 正在分析（最早开始的一片）
-	Currents        []HighlightCurrent   `json:"currents"`         // 全部正在分析的片（并行时 >1 条）
-	Today           HighlightToday       `json:"today"`            // 今日统计
-	RecentDone      []HighlightDoneItem  `json:"recent_done"`      // 最近判定（新→旧）
-	Workers         int                  `json:"workers"`          // 并行路数
-	LastPass        string               `json:"last_pass"`        // 上轮扫描时刻（HH:MM，跨天带日期）
+	Enabled         bool                 `json:"enabled"`      // 高光总开关
+	Running         bool                 `json:"running"`      // 系统运行中（暂停时不分析）
+	GateEnabled     bool                 `json:"gate_enabled"` // 姿态语义门是否启用
+	Pending         int                  `json:"pending"`      // 待分析积压（含认领优先片）
+	QueueHead       []HighlightQueueItem `json:"queue_head"`   // 队头预览（认领片在最前）
+	Current         HighlightCurrent     `json:"current"`      // 正在分析（最早开始的一片）
+	Currents        []HighlightCurrent   `json:"currents"`     // 全部正在分析的片（并行时 >1 条）
+	Today           HighlightToday       `json:"today"`        // 今日统计
+	RecentDone      []HighlightDoneItem  `json:"recent_done"`  // 最近判定（新→旧）
+	Workers         int                  `json:"workers"`      // 并行路数
+	LastPass        string               `json:"last_pass"`    // 上轮扫描时刻（HH:MM，跨天带日期）
 	ScanIntervalMin int                  `json:"scan_interval_min"`
 }
 
