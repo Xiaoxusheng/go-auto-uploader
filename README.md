@@ -22,17 +22,19 @@
 
 ## ⬇️ 下载即用（无需编译）
 
-到 [**Releases**](https://github.com/Xiaoxusheng/go-auto-uploader/releases) 下载对应平台的可执行文件，**与 `ffmpeg` 放在同一目录**即可运行：
+到 [**Releases**](https://github.com/Xiaoxusheng/go-auto-uploader/releases) 下载对应平台的压缩包（每个包都附 `.sha256` 校验文件），**与 `ffmpeg` 放在同一目录**即可运行：
 
 | 平台 | 文件 | 使用方式 |
 | --- | --- | --- |
-| Windows x64 | `uploader_windows_amd64.exe` | 双击运行，浏览器开 `http://127.0.0.1:8080` |
-| Linux x64 | `uploader_linux_amd64` | `chmod +x uploader_linux_amd64 && ./uploader_linux_amd64` |
+| Windows x64 | `uploader-windows-amd64.tar.gz` | 解压得到 `uploader.exe`，双击运行，浏览器开 `http://127.0.0.1:8080` |
+| Linux x64 / arm64 | `uploader-linux-amd64.tar.gz` / `-arm64` | 解压后 `chmod +x uploader && ./uploader` |
+| macOS Intel / Apple Silicon | `uploader-darwin-amd64.tar.gz` / `-arm64` | 解压后 `chmod +x uploader && ./uploader` |
 
-* 发行包为**纯 Go 静态构建**（`CGO_ENABLED=0`）：单文件、无动态库依赖，姿态语义门自动关闭，其余功能完全一致。
+* 发行包由 GitHub Actions 在打 `v*` tag 时自动构建（Vet & Test → 全平台矩阵 → 自动发布），产物为**纯 Go 静态构建**（`CGO_ENABLED=0`）：单文件、无动态库依赖，姿态语义门自动关闭，其余功能完全一致。
 * 需要姿态语义门 / 全自动训练，请切到 `pose-gate` 分支用 `CGO_ENABLED=1` 自行构建（见下方编译说明）。
 * 首次启动会在当前目录生成 `config.json`、`builtin_urls.txt`、`data/`；**默认账号 `admin`，密码 `admin`，请立即在「设置」里改掉**。
 * `ffmpeg` 必须放在可执行文件同级目录（Windows 为 `ffmpeg.exe`）或加入 `PATH`，否则录制与高光分析不可用。
+* 发版流程：`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`，CI 会自动编译并建 Release，无需本地构建。
 
 ## 🌿 分支说明（先看这个）
 
