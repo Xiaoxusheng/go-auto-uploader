@@ -232,6 +232,12 @@ func Run(opts Options) {
 		}
 		go opts.StartWeb(cli.WebPort)
 	}
+	// 应用上下文必须在启动任何依赖它的 goroutine 之前同步创建。
+	// 原实现把赋值放在 manageWorkers 协程里，而 dirStatusPersistLoop /
+	// successLogPersistLoop 在另一个协程读 AppCtx —— 调度顺序不定时读到 nil，
+	// stop 通道永不关闭：持久化协程泄漏，停机时最近一批成功记录/目录状态丢失。
+	AppCtx, AppCancel = context.WithCancel(context.Background())
+
 	go queueStatusLoop()
 	go reportLoop()
 	go dirStatusPersistLoop()
@@ -337,7 +343,7 @@ func adjustInterval(base, activeCount, current int) int {
 }
 
 func manageWorkers() {
-	AppCtx, AppCancel = context.WithCancel(context.Background())
+	// AppCtx/AppCancel 由 Run 在启动 goroutine 前创建（见调用点注释）。
 	UploadPool = uploader.NewWorkerPool(TaskQueue, func(ctx context.Context, path string) {
 		atomic.AddInt64(&ActiveWorker, 1)
 		defer atomic.AddInt64(&ActiveWorker, -1)

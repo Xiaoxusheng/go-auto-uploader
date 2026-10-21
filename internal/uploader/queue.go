@@ -62,11 +62,12 @@ func (q *Queue) Done(path string) {
 	}
 }
 
-// Drop 丢弃标记且修正 pending（Worker 在暂停时丢任务用）。
+// Drop 丢弃路径的防重标记（Worker 在暂停时丢任务用）。
+//
+// pending 在 Dequeue 时已经减过，这里不能再减 —— 原实现两处都减，
+// 暂停期间会让 pending 一路变负，并灌进控制台「等待任务」计数。
 func (q *Queue) Drop(path string) {
-	if _, loaded := q.enqueued.LoadAndDelete(path); loaded {
-		atomic.AddInt64(&q.pending, -1)
-	}
+	q.enqueued.Delete(path)
 }
 
 // Pending 当前已入队未完成计数（近似）。

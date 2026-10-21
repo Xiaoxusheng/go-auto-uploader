@@ -41,6 +41,29 @@ func TestQueueFull(t *testing.T) {
 	}
 }
 
+// 暂停时 Worker 取到任务会 Drop：pending 已在 Dequeue 减过，
+// Drop 不能再减，否则计数变负并污染控制台「等待任务」。
+func TestQueueDropDoesNotDoubleDecrement(t *testing.T) {
+	q := NewQueue(10)
+	if !q.Enqueue("/a") {
+		t.Fatal("enqueue failed")
+	}
+	if got := q.Pending(); got != 1 {
+		t.Fatalf("pending after enqueue = %d, want 1", got)
+	}
+	p, ok := q.Dequeue(context.Background())
+	if !ok || p != "/a" {
+		t.Fatalf("dequeue = %q,%v", p, ok)
+	}
+	q.Drop(p)
+	if got := q.Pending(); got != 0 {
+		t.Fatalf("pending after drop = %d, want 0（Drop 重复扣减）", got)
+	}
+	if q.Contains(p) {
+		t.Fatal("dropped path should be unmarked")
+	}
+}
+
 func TestWorkerPoolProcesses(t *testing.T) {
 	q := NewQueue(100)
 	var n int64
