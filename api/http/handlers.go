@@ -172,16 +172,9 @@ func (s *Server) handleLiveTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	page, _ := strconv.Atoi(q.Get("page"))
-	limit, _ := strconv.Atoi(q.Get("limit"))
+	page, limit := parsePage(q.Get("page"), q.Get("limit"))
 	status := q.Get("status")
 	filename := q.Get("filename")
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 {
-		limit = 50
-	}
 	filtered := make([]*storage.HistoryRecord, 0)
 	for _, record := range app.HistoryStore.Snapshot() {
 		if status != "" && !strings.Contains(record.Status, status) {
@@ -193,14 +186,10 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, record)
 	}
 	total := len(filtered)
-	start := (page - 1) * limit
-	if start >= total {
+	start, end, ok := pageRange(page, limit, total)
+	if !ok {
 		s.sendJSONSuccess(w, r, map[string]interface{}{"items": []map[string]interface{}{}, "total": total})
 		return
-	}
-	end := start + limit
-	if end > total {
-		end = total
 	}
 	items := make([]map[string]interface{}, 0, end-start)
 	for _, record := range filtered[start:end] {
@@ -533,26 +522,57 @@ func (s *Server) handleRecorderLogs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	page, _ := strconv.Atoi(q.Get("page"))
-	limit, _ := strconv.Atoi(q.Get("limit"))
+	page, limit := parsePage(q.Get("page"), q.Get("limit"))
+	filtered := app.AppLogs.Snapshot(q.Get("level"), q.Get("keyword"))
+	total := len(filtered)
+	start, end, ok := pageRange(page, limit, total)
+	if !ok {
+		s.sendJSONSuccess(w, r, map[string]interface{}{"items": []*logx.Entry{}, "total": total})
+		return
+	}
+	s.sendJSONSuccess(w, r, map[string]interface{}{"items": filtered[start:end], "total": total})
+}
+
+// maxPageLimit 分页上限：防止 ?limit=100000000 这类请求一次性构造巨型切片。
+const maxPageLimit = 500
+
+// parsePage 解析分页参数，非法值回落到第 1 页 / 50 条。
+func parsePage(pageRaw, limitRaw string) (page, limit int) {
+	page, _ = strconv.Atoi(pageRaw)
+	limit, _ = strconv.Atoi(limitRaw)
 	if page < 1 {
 		page = 1
 	}
 	if limit < 1 {
 		limit = 50
 	}
-	filtered := app.AppLogs.Snapshot(q.Get("level"), q.Get("keyword"))
-	total := len(filtered)
-	start := (page - 1) * limit
-	if start >= total {
-		s.sendJSONSuccess(w, r, map[string]interface{}{"items": []*logx.Entry{}, "total": total})
-		return
+	if limit > maxPageLimit {
+		limit = maxPageLimit
 	}
-	end := start + limit
+	return page, limit
+}
+
+// pageRange 计算 [start,end) 切片范围。
+//
+// 必须先用页数把 page 夹住再算偏移：直接 (page-1)*limit 在 page 取
+// MaxInt64 时会整数溢出成负数，随后 filtered[负数:...] 直接 panic。
+// 返回 ok=false 表示该页越界（调用方回空列表）。
+func pageRange(page, limit, total int) (start, end int, ok bool) {
+	if total <= 0 || limit <= 0 {
+		return 0, 0, false
+	}
+	if page > (total+limit-1)/limit {
+		return 0, 0, false
+	}
+	start = (page - 1) * limit
+	if start >= total {
+		return 0, 0, false
+	}
+	end = start + limit
 	if end > total {
 		end = total
 	}
-	s.sendJSONSuccess(w, r, map[string]interface{}{"items": filtered[start:end], "total": total})
+	return start, end, true
 }
 
 func (s *Server) handleLogsDownload(w http.ResponseWriter, r *http.Request) {
@@ -608,6 +628,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	// 控制台 WS 只收 ping/pong 这类小消息，限制单帧大小避免异常客户端用超大帧吃内存。
+	conn.SetReadLimit(1 << 20)
 	if app.WSHub == nil {
 		app.InitHubs()
 	}

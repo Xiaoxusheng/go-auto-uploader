@@ -84,7 +84,10 @@ func TestIndexBindsHighlightGrayFields(t *testing.T) {
 // 「姿态训练」页签：菜单项 / 页面区 / API 调用三处齐全，防止误删导致页签空白
 func TestIndexBindsPoseTrainingPage(t *testing.T) {
 	for _, marker := range []string{
-		`{key: 'pose_training', icon: 'i-grid', label: '姿态训练'}`,
+		// 菜单项按字段分别断言：整体字面量对空格敏感，改一次排版就会误报
+		// （曾因 `{ key:` 多了空格导致 go test ./... 长期飘红）。
+		`key: 'pose_training'`,
+		`label: '姿态训练'`,
 		`activeTab === 'pose_training'`,
 		`/pose_training/summary`,
 		`/pose_training/clips`,
