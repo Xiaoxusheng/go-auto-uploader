@@ -20,17 +20,30 @@ type Client struct {
 	Conn   *websocket.Conn
 	AESKey []byte
 	send   chan []byte
+
+	// sendMu/closed/closeOnce 保护发送通道的关闭与投递：
+	// Hub 广播协程、慢客户端踢除、Unregister 三处都可能碰同一个 send，
+	// 裸 close + 裸 send 会撞出「close of closed channel」或
+	// 「send on closed channel」，两者都是进程级 panic（Hub.Run 无 recover）。
+	sendMu    sync.RWMutex
+	closed    bool
+	closeOnce sync.Once
 }
 
 // Send 缓冲通道（只读暴露给 Hub）。
 func (c *Client) Send() <-chan []byte { return c.send }
 
 // SendBuf 可写缓冲（Hub 内部使用）。
+//
+// 注意：绕过 sendMu 的裸发送与 closeSend 竞争会 panic，Hub 内部一律走 trySend。
 func (c *Client) SendBuf() chan []byte { return c.send }
 
-// TrySend 非阻塞向单客户端投递；失败返回 false。
-func (c *Client) TrySend(b []byte) bool {
-	if c.send == nil {
+// trySend 非阻塞投递；客户端已关闭时返回 false。
+// 判定与发送在同一把读锁内完成，保证不会向正在关闭的通道写入。
+func (c *Client) trySend(b []byte) bool {
+	c.sendMu.RLock()
+	defer c.sendMu.RUnlock()
+	if c.closed || c.send == nil {
 		return false
 	}
 	select {
@@ -39,6 +52,22 @@ func (c *Client) TrySend(b []byte) bool {
 	default:
 		return false
 	}
+}
+
+// TrySend 非阻塞向单客户端投递；失败返回 false。
+func (c *Client) TrySend(b []byte) bool { return c.trySend(b) }
+
+// closeSend 幂等关闭发送通道；关闭后 trySend 一律返回 false。
+func (c *Client) closeSend() {
+	c.closeOnce.Do(func() {
+		c.sendMu.Lock()
+		c.closed = true
+		send := c.send
+		c.sendMu.Unlock()
+		if send != nil {
+			close(send)
+		}
+	})
 }
 
 // closeConn 安全关闭连接（Conn 可能为 nil，用于测试）。
@@ -113,10 +142,10 @@ func (h *Hub) Register(c *Client) {
 	h.clients.Store(c, struct{}{})
 }
 
-// Unregister 移除并关闭发送通道。
+// Unregister 移除并关闭发送通道（幂等：重复调用不会重复 close）。
 func (h *Hub) Unregister(c *Client) {
 	if _, loaded := h.clients.LoadAndDelete(c); loaded {
-		close(c.send)
+		c.closeSend()
 	}
 }
 
@@ -164,12 +193,13 @@ func (h *Hub) Run(stop <-chan struct{}) {
 						final = []byte(`{"encrypted":"` + enc + `"}`)
 					}
 				}
-				select {
-				case client.send <- final:
-				default:
-					// 慢客户端：踢除
-					h.clients.Delete(client)
-					close(client.send)
+				if client.trySend(final) {
+					return true
+				}
+				// 投递失败：慢客户端踢除。用 LoadAndDelete 抢占，只有抢到的一方
+				// 才 close —— 否则会与 Unregister 的 close 撞成 double close panic。
+				if _, loaded := h.clients.LoadAndDelete(client); loaded {
+					client.closeSend()
 					client.closeConn()
 				}
 				return true
