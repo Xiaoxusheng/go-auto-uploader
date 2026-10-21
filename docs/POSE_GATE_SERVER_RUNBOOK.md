@@ -21,14 +21,21 @@ vs `pose_nocgo.go`（纯 Go 桩）。所以**同一份 pose-gate 分支源码**�
 ## 1. 服务器现状（xyx.homes:8888，内网访问）
 
 - CentOS 7 x86_64，**glibc 2.17**，gcc 4.8.5，ffmpeg 在 /usr/local/bin/ffmpeg
-- 运行：`/home/upload/uploader`（CGO 姿态门版，PID 见 pgrep），经 **sysroot 新 glibc loader** 启动
+- 运行：**systemd 托管 `uploader.service`**（2026-10-09 起唯一管理方式）。
+  ExecStart 为 `/home/upload/uploader_run.sh`（CGO 姿态门版，经 **sysroot 新 glibc loader** 启动），
+  启动参数写在 unit 文件里；`Restart=always` + 开机自启；日志看 `journalctl -u uploader.service`
 - 防火墙：8888 不放行（用户要求内网访问）；SSH 22 通
+
+> ⚠️ **禁止再用 nohup 直拉 uploader**（2026-10-09 踩坑）：systemd 有 `Restart=always`，
+> 手动另起进程会与它抢 8888 端口，systemd 那边每 10 秒重拉一次、每次都 `status=1/FAILURE`，
+> 形成崩溃重启循环 + 双实例。重启/换装一律走 `systemctl restart|start uploader.service`。
 
 ### 关键路径（服务器）
 ```
 /home/upload/uploader            当前生产二进制（CGO 版）
 /home/upload/uploader_run.sh     启动包装器：exec sysroot loader --library-path ... uploader "$@"
-/home/upload/.restart_args.txt   重启参数（首行=包装器路径，其余=原参数）
+/etc/systemd/system/uploader.service  服务定义 —— **唯一管理入口，启动参数在这里**
+/home/upload/.restart_args.txt   旧重启参数（systemd 化后已不生效，保留仅作参考）
 /home/upload/uploader_purego.bak.*  纯 Go 旧版备份（回退用）
 /home/upload/_pose_runtime/      libonnxruntime.so(1.30) + yolov8n-pose.onnx + sysroot/
 /home/upload/_pose_runtime/sysroot/  Ubuntu20.04 提取的 glibc2.31+libstdc++10（运行时前缀）
@@ -55,11 +62,15 @@ ssh xyx.homes 'cd /home/upload/_build && PATH=/home/upload/_toolchain/go/bin:$PA
   GOROOT=/home/upload/_toolchain/go GOPROXY=https://goproxy.cn,direct \
   GOMODCACHE=/home/upload/_toolchain/gomod GOCACHE=/home/upload/_toolchain/gocache \
   CGO_ENABLED=1 go build -o /home/upload/uploader.new ./cmd/uploader'
-# ④ 换装重启（swap.sh：杀旧→mv uploader.new→按 .restart_args.txt 重启→健康检查）
-ssh xyx.homes "bash -s" < /d/upload/deploy_server/swap.sh
+# ④ 换装重启（swap.sh：stop 服务 → 备份并 mv uploader.new → systemctl start → 健康检查）
+tr -d '\r' < /d/upload/deploy_server/swap.sh | ssh xyx.homes "bash -s"
+#    ⚠️ 必须 tr -d '\r'：这些 .sh 是 Windows CRLF，直接喂给 Linux bash 会语法报错
 # ⑤ 验证
 ssh xyx.homes 'curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8888/'
 ```
+
+> 只想重启（不换二进制）：`tr -d '\r' < deploy_server/restart_cwd.sh | ssh xyx.homes "bash -s"`
+> 或直接 `ssh xyx.homes 'systemctl restart uploader.service'`。
 
 验证姿态门在岗：首次高光分析时日志出现 `🧍 ... 姿态门: X 段 → Y 段` 或
 `[POSE-GATE] ... det关拒/keep关拒`；出现 `姿态门异常（放行全部段）` = 门初始化失败（查 sysroot/ORT）。
@@ -67,10 +78,15 @@ ssh xyx.homes 'curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8888/'
 ## 3. 回退（一键回到纯 Go）
 
 ```bash
-ssh xyx.homes 'sed -i "1s#.*#/home/upload/uploader#" /home/upload/.restart_args.txt'
-# 再把任一 uploader_purego.bak.* 拷回 /home/upload/uploader.new，跑 swap.sh
+# 把任一 uploader_purego.bak.* 拷成 /home/upload/uploader，然后重启服务
+ssh xyx.homes 'cp -f /home/upload/uploader_purego.bak.<时间戳> /home/upload/uploader && chmod 755 /home/upload/uploader && systemctl restart uploader.service'
 ```
-纯 Go 版姿态门自动关闭（桩），其余功能不变。
+纯 Go 二进制走同一个 `uploader_run.sh` 包装器也能正常跑（sysroot loader 对静态 Go 程序无害），
+所以不必改 unit。纯 Go 版姿态门自动关闭（桩），其余功能不变。
+
+> 若要改**启动参数**：编辑 `/etc/systemd/system/uploader.service` 的 ExecStart，
+> 然后 `systemctl daemon-reload && systemctl restart uploader.service`。
+> （`.restart_args.txt` 已不生效，不要再改它。）
 
 ## 4. 本机训练管线（8080 同机）
 
@@ -143,6 +159,15 @@ D:/upload/_diag/train/
 
 ## 5. 踩坑备忘
 
+- **服务必须由 systemd 唯一管理**（2026-10-09）：见 §1 警告。手动 nohup 直拉 → 抢占端口 →
+  systemd `Restart=always` 每 10 秒重拉失败一轮 → 崩溃循环。排查命令：
+  `systemctl status uploader.service`（看 `active:` 是 `running` 还是 `activating (auto-restart)`）
+- **`deploy_server/*.sh` 是 Windows CRLF**：直接 `ssh host "bash -s" < swap.sh` 会报
+  `kill: 8345\r: 参数必须是进程或任务 ID` / `未预期的符号 $'do\r'`。**必须 `tr -d '\r'` 后再喂**
+- **本机跑 ssh 时 PATH 别把 PortableGit 放前面**：Git 自带 ssh 会用不同 known_hosts，
+  报 `Host key verification failed`。让系统 OpenSSH 优先（`/c/Windows/System32/OpenSSH`），
+  需要 tr 就写绝对路径调用
+- **Windows 自带 `timeout.exe` 会劫持 Unix `timeout`**：用 ssh 的 `-o ConnectTimeout` 代替
 - scp 管道在家宽 IPv6 隧道上会坏 → 一律 base64-over-ssh + MD5 校验
 - Windows 打 tar 传 Linux 会丢执行位 → 解包后 `chmod +x`（loader 就吃过亏）
 - ar/tar 解 deb：git-bash 无 ar，用 node 按 deb 格式切 data.tar.xz 再解
